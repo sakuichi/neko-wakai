@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ネコと和解せよ 〜猫が来るまでの7日間〜</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="game">
+    <canvas id="stage"></canvas>
+    <div id="hud" hidden>
+      <div class="hud-top">
+        <span id="hud-day"></span>
+        <div class="hud-timer"><div id="hud-timer-bar"></div></div>
+        <button id="sound-btn" type="button"></button>
+      </div>
+      <button id="blink-btn" type="button" hidden>まばたき<small>長押し</small></button>
+    </div>
+    <div id="bubble" aria-live="polite"></div>
+    <div id="toast" aria-live="polite"></div>
+    <div id="screen"></div>
+    <button id="bgm-btn" type="button"><span class="bgm-icon" aria-hidden="true">♪</span><span class="bgm-track"><span id="bgm-title"></span></span></button>
+    <div id="overlay" hidden></div>
+  </div>
+  <aside id="debug"></aside>
+  <!-- src/ から npm run build で生成。ダブルクリック（file://）でも動くよう通常スクリプトにしている -->
+  <script src="game.js"></script>
+</body>
+</html>

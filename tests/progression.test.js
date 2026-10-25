@@ -1,0 +1,174 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createGame, startDay, finishDay, chooseNight, endingFor, chooseCat } from '../src/game/progression.js';
+import { DAYS, NIGHT, PERSONALITIES, MAX_DAY, RULES, COAT_PERSONALITY } from '../src/data/params.js';
+import { COATS } from '../src/render/renderer.js';
+import { COAT_LABELS } from '../src/data/texts.js';
+import { tick } from '../src/game/catBrain.js';
+
+test('新しいゲームは1日目・信頼0・ミス0から始まる', () => {
+  const g = createGame({ personality: 'bibiri', seed: 1 });
+  assert.equal(g.day, 1);
+  assert.equal(g.trust, 0);
+  assert.equal(g.mistakes, 0);
+  assert.equal(g.personality, 'bibiri');
+  assert.equal(g.nightChoice, null);
+});
+
+test('1日目の初期状態：部屋の隅から、その日の警戒で始まる', () => {
+  const { day, cat, newActions } = startDay(createGame({ personality: 'tsundere', seed: 1 }));
+  assert.equal(day.dayNumber, 1);
+  assert.equal(day.wariness, DAYS[0].startWariness);
+  assert.equal(day.timeLeft, DAYS[0].durationSec);
+  assert.equal(day.canLap, false);
+  assert.deepEqual(day.actions, DAYS[0].actions);
+  assert.deepEqual(day.signs, DAYS[0].signs);
+  assert.equal(cat.distance, 100);
+  assert.deepEqual(newActions, ['pet']);
+});
+
+test('2日目に、まばたきが新しく使えるようになる', () => {
+  let g = createGame({ personality: 'tsundere', seed: 1 });
+  g = chooseNight(g, 'nothing');
+  const { newActions } = startDay(g);
+  assert.deepEqual(newActions, ['blink']);
+});
+
+test('フェイントは4日目から出てくる（3日目までは出ない）', () => {
+  for (const d of DAYS) {
+    assert.equal(d.signs.includes('fakeRub'), d.day >= 4, `${d.day}日目`);
+  }
+});
+
+test('前日の信頼が、翌日に引き継がれる', () => {
+  let g = createGame({ personality: 'tsundere', seed: 1 });
+  ({ game: g } = finishDay(g, { lapped: false, trust: 33, mistakes: 2 }));
+  assert.equal(g.trust, 33);
+  assert.equal(g.mistakes, 2);
+  g = chooseNight(g, 'box');
+  const { day } = startDay(g);
+  assert.equal(day.trust, 33);
+});
+
+test('夜「おやつを置く」：翌日は近くから始まるが、信頼の増え方が下がる', () => {
+  for (const key of Object.keys(PERSONALITIES)) {
+    const g = chooseNight(createGame({ personality: key, seed: 1 }), 'treat');
+    const { day, cat } = startDay(g);
+    assert.equal(cat.distance, 100 - PERSONALITIES[key].treatDistance, key);
+    assert.equal(day.trustRate, NIGHT.treatTrustRate, key);
+  }
+});
+
+test('夜「おやつを置く」：翌日は猫が最初から落ち着いていて、すぐ近づき始める', () => {
+  for (const key of Object.keys(PERSONALITIES)) {
+    const g = chooseNight(createGame({ personality: key, seed: 1 }), 'treat');
+    const { day, cat } = startDay(g);
+    assert.ok(day.wariness < RULES.calmThreshold, key);
+    const r = tick(cat, day, PERSONALITIES[key], 1, () => 0.5);
+    assert.ok(r.cat.distance < cat.distance, key);
+  }
+});
+
+test('夜「おやつを置く」：その場で信頼が増える（100は超えない）', () => {
+  const g = chooseNight({ ...createGame({ personality: 'tsundere', seed: 1 }), trust: 10 }, 'treat');
+  assert.ok(NIGHT.treatTrust > 0);
+  assert.equal(g.trust, 10 + NIGHT.treatTrust);
+  const full = chooseNight({ ...createGame({ personality: 'tsundere', seed: 1 }), trust: 98 }, 'treat');
+  assert.equal(full.trust, 100);
+});
+
+test('夜「段ボール箱を置く」：翌日は警戒0で、しばらく箱から出てこない', () => {
+  for (const key of Object.keys(PERSONALITIES)) {
+    const g = chooseNight(createGame({ personality: key, seed: 1 }), 'box');
+    const { day, cat } = startDay(g);
+    assert.equal(day.wariness, 0, key);
+    assert.equal(day.boxLockLeft, PERSONALITIES[key].boxLockSec, key);
+    assert.equal(cat.mode, 'inBox', key);
+    assert.equal(day.trustRate, 1, key);
+  }
+});
+
+test('夜「何もしない」：その場で信頼が少し増え、翌日は部屋の隅から', () => {
+  const g = chooseNight({ ...createGame({ personality: 'tsundere', seed: 1 }), trust: 10 }, 'nothing');
+  assert.equal(g.trust, 10 + NIGHT.nothingTrust);
+  assert.equal(g.day, 2);
+  const { day, cat } = startDay(g);
+  assert.equal(cat.distance, 100);
+  assert.equal(day.trustRate, 1);
+  assert.equal(day.boxLockLeft, 0);
+});
+
+test('「何もしない」でも信頼は100を超えない', () => {
+  const g = chooseNight({ ...createGame({ personality: 'tsundere', seed: 1 }), trust: 98 }, 'nothing');
+  assert.equal(g.trust, 100);
+});
+
+test('膝に乗らずに一日が終わったら夜へ', () => {
+  const r = finishDay(createGame({ personality: 'tsundere', seed: 1 }), { lapped: false, trust: 10, mistakes: 0 });
+  assert.equal(r.next, 'night');
+  assert.equal(r.endingId, null);
+});
+
+test('膝に乗ったら、その日でエンディングへ', () => {
+  const g = { ...createGame({ personality: 'tsundere', seed: 1 }), day: 4 };
+  const r = finishDay(g, { lapped: true, trust: 100, mistakes: 0 });
+  assert.equal(r.next, 'ending');
+  assert.equal(r.endingId, 'patient');
+});
+
+test('7日目が終わっても膝に乗らなければ「通い猫」エンディング', () => {
+  const g = { ...createGame({ personality: 'tsundere', seed: 1 }), day: MAX_DAY };
+  const r = finishDay(g, { lapped: false, trust: 80, mistakes: 3 });
+  assert.equal(r.next, 'ending');
+  assert.equal(r.endingId, 'visitor');
+});
+
+test('エンディングは和解した日で決まる', () => {
+  assert.equal(endingFor(3, true), 'fate');
+  assert.equal(endingFor(4, true), 'patient');
+  assert.equal(endingFor(5, true), 'patient');
+  assert.equal(endingFor(6, true), 'persistent');
+  assert.equal(endingFor(7, true), 'persistent');
+  assert.equal(endingFor(7, false), 'visitor');
+});
+
+test('どの毛色にも性格が1つ決まっていて、どの性格にも毛色が1つ以上ある', () => {
+  assert.deepEqual(Object.keys(COAT_PERSONALITY).sort(), Object.keys(COATS).sort());
+  assert.deepEqual(Object.keys(COAT_LABELS).sort(), Object.keys(COATS).sort());
+  for (const [coat, p] of Object.entries(COAT_PERSONALITY)) assert.ok(PERSONALITIES[p], coat);
+  for (const p of Object.keys(PERSONALITIES)) assert.ok(Object.values(COAT_PERSONALITY).includes(p), p);
+});
+
+test('猫を選ぶと、毛色に合った性格になり、どの性格も同じくらい出る', () => {
+  const count = {};
+  const N = 300;
+  for (let i = 0; i < N; i++) {
+    // 0〜1 をまんべんなく使う乱数の代わり
+    let n = 0;
+    const random = () => ((i * 7 + n++ * 13) % N) / N;
+    const { personality, coat } = chooseCat({}, random);
+    assert.equal(COAT_PERSONALITY[coat], personality, coat);
+    count[personality] = (count[personality] ?? 0) + 1;
+  }
+  for (const p of Object.keys(PERSONALITIES)) assert.ok(count[p] >= N / 3 - 10 && count[p] <= N / 3 + 10, `${p}: ${count[p]}`);
+});
+
+test('デバッグで毛色だけ決めたら、その毛色の性格になる', () => {
+  for (const coat of Object.keys(COAT_PERSONALITY)) {
+    assert.deepEqual(chooseCat({ coat }, () => 0.5), { coat, personality: COAT_PERSONALITY[coat] });
+  }
+});
+
+test('デバッグで性格だけ決めたら、その性格の毛色から選ぶ', () => {
+  for (const personality of Object.keys(PERSONALITIES)) {
+    for (const r of [0, 0.5, 0.99]) {
+      const cat = chooseCat({ personality }, () => r);
+      assert.equal(cat.personality, personality);
+      assert.equal(COAT_PERSONALITY[cat.coat], personality);
+    }
+  }
+});
+
+test('デバッグで性格と毛色の両方を決めたら、組み合わせが違っていてもそのまま使う', () => {
+  assert.deepEqual(chooseCat({ personality: 'bibiri', coat: 'chatora' }, () => 0.5), { personality: 'bibiri', coat: 'chatora' });
+});

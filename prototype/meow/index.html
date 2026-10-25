@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>にゃーん試作</title>
+<style>
+  :root { --bg: #fff6e9; --card: #fffdf8; --ink: #5a3a22; --sub: #8a6a50; --accent: #e0894a; --line: #ecd9c2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Hiragino Maru Gothic ProN", "BIZ UDPGothic", "Yu Gothic UI", sans-serif; line-height: 1.6; word-break: auto-phrase; }
+  main { max-width: 560px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .lead, .note { color: var(--sub); font-size: .9rem; }
+  .v { display: grid; grid-template-columns: 1fr 56px; align-items: center; gap: 12px; background: var(--card); border: 2px solid var(--line); border-radius: 16px; padding: 14px; margin-top: 12px; }
+  .v h2 { font-size: 1.1rem; margin: 0; }
+  .v p { margin: 2px 0 0; font-size: .85rem; color: var(--sub); }
+  button { width: 56px; height: 56px; border-radius: 50%; border: none; background: var(--accent); color: #fff; font-size: 1.3rem; cursor: pointer; }
+  button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>「にゃーん」試作</h1>
+  <p class="lead">まばたきが成功したときの鳴き声の候補です。音声ファイルを使わず、ブラウザの中で合成しています。気に入ったものを番号で教えてください（調整の希望もどうぞ）。</p>
+  <div id="list"></div>
+  <p class="note">※試作です。選んでいただいたあと、ゲーム本体に組み込み、この試作は削除してよいか確認します。</p>
+</main>
+<script>
+// 鳴き声の合成：のこぎり波（声の元）を、口の開き具合を表すフィルター（母音の響き）に通す。
+// 音の高さ（f0）は「にゃ」で上がって「ーん」で下がり、響きは n（閉じた口）→ a（開いた口）→ n と変わる
+const VARIANTS = [
+  { title: '1. 子猫っぽい（高め・短め）', desc: '「みゃっ」に近い、軽くてかわいい声', dur: 0.55, f0: [760, 1020, 820], open: [500, 1500, 650], vib: 0.01 },
+  { title: '2. ふつう', desc: 'いちばん「にゃーん」らしい長さと高さ', dur: 0.75, f0: [560, 760, 520], open: [420, 1300, 520], vib: 0.015 },
+  { title: '3. 甘えた（長め・ゆれる）', desc: '語尾がのびて、少しゆれる甘え声', dur: 1.05, f0: [600, 830, 470], open: [450, 1250, 480], vib: 0.025 },
+  // 1と2の中間（高さ・口の開き・ゆれは中間、長さは1と同じ）
+  { title: '4. 1と2の中間（長さは1と同じ）', desc: '高さと響きは1と2のあいだ。短く、軽め', dur: 0.55, f0: [660, 890, 670], open: [460, 1400, 585], vib: 0.0125 },
+];
+
+let ac = null;
+function audio() {
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  if (ac.state === 'suspended') ac.resume();
+  return ac;
+}
+
+function meow(ac, v, out = ac.destination) {
+  const t = ac.currentTime + 0.02;
+  const d = v.dur;
+  // 声の元
+  const src = ac.createOscillator();
+  src.type = 'sawtooth';
+  src.frequency.setValueAtTime(v.f0[0], t);
+  src.frequency.linearRampToValueAtTime(v.f0[1], t + d * 0.35);
+  src.frequency.linearRampToValueAtTime(v.f0[2], t + d);
+  // ゆれ（ビブラート）は、のびる後半から
+  const lfo = ac.createOscillator();
+  lfo.frequency.value = 6;
+  const depth = ac.createGain();
+  depth.gain.setValueAtTime(0, t);
+  depth.gain.linearRampToValueAtTime(v.f0[1] * v.vib, t + d * 0.6);
+  lfo.connect(depth).connect(src.frequency);
+  // 口の開き具合：1つ目の響き（F1）と2つ目の響き（F2）を動かす
+  const f1 = ac.createBiquadFilter();
+  f1.type = 'bandpass';
+  f1.Q.value = 3;
+  const f2 = ac.createBiquadFilter();
+  f2.type = 'bandpass';
+  f2.Q.value = 5;
+  const [closed, wide, end] = v.open;
+  for (const [f, k] of [[f1, 1], [f2, 1.9]]) {
+    f.frequency.setValueAtTime(closed * k, t);
+    f.frequency.linearRampToValueAtTime(wide * k, t + d * 0.3);
+    f.frequency.linearRampToValueAtTime(wide * 0.9 * k, t + d * 0.6);
+    f.frequency.linearRampToValueAtTime(end * k, t + d);
+  }
+  // 鼻にかかった「n」の成分（低いところだけ）
+  const nasal = ac.createBiquadFilter();
+  nasal.type = 'lowpass';
+  nasal.frequency.value = 450;
+  const g1 = ac.createGain();
+  g1.gain.value = 1;
+  const g2 = ac.createGain();
+  g2.gain.value = 0.55;
+  const gn = ac.createGain();
+  gn.gain.value = 0.35;
+  // 全体の音量の形：ふわっと入って、最後はすっと消える
+  const env = ac.createGain();
+  env.gain.setValueAtTime(0, t);
+  env.gain.linearRampToValueAtTime(0.5, t + 0.05);
+  env.gain.setValueAtTime(0.5, t + d * 0.55);
+  env.gain.linearRampToValueAtTime(0.32, t + d * 0.8);
+  env.gain.linearRampToValueAtTime(0, t + d);
+  src.connect(f1).connect(g1).connect(env);
+  src.connect(f2).connect(g2).connect(env);
+  src.connect(nasal).connect(gn).connect(env);
+  env.connect(out);
+  src.start(t);
+  lfo.start(t);
+  src.stop(t + d + 0.05);
+  lfo.stop(t + d + 0.05);
+}
+
+const list = document.getElementById('list');
+for (const v of VARIANTS) {
+  const row = document.createElement('div');
+  row.className = 'v';
+  row.innerHTML = '<div><h2></h2><p></p></div><button type="button" aria-label="再生">▶</button>';
+  row.querySelector('h2').textContent = v.title;
+  row.querySelector('p').textContent = v.desc;
+  row.querySelector('button').addEventListener('click', () => meow(audio(), v));
+  list.append(row);
+}
+window.__meow = { VARIANTS, meow };
+</script>
+</body>
+</html>
