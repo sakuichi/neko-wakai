@@ -31,7 +31,7 @@ test('名前の候補は、毛色に合ったものから4つ選ぶ（どの毛�
     }
   }
   assert.ok(NAME_TEXT.byCoat.kuro.includes('くろ'));
-  assert.ok(NAME_TEXT.byCoat.kuro.includes('K'));
+  assert.ok(NAME_TEXT.byCoat.kuro.includes('Holy Night'));
 });
 
 // 文字の描画（fillText）だけを記録する偽の Canvas
