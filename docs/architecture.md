@@ -37,9 +37,9 @@ flowchart TD
     BRAIN -->|"CatState（walking を含む）, DayState, enteredMode"| DAY
 
     DAY -->|"説明カード（止める）/ 吹き出し・ヒント・トースト（止めない）/ 日付"| OVERLAY["チュートリアル・説明カード・吹き出し・トースト<br/>src/ui/overlay.js"]
-    DAY -->|"feedback（purr / blinkBack / flee / kick）"| SOUND["効果音（WebAudioで合成）・振動<br/>src/ui/sound.js"]
+    DAY -->|"鳴らす音（soundsFor：purr→ゴロゴロ / blinkBack→にゃーん / flee・kick→ぽふっ）。膝の上では直接ゴロゴロ（長め・大きめ）"| SOUND["効果音（WebAudioで合成・出口にリミッター）・振動<br/>src/ui/sound.js"]
     MAIN -->|"ON/OFF"| SOUND
-    MUSIC["BGMの選曲（左下の曲名をタップで次の曲／OFF）・端末に保存・音量（ゴロゴロより約17dB小さく）・準備に失敗したら一度だけ知らせてBGMなしで続ける<br/>src/ui/music.js"] -->|"Song（再生・停止）"| BGMPLAY["BGMの再生<br/>src/ui/bgm.js（下の図）"]
+    MUSIC["BGMの選曲（左下の曲名をタップで次の曲／OFF）・端末に保存・音量（猫の声より約20dB小さく）・準備に失敗したら一度だけ知らせてBGMなしで続ける<br/>src/ui/music.js"] -->|"Song（再生・停止）"| BGMPLAY["BGMの再生<br/>src/ui/bgm.js（下の図）"]
     MAIN -->|"最初の操作で unlock"| MUSIC
     OVERLAY -->|"closed（一時停止の解除）"| DAY
 

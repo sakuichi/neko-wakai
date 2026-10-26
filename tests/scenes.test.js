@@ -143,3 +143,23 @@ test('夜に渡す猫の様子には、歩いていたかどうかも含める',
   assert.ok(result, 'onEnd が呼ばれていない');
   assert.equal(result.cat.walking, true);
 });
+
+// soundsFor はまだない場合もあるので、ファイルの読み込みを止めないよう、テストの中で読み込む
+test('まばたきを返してくれたら「にゃーん」を鳴らし、チャイムは鳴らさない', async () => {
+  const { soundsFor } = await import('../src/scenes/dayScene.js');
+  const sounds = soundsFor('blinkBack');
+  assert.deepEqual(sounds, ['meow']);
+  assert.ok(!sounds.includes('chime'));
+});
+
+test('鳴らす効果音は、なでた → ゴロゴロ、逃げた・猫キック → ぽふっ、ほかの反応 → なし', async () => {
+  const { soundsFor } = await import('../src/scenes/dayScene.js');
+  const { FEEDBACK } = await import('../src/data/texts.js');
+  assert.deepEqual(soundsFor('purr'), ['purr']);
+  assert.deepEqual(soundsFor('flee'), ['bump']);
+  assert.deepEqual(soundsFor('kick'), ['bump']);
+  const others = Object.keys(FEEDBACK).filter((k) => !['purr', 'blinkBack', 'flee', 'kick'].includes(k));
+  assert.ok(others.includes('stare'), 'FEEDBACK のほかのキーが読めていない');
+  for (const key of others) assert.deepEqual(soundsFor(key), [], key);
+  assert.deepEqual(soundsFor(null), []);
+});

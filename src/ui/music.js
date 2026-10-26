@@ -6,8 +6,8 @@ import { createBgm } from './bgm.js';
 
 const STORAGE_KEY = 'neko-wakai:bgm';
 export const BGM_OFF = 'off';
-// BGM は、なでたときのゴロゴロより十分小さく（約17dB）する。測り方と数値は docs/spec.md 13.2
-const VOLUME = 0.035;
+// BGM は、猫の声（ゴロゴロ・にゃーん）が埋もれない大きさにする。測り方と数値は docs/spec.md 13.2
+export const BGM_VOLUME = 0.046;
 
 export function nextTrack(current, ids) {
   const order = [...ids, BGM_OFF];
@@ -33,7 +33,7 @@ export function createMusic({ button, titleEl }) {
     }
     try {
       ac = new AC();
-      bgm = createBgm(ac, { volume: VOLUME });
+      bgm = createBgm(ac, { volume: BGM_VOLUME });
       return true;
     } catch (e) {
       console.warn('BGM を準備できませんでした', e);

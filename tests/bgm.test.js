@@ -235,3 +235,41 @@ test('音の準備の途中で失敗したら、あとのタップで壊れた�
     }
   }
 });
+
+// BGM_VOLUME はまだない場合もあるので、ファイルの読み込みを止めないよう、テストの中で読み込む
+test('BGM の音量は 0.046', async () => {
+  const { BGM_VOLUME } = await import('../src/ui/music.js');
+  assert.equal(BGM_VOLUME, 0.046);
+});
+
+test('最初のタップで鳴り始めた BGM は、全体の音量が 0.046 になっている', async () => {
+  const { createMusic } = await import('../src/ui/music.js');
+  const { ac, gains, compressors } = fakeAudioContext();
+  const values = {
+    // new したら、作ったノードを記録する偽の AudioContext を返す
+    window: { AudioContext: function () { return ac; } },
+    document: { hidden: false, addEventListener() {} },
+    localStorage: { getItem: () => null, setItem() {} },
+    // 曲の先読みのタイマーを本当に動かすと、テストが終わらなくなるので止めておく
+    setInterval: () => 0,
+    clearInterval() {},
+  };
+  const saved = Object.keys(values).map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]);
+  for (const [k, v] of Object.entries(values)) {
+    Object.defineProperty(globalThis, k, { value: v, configurable: true, writable: true, enumerable: true });
+  }
+  try {
+    const button = { addEventListener() {}, setAttribute() {}, classList: { toggle() {} } };
+    const music = createMusic({ button, titleEl: { textContent: '' } });
+    music.unlock();
+    assert.equal(compressors.length, 1);
+    const masters = gains.filter((g) => g.connections.includes(compressors[0]));
+    assert.equal(masters.length, 1);
+    assert.equal(masters[0].gain.value, 0.046);
+  } finally {
+    for (const [k, desc] of saved) {
+      if (desc) Object.defineProperty(globalThis, k, desc);
+      else delete globalThis[k];
+    }
+  }
+});

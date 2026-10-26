@@ -12,6 +12,12 @@ const LAP_PURR_AT = 2.6;
 // 同じ様子でこの回数失敗したら、ヒントを出す
 const HINT_AFTER = 2;
 
+// 猫の反応（feedback）ごとに鳴らす効果音（src/ui/sound.js のメソッド名）
+const SOUNDS = { purr: ['purr'], blinkBack: ['meow'], flee: ['bump'], kick: ['bump'] };
+export function soundsFor(feedback) {
+  return SOUNDS[feedback] ?? [];
+}
+
 export function createDayScene({ session, overlay, hud, renderer, input, sound, rng, onEnd }) {
   const start = startDay(session.game);
   let { day, cat } = start;
@@ -79,9 +85,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   }
 
   function playSound(feedback) {
-    if (feedback === 'purr') sound.purr();
-    else if (feedback === 'blinkBack') sound.chime();
-    else if (feedback === 'flee' || feedback === 'kick') sound.bump();
+    for (const name of soundsFor(feedback)) sound[name]();
   }
 
   return {
@@ -91,7 +95,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
       if (cat.mode === 'lap') {
         const prev = lapTime;
         lapTime += dt;
-        if (prev < LAP_PURR_AT && lapTime >= LAP_PURR_AT) sound.purr(2.4, 1.2);
+        if (prev < LAP_PURR_AT && lapTime >= LAP_PURR_AT) sound.purr(2.4, 1.9);
         if (lapTime >= LAP_SHOW_SEC) finish(true);
         return;
       }
