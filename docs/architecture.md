@@ -48,7 +48,7 @@ flowchart TD
     PROG -->|"DayState（その日の初期状態）, unlocks[]"| DAY
     DAY -->|"DayResult {lapped, trust, mistakes}"| PROG
     DAY -->|"DayResult.cat（昼の終わりの猫：mode, distance, walking）"| MAIN
-    MAIN -->|"lastCat（夜の画面が実際の時間で0.5秒出しきるまで、同じ場所・姿で描く）"| NIGHT
+    MAIN -->|"lastCat（夜の画面が実際の時間で0.5秒出しきるまで、同じ場所・姿で描く。そのあとは hidden＝帰っていて見えない）"| NIGHT
     NIGHT -->|"NightChoice"| PROG
     PROG -->|"GameState（更新後）"| MAIN
     PROG -->|"EndingId"| END
@@ -61,8 +61,11 @@ flowchart TD
     DATA -->|"COAT_LORE（柄の言い伝え）・ENDINGS"| END
     DATA -->|"BGM_TEXT・曲データ（src/data/bgmSongs.js）"| MUSIC
 
-    DAY -->|"View {cat, wariness, blinkHoldMs, lapTime}"| RENDER["猫・部屋・膝の描画（Canvas。お腹見せの手前の足は胴体に重ねる）・毛色・性格の仕草・見つめる合図（チラッ）・歩く姿と蛇行する道すじ・膝に跳び乗る・タイトルに戻るときは猫がその場で消えて奥に現れる（フェード）・まばたきゲージ・足あと<br/>src/render/renderer.js"]
+    DAY -->|"View {cat, wariness, blinkHoldMs, lapTime, dayTime（その日の進み具合 0〜1）}"| RENDER["猫・部屋・膝の描画（Canvas。お腹見せの手前の足は胴体に重ねる）・毛色・性格の仕草・見つめる合図（チラッ）・歩く姿と蛇行する道すじ・膝に跳び乗る・タイトルに戻るとき／夜に帰っていくときは猫がその場で消え、タイトルの位置／次の日の昼のスタート位置に現れる（フェード）・ページを開いた直後は猫をはじめからその場面の位置に置く・まばたきゲージ・足あと<br/>src/render/renderer.js"]
     MAIN -->|"coat, personality"| RENDER
+    RENDER -->|"dayTime（タイトル・名前付けは朝）, 夜かどうか"| LIGHT["時間帯の景色：朝→昼→夕方→夜の空の色・太陽／月・部屋にかける薄い色（猫は染めない）・床の日だまり・スタンドライトの明るさ<br/>src/render/daylight.js（daylightAt）"]
+    LIGHT -->|"Daylight {phase, skyTop, skyBottom, hill, cloud, tint, lamp, sun, patch}"| RENDER
+    DATA -->|"DAYLIGHT（時間帯の区切り）"| LIGHT
     DAY -->|"DayState"| HUD["日数・残り時間・まばたきボタン<br/>src/ui/hud.js"]
 
     DEBUG["デバッグパネル<br/>src/ui/debugPanel.js"] -->|"personality / coat / skipDay / trustMax / reset / speed"| MAIN
@@ -107,9 +110,9 @@ stateDiagram-v2
 | GameState | `day`, `trust`, `personality`, `coat`（毛色）, `catName`（名前）, `nightChoice`, `mistakes`, `seenCards`（表示済みの説明）, `seed` | `src/main.js` の `session.game`（更新は `progression.js` が返す） |
 | Session | `game`（GameState）, `misses`（猫の様子ごとの失敗回数。ヒント用） | `src/main.js` |
 | DayState | `dayNumber`, `trust`, `wariness`, `timeLeft`, `trustRate`（おやつで ×0.85）, `boxLockLeft`, `floorBonus`（おやつの日に距離の下限を近くする分）, `mistakes`, `actions`, `signs`, `canLap`, `approachMul` | `src/scenes/dayScene.js` |
-| CatState | `mode`（relax／look／tailUp／tailFlick／belly／backTurn／rub／fakeRub／purr／flee／inBox／lap）, `distance`, `modeTimeLeft`, `walking`（くつろぎで歩いて近づいている間 true。描画で歩く姿にする） | `src/scenes/dayScene.js`（更新は `catBrain.js` / `rules.js` が返す） |
+| CatState | `mode`（relax／look／tailUp／tailFlick／belly／backTurn／rub／fakeRub／purr／flee／inBox／lap）, `distance`, `modeTimeLeft`, `walking`（くつろぎで歩いて近づいている間 true。描画で歩く姿にする）。夜の画面の猫だけ `hidden`（帰っていて見えない。`nightCatPose` が付け、描画でその場で消す） | `src/scenes/dayScene.js`（更新は `catBrain.js` / `rules.js` が返す） |
 | Action | `{ type: 'pet' }` / `{ type: 'blink', holdMs, sawLook }` | `src/ui/input.js` が作り、`sawLook` は `src/scenes/dayScene.js` が付ける |
-| View | `{ scene, cat, coat, personality, wariness, closeup, blinkHoldMs, lapTime, endingId }` | 各画面の `view()` と `src/main.js` が作り、`src/render/renderer.js` が描く |
+| View | `{ scene, cat, coat, personality, wariness, closeup, blinkHoldMs, lapTime, endingId, dayTime }`（dayTime は昼の画面だけ。その日の進み具合 0〜1） | 各画面の `view()` と `src/main.js` が作り、`src/render/renderer.js` が描く |
 | ActionResult | `{ cat, day, feedback: 'flee' \| 'kick' \| 'hide' \| 'stare' \| 'blinkBack' \| 'purr' \| 'tooFar' \| null, mistake }` | `src/game/rules.js` が返す |
 | DayResult | `{ lapped, trust, mistakes, cat }`（cat は昼の終わりの `{mode, distance, walking}`。progression は使わず、main.js が夜の画面に渡す） | `src/scenes/dayScene.js` が作る |
 | NightChoice | `'treat' \| 'box' \| 'nothing'` | `src/scenes/nightScene.js` が作る |
@@ -120,7 +123,8 @@ stateDiagram-v2
 - 置き場所：`tests/*.test.js`（共通の状態生成は `tests/helpers.js`）。実行：`node --test` または `npm test`（Node 24 の標準機能。追加ライブラリなし）
 - 対象：`src/game/rules.js`、`src/game/catBrain.js`、`src/game/progression.js`（すべて純粋関数）、`game.js` が最新か・通常スクリプトとして読めるか（`tests/bundle.test.js`）
 - BGM：`tests/bgm.test.js` は曲の切り替え順（…→OFF→最初の曲）、楽譜の書式、小節をまたぐのばし、「メロディの長い音がコードの音（か9度）になっている」こと、試聴ページのスクリプトが最新かを確かめる
-- 画面：`tests/scenes.test.js` は、夜の画面が表示しきるまで猫が昼の終わりの場所にいること、名前の候補が毛色に合っていること、「チラッ」が名前付けのアップに出ないこと、まばたきを返したら「にゃーん」が鳴ることを確かめる
-- 描画：`tests/renderer.test.js` は描画命令を記録する偽の Canvas を使い、全ポーズで「毛色で塗った形に輪郭線がある」「塗っていない線（柄・白い部分）をこげ茶でなぞらない」こと、近づいただけの猫は膝の奥・膝に乗った猫は膝の手前に描くこと、手が袖口より手前にあること、手を伸ばしても袖があること、タイトルに戻るときに猫が見えたまま動かない（消えてから移り、毛色も消えている間に変わる）ことを確かめる
+- 画面：`tests/scenes.test.js` は、夜の画面が表示しきるまで猫が昼の終わりの場所にいて、そのあと hidden（帰っていて見えない）になること、名前の候補が毛色に合っていること、「チラッ」が名前付けのアップに出ないこと、まばたきを返したら「にゃーん」が鳴ることを確かめる
+- 描画：`tests/renderer.test.js` は描画命令を記録する偽の Canvas を使い、全ポーズで「毛色で塗った形に輪郭線がある」「塗っていない線（柄・白い部分）をこげ茶でなぞらない」こと、近づいただけの猫は膝の奥・膝に乗った猫は膝の手前に描くこと、手が袖口より手前にあること、手を伸ばしても袖があること、タイトルに戻るとき・夜から次の日に移るときに猫が見えたまま動かない（消えてから移り、毛色も消えている間に変わる）こと、ページを開いた直後に猫が滑ってこないこと、夕方の部屋にかける色を猫より先に塗る（猫を染めない）ことを確かめる
+- 時間帯の景色：`tests/daylight.test.js` は、朝・昼・夕方・夜の名前と空の色、なめらかに変わること、部屋にかける色が薄いこと（0〜0.15）、スタンドライトが夕方からつくこと、太陽と月が窓の中にあることを確かめる
 - 効果音：`tests/sound.test.js` は、効果音 OFF では「にゃーん」を鳴らさないこと、準備に失敗しても一度だけ知らせて例外を出さないことを確かめる
 - 画面の確認：`index.html` をダブルクリックで開く

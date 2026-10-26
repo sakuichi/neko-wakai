@@ -196,3 +196,49 @@ test('昼の画面で、まばたきを返してくれたら「にゃーん」�
   assert.deepEqual(effects, ['blinkBack']);
   assert.deepEqual(played, ['meow']);
 });
+
+test('夜の画面が表示しきってからは、猫は帰っていて見えない（relax・距離80・hidden）', () => {
+  for (const t of [NIGHT_FADE_SEC, NIGHT_FADE_SEC + 0.01, 10]) {
+    const pose = nightCatPose({ mode: 'look', distance: 20 }, t);
+    assert.equal(pose.mode, 'relax', `${t}秒`);
+    assert.equal(pose.distance, 80, `${t}秒`);
+    assert.equal(pose.hidden, true, `${t}秒`);
+  }
+});
+
+test('昼の画面は、その日の進み具合（dayTime：始まり 0 → 時間切れ 1）を描画に渡す', async () => {
+  const { createDayScene } = await import('../src/scenes/dayScene.js');
+  const { createGame } = await import('../src/game/progression.js');
+  const { DAYS } = await import('../src/data/params.js');
+  const { CARDS } = await import('../src/data/texts.js');
+  const { fixedRng } = await import('./helpers.js');
+  const noop = () => {};
+  const overlay = { busy: false, splash: noop, card: noop, bubble: noop, toast: noop, clear: noop };
+  const hud = { show: noop, update: noop };
+  const renderer = { addEffect: noop, hitTestCat: () => false };
+  const input = { setBlinkEnabled: noop, holdMs: () => 0 };
+  const sound = { purr: noop, meow: noop, bump: noop };
+  // 2日目（膝に乗らない日なので、時間切れまで進む）
+  const session = {
+    game: { ...createGame({ personality: 'amaenbo', seed: 1 }), day: 2, catName: 'たま', seenCards: Object.keys(CARDS) },
+    misses: {},
+  };
+  const duration = DAYS[1].durationSec;
+  const scene = createDayScene({ session, overlay, hud, renderer, input, sound, rng: fixedRng(0.5), onEnd: noop });
+  const first = scene.view().dayTime;
+  assert.equal(typeof first, 'number', 'view() に dayTime がない');
+  assert.ok(first >= 0 && first <= 0.01, `始まった直後の dayTime ${first}`);
+  const dt = 0.05;
+  let prev = first;
+  const steps = Math.round((duration + 2) / dt);
+  for (let i = 1; i <= steps; i++) {
+    scene.update(dt);
+    const v = scene.view().dayTime;
+    assert.ok(v >= 0 && v <= 1, `${(i * dt).toFixed(2)}秒: dayTime ${v}`);
+    assert.ok(v >= prev, `${(i * dt).toFixed(2)}秒: dayTime が減った ${prev} → ${v}`);
+    if (i === Math.round(duration / 2 / dt)) assert.ok(Math.abs(v - 0.5) <= 0.01, `半分の時間での dayTime ${v}`);
+    if (i === Math.round((duration - 0.2) / dt)) assert.ok(v >= 0.99, `時間切れ近くの dayTime ${v}`);
+    prev = v;
+  }
+  assert.ok(prev > 0.99 && prev <= 1, `時間切れのあとの dayTime ${prev}`);
+});

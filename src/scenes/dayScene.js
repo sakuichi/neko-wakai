@@ -2,7 +2,7 @@
 import { startDay } from '../game/progression.js';
 import { tick } from '../game/catBrain.js';
 import { applyAction } from '../game/rules.js';
-import { PERSONALITIES, MAX_VALUE } from '../data/params.js';
+import { PERSONALITIES, MAX_VALUE, DAYS } from '../data/params.js';
 import { CARDS, TUTORIAL, FEEDBACK, DAY_TITLES, HINTS, LAP_TEXT, withName } from '../data/texts.js';
 
 // 膝に乗ってから結果画面に移るまでの演出時間（ふみふみ → ゴロゴロ → 寝る）
@@ -146,6 +146,8 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
       lapTime,
       blinkHoldMs: input.holdMs(),
       wariness: day.wariness,
+      // その日の進み具合 0〜1（窓の外の景色・部屋の明るさ。src/render/daylight.js）
+      dayTime: Math.min(1, Math.max(0, 1 - day.timeLeft / DAYS[day.dayNumber - 1].durationSec)),
     }),
   };
 }

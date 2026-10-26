@@ -7,6 +7,7 @@
 // - ほっぺに薄いピンク。色はベタ塗りでグラデーションを使わない
 // - 線は均一な太さのこげ茶。角は丸く
 import { MAX_VALUE, RULES } from '../data/params.js';
+import { daylightAt, mixColor, rgba } from './daylight.js';
 
 export const W = 360;
 export const H = 640;
@@ -84,13 +85,16 @@ export function createRenderer(canvas) {
     lastScene: null,
     // 歩いている向き（-1=左、0=正面、1=右）。顔と体の傾きに使う
     facing: 0,
-    // タイトルに戻るときのフェード { outEnd（消え終わる時刻）, pose, coat, look, moved }。その前に描いていた猫を覚えておく
+    // タイトルに戻るとき・夜に帰っていくときのフェード
+    // { outEnd（消え終わる時刻）, pose, coat, look, moved, hold（見えないまま待つ）, gentle（途中で打ち切らない） }。その前に描いていた猫を覚えておく
     fade: null,
     last: null,
     // 猫を薄く描くための下書き用の Canvas（重なった線が透けないよう、猫をまとめて薄くする）
     layer: null,
     // いま描いている猫 { alpha, coat, mode }
     shown: { alpha: 1, coat: null, mode: null },
+    // 昼の進み具合（窓の外の景色・部屋の明るさ）。タイトル・名前付けは朝、エンディングは膝に乗ったときのまま
+    dayTime: 0,
   };
 
   function resize() {
@@ -140,7 +144,15 @@ export function createRenderer(canvas) {
    */
   function draw(view, t, dt) {
     a.now = t;
+    // 夜は猫が帰っていて見えない（hidden）。次の日の昼になったら、消えきるのを待ってから現れる
+    const hidden = !!poseFor(view).hidden;
+    if (a.fade?.hold && !hidden) {
+      a.fade.hold = false;
+      if (t >= a.fade.outEnd) a.fade.outEnd = t;
+    }
     if (view.scene !== a.lastScene) {
+      // ページを開いた直後は、猫をはじめからその場面の位置に置く（部屋の隅から滑ってこない）
+      if (a.lastScene === null) a.shownDistance = view.closeup ? MAX_VALUE : poseFor(view).distance;
       // 「もう一度あそぶ」などでタイトルに戻るときは、猫をその場で消してから、タイトルの位置に新しい猫を出す
       // （次は別の猫なので、毛色も消えている間に変わる）
       // 現れている途中で場面が変わったときも、いまの濃さから消し始めて、見えなくなってから移す
@@ -148,8 +160,12 @@ export function createRenderer(canvas) {
       const appearing = a.fade && t >= a.fade.outEnd;
       if ((view.scene === 'title' && a.lastScene !== null && a.last) || appearing) {
         a.fade = { outEnd: t + a.shown.alpha * CAT_FADE_SEC, ...a.last, moved: false };
-      } else if (a.fade && t < a.fade.outEnd) {
+      } else if (view.scene === 'day' && a.lastScene === 'night' && !a.fade && a.last) {
+        // 夜の画面が出きる前に選んで、猫がまだ帰っていなかったときも、その場で消えてから次の日の昼に現れる
+        a.fade = { outEnd: t + a.shown.alpha * CAT_FADE_SEC, ...a.last, moved: false, gentle: true };
+      } else if (a.fade && t < a.fade.outEnd && !a.fade.gentle) {
         // 消えている途中で次の画面に移ったら、前の猫はそこで消して、新しい猫を見えないところから出す
+        // （夜に帰っていく猫は、すぐ次の日になっても消えきるまで待つ）
         a.fade.outEnd = t;
       }
       if (view.scene === 'day') {
@@ -159,12 +175,16 @@ export function createRenderer(canvas) {
       }
       a.lastScene = view.scene;
     }
-    const fadingOut = !!a.fade && t < a.fade.outEnd;
+    // 猫が帰っていく：その場で、いまの濃さから消して、見えないまま待つ
+    if (hidden && !a.fade?.hold && a.last) {
+      a.fade = { outEnd: t + a.shown.alpha * CAT_FADE_SEC, ...a.last, moved: false, hold: true, gentle: true };
+    }
+    const fadingOut = !!a.fade && (t < a.fade.outEnd || a.fade.hold);
     let alpha = 1;
     if (fadingOut) {
-      alpha = (a.fade.outEnd - t) / CAT_FADE_SEC;
+      alpha = Math.max(0, (a.fade.outEnd - t) / CAT_FADE_SEC);
     } else if (a.fade) {
-      // 見えていない間に、タイトルの位置へ移す（途中の位置を通らない）
+      // 見えていない間に、次の場面の位置（タイトル・次の日の昼のスタート）へ移す（途中の位置を通らない）
       if (!a.fade.moved) {
         a.fade.moved = true;
         a.shownDistance = poseFor(view).distance;
@@ -205,7 +225,9 @@ export function createRenderer(canvas) {
 
     ctx.save();
     if (t < a.shakeUntil) ctx.translate(Math.sin(t * 90) * 4, Math.cos(t * 70) * 2);
-    drawRoom(ctx, view.scene === 'night');
+    if (view.dayTime !== undefined) a.dayTime = view.dayTime;
+    else if (view.scene === 'title' || view.scene === 'name') a.dayTime = 0;
+    drawRoom(ctx, daylightAt(a.dayTime, view.scene === 'night'));
     // なでようと手を伸ばしている間は、左手を膝から離す（腕が3本に見えないように）
     const reaching = a.effects.some((e) => e.type === 'reach' && t - e.t0 < REACH_SEC);
     const lap = () => {
@@ -419,15 +441,21 @@ export function createRenderer(canvas) {
 
 // ---------------------------------------------------------------- 部屋（ベタ塗り）
 
-function drawRoom(ctx, night) {
+// light: 時間帯の景色（src/render/daylight.js の daylightAt）
+function drawRoom(ctx, light) {
+  const night = light.phase === 'night';
   ctx.fillStyle = night ? '#454160' : '#f7ead8';
   ctx.fillRect(0, 0, W, 345);
 
   // 窓とカーテン
   ctx.save();
   roundRect(ctx, 36, 76, 132, 118, 10);
-  ctx.fillStyle = night ? '#2c3156' : '#cbe7f3';
-  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  drawWindowView(ctx, light);
+  ctx.restore();
+  // 景色を描いたので、窓の形をもう一度なぞって枠を描く
+  roundRect(ctx, 36, 76, 132, 118, 10);
   ctx.lineWidth = 6;
   ctx.strokeStyle = '#fffdf7';
   ctx.stroke();
@@ -470,6 +498,19 @@ function drawRoom(ctx, night) {
   for (let i = -4; i <= 4; i++) line(ctx, 180 + i * 40, 347, 180 + i * 130, H);
   ctx.restore();
 
+  // 窓から床に差す日だまり（朝は右へ長く、昼は短く、夕方は左へ長く）
+  const sp = light.patch;
+  if (sp.alpha > 0) {
+    ctx.beginPath();
+    ctx.moveTo(46, 347);
+    ctx.lineTo(158, 347);
+    ctx.lineTo(158 + sp.skew + sp.length * 0.25, 347 + sp.length);
+    ctx.lineTo(46 + sp.skew - sp.length * 0.25, 347 + sp.length);
+    ctx.closePath();
+    ctx.fillStyle = rgba(sp.color, sp.alpha);
+    ctx.fill();
+  }
+
   // ラグ
   ellipse(ctx, 185, 520, 150, 62, night ? '#86677a' : '#f7d4c6');
   ellipse(ctx, 185, 520, 124, 48, null, night ? '#9b7d8e' : '#fae4da', 0, 3);
@@ -481,6 +522,76 @@ function drawRoom(ctx, night) {
   ctx.fillStyle = '#dd9469';
   ctx.fill();
   ctx.restore();
+
+  drawStandLight(ctx, light.lamp);
+  // 部屋全体にかける薄い色（朝はやわらかく、夕方は橙色）。猫はこのあとに描くので、猫の色は染めない
+  if (light.tint.alpha > 0) {
+    ctx.fillStyle = rgba(light.tint.color, light.tint.alpha);
+    ctx.fillRect(0, 0, W, H);
+  }
+  drawLampGlow(ctx, light.lamp);
+}
+
+// 窓の外：空（上から下へ色を変えた帯）・遠くの丘・雲・太陽（夜は月と星）
+function drawWindowView(ctx, light) {
+  const BANDS = 5;
+  for (let i = 0; i < BANDS; i++) {
+    ctx.fillStyle = mixColor(light.skyTop, light.skyBottom, i / (BANDS - 1));
+    ctx.fillRect(36, 76 + (118 / BANDS) * i, 132, 118 / BANDS + 1);
+  }
+  const s = light.sun;
+  if (s.kind === 'moon') {
+    for (const [x, y] of [[58, 92], [80, 112], [150, 150], [64, 150], [104, 88]]) ellipse(ctx, x, y, 1.6, 1.6, '#fdf6d8');
+    ellipse(ctx, s.x, s.y, 11, 11, s.color);
+    // 欠けた部分は、月の高さの空の帯と同じ色で塗る
+    const band = Math.min(BANDS - 1, Math.max(0, Math.floor((s.y - 3 - 76) / (118 / BANDS))));
+    ellipse(ctx, s.x + 5, s.y - 3, 9, 9, mixColor(light.skyTop, light.skyBottom, band / (BANDS - 1)));
+  } else {
+    ellipse(ctx, s.x, s.y, 13, 13, s.color);
+  }
+  if (light.cloud > 0) {
+    ctx.save();
+    ctx.globalAlpha = light.cloud;
+    for (const [x, y] of [[70, 108], [138, 126]]) {
+      ellipse(ctx, x, y, 16, 7, '#ffffff');
+      ellipse(ctx, x + 10, y - 4, 10, 7, '#ffffff');
+    }
+    ctx.restore();
+  }
+  // 遠くの丘（窓の下のほう）
+  ellipse(ctx, 70, 200, 60, 22, light.hill);
+  ellipse(ctx, 150, 204, 56, 18, light.hill);
+}
+
+// スタンドライトの位置（額の下。猫が近づいてくる道すじの後ろに柱が立たないよう、右に寄せる）
+const LAMP_X = 262;
+
+// 部屋の奥のスタンドライト。lamp: 明るさ 0〜1（0 は消えている）
+function drawStandLight(ctx, lamp) {
+  ctx.save();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = '#b08c6a';
+  line(ctx, LAMP_X, 222, LAMP_X, 336);
+  ellipse(ctx, LAMP_X, 338, 14, 4, '#b08c6a');
+  ctx.beginPath();
+  ctx.moveTo(LAMP_X - 16, 202);
+  ctx.lineTo(LAMP_X + 16, 202);
+  ctx.lineTo(LAMP_X + 24, 226);
+  ctx.lineTo(LAMP_X - 24, 226);
+  ctx.closePath();
+  ctx.fillStyle = mixColor('#f3e3c8', '#fff4c2', lamp);
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#d0a57a';
+  ctx.stroke();
+  ctx.restore();
+}
+
+// スタンドライトの明かり：かさの周りと床を、暖かい色でほんのり明るくする（ベタ塗りの輪を重ねる）
+function drawLampGlow(ctx, lamp) {
+  if (lamp <= 0) return;
+  for (let r = 120; r >= 30; r -= 15) ellipse(ctx, LAMP_X, 226, r, r * 0.8, rgba('#ffd98a', 0.035 * lamp));
+  ellipse(ctx, LAMP_X, 342, 70, 14, rgba('#ffd98a', 0.16 * lamp));
 }
 
 // 画面手前の、プレイヤーの膝（正座しているのを上から見たところ）。

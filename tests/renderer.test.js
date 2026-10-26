@@ -4,6 +4,7 @@ import { createRenderer, COATS, LINE_COLOR, LINE_WIDTH, LAP_COLORS } from '../sr
 // まだない名前（CAT_FADE_SEC など）があっても読み込みが止まらないように、名前空間でも取り込む
 import * as R from '../src/render/renderer.js';
 import { ENDINGS } from '../src/data/texts.js';
+import { nightCatPose, NIGHT_FADE_SEC } from '../src/scenes/nightScene.js';
 
 // 描画命令を記録する偽の Canvas。塗り（fill）と線（stroke）を、そのときのパスと一緒に残す
 function recordingCanvas() {
@@ -355,14 +356,14 @@ test('ページを開いていきなりタイトルのときは、猫はフェ�
   }
 });
 
-test('昼→夜→昼の切り替えでは、猫はフェードしない', () => {
+// 夜→次の日の昼は、猫がその場で消えてから現れる（下の「夜に帰っていく」のテスト）
+test('昼→夜の切り替えでは、猫はフェードしない（夜の画面が出きるまで）', () => {
   const rec = recordingCanvas();
   const r = R.createRenderer(rec.canvas);
   const cat = { mode: 'relax', distance: 60 };
   const day = drawAt60(r, () => ({ scene: 'day', coat: OLD_COAT, cat }), 1, 1);
   const night = drawAt60(r, () => ({ scene: 'night', coat: OLD_COAT, cat }), 2, 2 * fadeSec() + 0.5);
-  const day2 = drawAt60(r, () => ({ scene: 'day', coat: OLD_COAT, cat }), 4, 2 * fadeSec() + 0.5);
-  for (const f of [...day, ...night, ...day2]) assert.equal(f.alpha, 1, `e=${f.e.toFixed(3)}: alpha`);
+  for (const f of [...day, ...night]) assert.equal(f.alpha, 1, `e=${f.e.toFixed(3)}: alpha`);
 });
 
 test('訪問者エンドからタイトルに戻るときも、猫は消えてから新しい毛色で現れる', () => {
@@ -471,4 +472,186 @@ test('現れている途中でアップ→タイトルとリセットを連打�
   assert.equal(last.coat, LAST_COAT, '最後の毛色');
   assert.equal(last.alpha, 1, '最後は不透明');
   assertJumpOnlyWhenInvisibleAll(seq);
+});
+
+// ---------------------------------------------------------------- 夜に猫が帰っていく
+
+const NIGHT_COAT = 'kijitora';
+const LAST_DAY_CAT = { mode: 'look', distance: 20 };
+const dayEndAt = () => ({ scene: 'day', coat: NIGHT_COAT, cat: LAST_DAY_CAT });
+const nightAt = (e) => ({ scene: 'night', coat: NIGHT_COAT, cat: nightCatPose(LAST_DAY_CAT, e) });
+const nextDayAt = () => ({ scene: 'day', coat: NIGHT_COAT, cat: { mode: 'relax', distance: 100 } });
+
+// 次の日の昼のスタート位置（distance 100 の relax を落ち着くまで描いた位置）
+function dayStartPosition() {
+  const rec = recordingCanvas();
+  const r = R.createRenderer(rec.canvas);
+  for (let i = 0; i < 3 / FRAME; i++) r.draw(nextDayAt(), 1 + i * FRAME, FRAME);
+  return { ...r.shownPosition() };
+}
+
+test('夜の画面が表示しきると、猫はその場で消え、次の日の昼はスタート位置に見えないところから現れる', () => {
+  const fade = fadeSec();
+  const seq = drawSegments([
+    { at: dayEndAt, frames: framesOf(3) },
+    { at: nightAt, frames: framesOf(1.5) },
+    { at: nextDayAt, frames: framesOf(1) },
+  ]);
+  const before = seq.filter((f) => f.seg === 0).at(-1);
+  const night = seq.filter((f) => f.seg === 1);
+  const day = seq.filter((f) => f.seg === 2);
+
+  // 夜の前半（hidden なし）はフェードしない
+  const shown = night.filter((f) => f.e < NIGHT_FADE_SEC);
+  assert.ok(shown.length > 0);
+  for (const f of shown) assert.equal(f.alpha, 1, `${fmt(f)}: 夜の前半の alpha`);
+
+  // hidden になったら、その場・同じ姿勢で消える
+  const hidden = night.filter((f) => f.e >= NIGHT_FADE_SEC).map((f) => ({ ...f, h: f.e - NIGHT_FADE_SEC }));
+  const out = hidden.filter((f) => f.h < fade - EDGE);
+  assert.ok(out.length > 0);
+  for (const f of out) {
+    assert.ok(dist(f.pos, before.pos) <= 3, `${fmt(f)}: 位置 (${before.pos.x},${before.pos.y}) → (${f.pos.x},${f.pos.y})`);
+    assert.ok(Math.abs(f.pos.s - before.pos.s) <= 0.02, `${fmt(f)}: 大きさ ${before.pos.s} → ${f.pos.s}`);
+    assert.equal(f.mode, 'look', `${fmt(f)}: 姿勢`);
+  }
+  for (let i = 1; i < out.length; i++) {
+    assert.ok(out[i].alpha <= out[i - 1].alpha, `${fmt(out[i])}: alpha が上がった ${out[i - 1].alpha} → ${out[i].alpha}`);
+  }
+  const mid = hidden.reduce((b, f) => (Math.abs(f.h - fade / 2) < Math.abs(b.h - fade / 2) ? f : b)).alpha;
+  assert.ok(mid > 0.05 && mid < 0.95, `消える途中の alpha ${mid}`);
+  const gone = hidden.filter((f) => f.h >= fade + EDGE);
+  assert.ok(gone.length > 0);
+  for (const f of gone) assert.ok(f.alpha <= 0.05, `${fmt(f)}: 帰ったあとの alpha ${f.alpha}`);
+
+  // 次の日の昼：スタート位置に、見えないところから現れる
+  const start = dayStartPosition();
+  assert.ok(day[0].alpha <= 0.05, `昼になった直後の alpha ${day[0].alpha}`);
+  for (let i = 1; i < day.length; i++) {
+    assert.ok(day[i].alpha >= day[i - 1].alpha, `${fmt(day[i])}: alpha が下がった ${day[i - 1].alpha} → ${day[i].alpha}`);
+  }
+  const done = day.filter((f) => f.e >= fade + EDGE);
+  assert.ok(done.length > 0);
+  for (const f of done) assert.equal(f.alpha, 1, `${fmt(f)}: 現れ終わったら不透明`);
+  for (const f of day) {
+    assert.equal(f.mode, 'relax', `${fmt(f)}: 姿勢`);
+    assert.ok(Math.abs(f.pos.y - start.y) <= 2, `${fmt(f)}: y ${f.pos.y}（スタート位置 ${start.y}）`);
+  }
+  // 大きな移動は見えないときだけ（昼の終わりのフレームから数える）
+  assertJumpOnlyWhenInvisibleAll(seq.filter((f) => f.seg > 0 || f === before));
+});
+
+test('夜の画面ですぐ選んで、消えきる前に昼になっても、猫はぱっと消えず、消えきってから移って現れる', () => {
+  const fade = fadeSec();
+  const seq = drawSegments([
+    { at: dayEndAt, frames: framesOf(3) },
+    { at: nightAt, frames: framesOf(NIGHT_FADE_SEC + 0.1) },
+    { at: nextDayAt, frames: framesOf(2 * fade + 0.5) },
+  ]);
+  const before = seq.filter((f) => f.seg === 0).at(-1);
+  const night = seq.filter((f) => f.seg === 1);
+  assert.ok(night.some((f) => f.e >= NIGHT_FADE_SEC), '夜のうちに hidden になってから昼に切り替える（このテストの前提）');
+  const rest = seq.filter((f) => f.seg > 0 || f === before);
+  for (let i = 1; i < rest.length; i++) {
+    const d = Math.abs(rest[i].alpha - rest[i - 1].alpha);
+    assert.ok(d <= 0.1, `${fmt(rest[i])}: alpha が1フレームで ${rest[i - 1].alpha} → ${rest[i].alpha} に変わった`);
+  }
+  assertJumpOnlyWhenInvisibleAll(rest);
+  const last = seq.at(-1);
+  assert.equal(last.alpha, 1, '最後は不透明');
+  assert.equal(last.mode, 'relax', '最後の姿勢');
+});
+
+// ---------------------------------------------------------------- ページを開いた直後
+
+test('ページを開いていきなりタイトルのときは、最初のフレームから猫はタイトルの位置にいて、滑ってこない', () => {
+  const original = Math.random;
+  // 道すじの蛇行を同じにして、x も比べられるようにする
+  Math.random = () => 0.3;
+  try {
+    const settled = titlePosition();
+    const rec = recordingCanvas();
+    const r = R.createRenderer(rec.canvas);
+    const frames = drawAt60(r, titleAt(NEW_COAT), 1, 2);
+    const first = frames[0];
+    assert.ok(Math.abs(first.pos.y - settled.y) <= 2, `1フレーム目の y ${first.pos.y}（落ち着いた位置 ${settled.y}）`);
+    assert.ok(Math.abs(first.pos.s - settled.s) <= 0.02, `1フレーム目の大きさ ${first.pos.s}（落ち着いた位置 ${settled.s}）`);
+    assert.ok(Math.abs(first.pos.x - settled.x) <= 2, `1フレーム目の x ${first.pos.x}（落ち着いた位置 ${settled.x}）`);
+    for (let i = 1; i < frames.length; i++) {
+      const d = dist(frames[i].pos, frames[i - 1].pos);
+      assert.ok(d <= JUMP_PX, `e=${frames[i].e.toFixed(3)}: ${d.toFixed(1)}px 動いた`);
+    }
+    for (const f of frames) assert.equal(f.alpha, 1, `e=${f.e.toFixed(3)}: alpha`);
+  } finally {
+    Math.random = original;
+  }
+});
+
+test('夜の画面が出きる前に選んで昼になっても、猫は見えたまま滑らず、その場で消えきってからスタート位置に現れる', () => {
+  const seq = drawSegments([
+    { at: dayEndAt, frames: framesOf(3) },
+    { at: nightAt, frames: framesOf(0.2) },
+    { at: nextDayAt, frames: framesOf(1.2) },
+  ]);
+  const before = seq.filter((f) => f.seg === 0).at(-1);
+  assert.ok(seq.filter((f) => f.seg === 1).every((f) => f.e < NIGHT_FADE_SEC), '夜の画面が出きる前に昼に切り替える（このテストの前提）');
+  const rest = seq.filter((f) => f.seg > 0 || f === before);
+  for (let i = 1; i < rest.length; i++) {
+    const d = Math.abs(rest[i].alpha - rest[i - 1].alpha);
+    assert.ok(d <= 0.1, `${fmt(rest[i])}: alpha が1フレームで ${rest[i - 1].alpha} → ${rest[i].alpha} に変わった`);
+  }
+  assertJumpOnlyWhenInvisibleAll(rest);
+  const start = dayStartPosition();
+  const last = seq.at(-1);
+  assert.equal(last.alpha, 1, '最後は不透明');
+  assert.equal(last.mode, 'relax', '最後の姿勢');
+  assert.ok(Math.abs(last.pos.y - start.y) <= 2, `最後の y ${last.pos.y}（スタート位置 ${start.y}）`);
+});
+
+// ---------------------------------------------------------------- 時間帯の景色
+
+// 塗り（fill と fillRect）を、そのときの fillStyle・globalAlpha と一緒に、発生した順に記録する偽の Canvas
+function paintRecordingCanvas() {
+  const paints = [];
+  const state = { strokeStyle: '#000', fillStyle: '#000', lineWidth: 1, globalAlpha: 1 };
+  const stack = [];
+  const ctx = new Proxy(state, {
+    get(target, key) {
+      if (key in target) return target[key];
+      if (key === 'save') return () => stack.push({ ...state });
+      if (key === 'restore') return () => Object.assign(state, stack.pop());
+      if (key === 'fill' || key === 'fillRect') return () => paints.push({ op: key, style: String(state.fillStyle), alpha: state.globalAlpha });
+      return () => {};
+    },
+    set(target, key, value) {
+      target[key] = value;
+      return true;
+    },
+  });
+  const canvas = { width: 360, height: 640, getContext: () => ctx, getBoundingClientRect: () => ({ left: 0, top: 0, width: 360, height: 640 }) };
+  return { canvas, paints };
+}
+
+// '#rrggbb' か 'rgb(a)(r, g, b, …)' の色が、hex と同じ RGB か
+function sameRgb(style, hex) {
+  const want = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const s = style.trim().toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(s)) return s === hex.toLowerCase();
+  const m = s.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/);
+  return !!m && [m[1], m[2], m[3]].every((v, i) => Math.round(+v) === want[i]);
+}
+
+test('夕方の部屋にかける色は猫より先に塗る（猫の毛色は部屋の色に染めない）', async () => {
+  const { daylightAt } = await import('../src/render/daylight.js');
+  const tint = daylightAt(0.95).tint;
+  assert.ok(tint.alpha > 0, `夕方は部屋に色をかける（このテストの前提）: alpha ${tint.alpha}`);
+  const rec = paintRecordingCanvas();
+  const r = R.createRenderer(rec.canvas);
+  r.draw({ scene: 'day', dayTime: 0.95, coat: 'chatora', cat: { mode: 'relax', distance: 50 } }, 1, FRAME);
+  const tintAt = rec.paints.map((p, i) => (sameRgb(p.style, tint.color) ? i : -1)).filter((i) => i >= 0);
+  // 部屋の白（額など）と見分けるため、毛色の白・柄ではなく地の色（fur）で探す
+  const firstFur = rec.paints.findIndex((p) => p.style === COATS.chatora.fur);
+  assert.ok(firstFur >= 0, '猫の毛色の塗りが見つからない');
+  assert.ok(tintAt.length > 0, `部屋にかける色 ${tint.color} の塗りが見つからない`);
+  assert.ok(Math.max(...tintAt) < firstFur, `部屋にかける色の塗り ${tintAt.join(',')} / 猫の最初の塗り ${firstFur}`);
 });

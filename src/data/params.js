@@ -67,6 +67,10 @@ export const DAYS = [
   { day: 7, durationSec: 45, startWariness: 30, actions: ['pet', 'blink'], signs: LATE_SIGNS, canLap: true, approachMul: 1.5 },
 ];
 
+// 昼の景色の時間帯（昼の進み具合 0〜1 で）。0〜noonAt で朝→昼、eveningFrom〜eveningAt で昼→夕方に変わる。
+// 40秒の日なら、8秒で昼になり、残り14秒から夕焼けが始まり、残り8秒で夕方になる（色は src/render/daylight.js）
+export const DAYLIGHT = { noonAt: 0.2, eveningFrom: 0.65, eveningAt: 0.8 };
+
 export const NIGHT = {
   // おやつを置くと、その場で信頼が増える。代わりに翌日の信頼の増え方が下がる
   treatTrust: 8,

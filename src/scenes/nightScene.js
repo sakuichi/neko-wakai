@@ -4,9 +4,10 @@ import { NIGHT_TEXT, withName } from '../data/texts.js';
 export const NIGHT_FADE_SEC = 0.5;
 const AWAY = { mode: 'relax', distance: 80 };
 
-// 夜の画面が表示しきるまでは、猫を昼の終わりの場所に留める（画面の裏で遠ざかる）
+// 夜の画面が表示しきるまでは、猫を昼の終わりの場所に留める。そのあとは帰っていく（その場で消えて見えない。
+// 消え方は src/render/renderer.js）
 export function nightCatPose(lastCat, t) {
-  return t < NIGHT_FADE_SEC ? lastCat : AWAY;
+  return t < NIGHT_FADE_SEC ? lastCat : { ...AWAY, hidden: true };
 }
 
 // lastCat: 昼の終わりの猫の様子と距離。now: 実際の時刻（ミリ秒）。
