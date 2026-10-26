@@ -8,12 +8,13 @@ export function createSound() {
   // 効果音の出口。声を大きくしても音割れしないよう、軽くまとめる（リミッター）
   let out = null;
   let enabled = load();
+  // 音の準備に失敗した（この環境では効果音を鳴らせない）
+  let failed = false;
 
-  function unlock() {
-    if (!enabled) return;
-    if (!ac) {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
+  // 音を準備できない環境では、一度だけ知らせて効果音なしでゲームを続ける（src/ui/music.js の BGM と同じ）。
+  // 失敗したら作りかけの AudioContext は捨て、以後は作り直さない
+  function prepare(AC) {
+    try {
       ac = new AC();
       noise = makeNoise(ac);
       out = ac.createDynamicsCompressor();
@@ -27,12 +28,29 @@ export function createSound() {
       const trim = ac.createGain();
       trim.gain.value = 0.8;
       out.connect(trim).connect(ac.destination);
+      return true;
+    } catch (e) {
+      console.warn('効果音を準備できませんでした', e);
+      failed = true;
+      ac?.close?.().catch(() => {});
+      ac = null;
+      noise = null;
+      out = null;
+      return false;
+    }
+  }
+
+  function unlock() {
+    if (!enabled || failed) return;
+    if (!ac) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC || !prepare(AC)) return;
     }
     if (ac.state === 'suspended') ac.resume();
   }
 
   function ready() {
-    return enabled && ac && ac.state === 'running';
+    return enabled && !failed && ac && ac.state === 'running';
   }
 
   function vibrate(pattern) {

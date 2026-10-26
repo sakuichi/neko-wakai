@@ -20,9 +20,11 @@ function withGlobals(values, fn) {
   }
 }
 
-// 効果音に足りるだけの、偽の AudioContext。作られた回数と createOscillator が呼ばれた回数を数える
-function fakeAudio() {
-  const counts = { created: 0, oscillators: 0 };
+// 効果音に足りるだけの、偽の AudioContext。作られた回数・createOscillator が呼ばれた回数・close された回数を数える。
+// failOn にメソッド名を渡すと、そのメソッドが例外を投げる（準備の失敗を再現する）。
+// strictConnect を true にすると、本物の WebAudio と同じく、つなぎ先がないときに connect が例外を投げる
+function fakeAudio({ failOn = null, strictConnect = false } = {}) {
+  const counts = { created: 0, oscillators: 0, closed: 0 };
   const param = (value) => ({
     value,
     setValueAtTime() {},
@@ -34,6 +36,7 @@ function fakeAudio() {
   const node = (kind, extra = {}) => ({
     kind,
     connect(to) {
+      if (strictConnect && !to) throw new TypeError('connect: つなぎ先がない');
       return to;
     },
     disconnect() {},
@@ -46,6 +49,11 @@ function fakeAudio() {
       this.currentTime = 0;
       this.sampleRate = 100;
       this.destination = node('destination');
+      if (failOn) {
+        this[failOn] = () => {
+          throw new Error(`${failOn} に失敗（テスト用）`);
+        };
+      }
     }
     resume() {
       this.state = 'running';
@@ -56,6 +64,7 @@ function fakeAudio() {
       return Promise.resolve();
     }
     close() {
+      counts.closed++;
       this.state = 'closed';
       return Promise.resolve();
     }
@@ -119,4 +128,29 @@ test('効果音にチャイムはない（まばたきの音は「にゃーん�
     const sound = createSound();
     assert.equal(typeof sound.chime, 'undefined');
   });
+});
+
+test('効果音の準備に失敗したら、一度だけ知らせて作りかけの AudioContext を閉じ、以後は作り直さず例外も出さない', () => {
+  const { FakeAudioContext, counts } = fakeAudio({ failOn: 'createDynamicsCompressor', strictConnect: true });
+  const originalWarn = console.warn;
+  let warns = 0;
+  console.warn = () => {
+    warns++;
+  };
+  try {
+    withGlobals(audioGlobals(FakeAudioContext, null), () => {
+      const sound = createSound();
+      assert.doesNotThrow(() => sound.unlock(), '1回目の unlock');
+      assert.doesNotThrow(() => sound.unlock(), '2回目の unlock');
+      assert.doesNotThrow(() => sound.unlock(), '3回目の unlock');
+      assert.doesNotThrow(() => sound.purr(), 'purr');
+      assert.doesNotThrow(() => sound.meow(), 'meow');
+      assert.doesNotThrow(() => sound.bump(), 'bump');
+      assert.equal(counts.created, 1, 'AudioContext を作った回数');
+      assert.equal(counts.closed, 1, '作りかけの AudioContext を close した回数');
+      assert.equal(warns, 1, 'console.warn の回数');
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
 });

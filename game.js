@@ -289,6 +289,8 @@ __modules['src/render/renderer.js'] = (() => {
   // 膝の上に座ったときの位置と大きさ
   const LAP_SEAT = { x: 180, y: 612, s: 1.3 };
   const LAP_JUMP_SEC = 0.5;
+  // タイトルに戻るとき、猫がその場で消える時間と、タイトルの位置に現れる時間（それぞれ）
+  const CAT_FADE_SEC = 0.4;
   // 近づいてくる道すじの蛇行：距離100あたり約1.5往復、幅は猫の大きさ1あたり80
   const PATH_FREQ = (Math.PI * 2 * 1.5) / MAX_VALUE;
   const PATH_AMP = 80;
@@ -320,6 +322,13 @@ __modules['src/render/renderer.js'] = (() => {
       lastScene: null,
       // 歩いている向き（-1=左、0=正面、1=右）。顔と体の傾きに使う
       facing: 0,
+      // タイトルに戻るときのフェード { outEnd（消え終わる時刻）, pose, coat, look, moved }。その前に描いていた猫を覚えておく
+      fade: null,
+      last: null,
+      // 猫を薄く描くための下書き用の Canvas（重なった線が透けないよう、猫をまとめて薄くする）
+      layer: null,
+      // いま描いている猫 { alpha, coat, mode }
+      shown: { alpha: 1, coat: null, mode: null },
     };
 
     function resize() {
@@ -369,9 +378,18 @@ __modules['src/render/renderer.js'] = (() => {
      */
     function draw(view, t, dt) {
       a.now = t;
-      COAT = COATS[view.coat] ?? COATS.chatora;
-      const cat = poseFor(view);
       if (view.scene !== a.lastScene) {
+        // 「もう一度あそぶ」などでタイトルに戻るときは、猫をその場で消してから、タイトルの位置に新しい猫を出す
+        // （次は別の猫なので、毛色も消えている間に変わる）
+        // 現れている途中で場面が変わったときも、いまの濃さから消し始めて、見えなくなってから移す
+        // （ぱっと濃くなったり、見えたまま跳んだりしないように）
+        const appearing = a.fade && t >= a.fade.outEnd;
+        if ((view.scene === 'title' && a.lastScene !== null && a.last) || appearing) {
+          a.fade = { outEnd: t + a.shown.alpha * CAT_FADE_SEC, ...a.last, moved: false };
+        } else if (a.fade && t < a.fade.outEnd) {
+          // 消えている途中で次の画面に移ったら、前の猫はそこで消して、新しい猫を見えないところから出す
+          a.fade.outEnd = t;
+        }
         if (view.scene === 'day') {
           const before = placement(a.shownDistance).x;
           a.pathPhase = Math.random() * Math.PI * 2;
@@ -379,13 +397,39 @@ __modules['src/render/renderer.js'] = (() => {
         }
         a.lastScene = view.scene;
       }
+      const fadingOut = !!a.fade && t < a.fade.outEnd;
+      let alpha = 1;
+      if (fadingOut) {
+        alpha = (a.fade.outEnd - t) / CAT_FADE_SEC;
+      } else if (a.fade) {
+        // 見えていない間に、タイトルの位置へ移す（途中の位置を通らない）
+        if (!a.fade.moved) {
+          a.fade.moved = true;
+          a.shownDistance = poseFor(view).distance;
+          a.lapBlend = 0;
+          a.pathOffset = 0;
+          a.facing = 0;
+          a.shownP = null;
+        }
+        alpha = Math.min(1, (t - a.fade.outEnd) / CAT_FADE_SEC);
+        if (alpha >= 1) a.fade = null;
+      }
+      const coatKey = fadingOut ? a.fade.coat : view.coat;
+      COAT = COATS[coatKey] ?? COATS.chatora;
+      const cat = fadingOut ? a.fade.pose : poseFor(view);
+      // 消えている間は、前の画面の猫の見た目（アップ・寝姿の動き・性格の仕草）のまま描く
+      const look = fadingOut
+        ? a.fade.look
+        : { closeup: !!view.closeup, lapT: view.lapTime ?? 0, personality: view.personality, wariness: view.wariness ?? 0 };
+      a.last = { pose: cat, coat: coatKey, look };
+      a.shown = { alpha, coat: coatKey, mode: cat.mode };
       if (cat.mode !== a.lastMode) {
         a.lastMode = cat.mode;
         a.modeStart = t;
       }
       const follow = cat.mode === 'flee' ? 10 : 5;
       // アップの間は、次の画面（部屋の隅から始まる）に合わせて距離を先に戻しておく
-      if (view.closeup) a.shownDistance = MAX_VALUE;
+      if (look.closeup) a.shownDistance = MAX_VALUE;
       else a.shownDistance += (cat.distance - a.shownDistance) * clamp01(dt * follow);
       a.pathOffset *= Math.exp(-dt * 1.5);
       updateIdleBlink(t);
@@ -403,10 +447,10 @@ __modules['src/render/renderer.js'] = (() => {
       // なでようと手を伸ばしている間は、左手を膝から離す（腕が3本に見えないように）
       const reaching = a.effects.some((e) => e.type === 'reach' && t - e.t0 < REACH_SEC);
       const lap = () => {
-        if (!view.closeup) drawLap(ctx, { leftHand: !reaching });
+        if (!look.closeup) drawLap(ctx, { leftHand: !reaching });
       };
 
-      const p = view.closeup ? CLOSEUP : catPosition(a.shownDistance);
+      const p = look.closeup ? CLOSEUP : catPosition(a.shownDistance);
       const dx = a.shownP ? p.x - a.shownP.x : 0;
       const facingTo = cat.walking && Math.abs(dx) > 0.02 ? Math.sign(dx) : 0;
       a.facing += (facingTo - a.facing) * clamp01(dt * 6);
@@ -414,24 +458,26 @@ __modules['src/render/renderer.js'] = (() => {
       // 膝に乗るまでは、猫は膝の奥（膝を手前に描く）。跳び乗ったら膝の上（猫を手前に描く）
       const onLap = cat.mode === 'lap' && a.lapBlend > 0.6;
       if (onLap) lap();
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.scale(p.s, p.s);
-      drawShadow(ctx, cat.mode);
-      drawCat(ctx, cat.mode, {
-        t,
-        modeT: t - a.modeStart,
-        blink: eyelidAmount(t),
-        lapT: view.lapTime ?? 0,
-        scale: p.s,
-        walking: !!cat.walking,
-        closeup: !!view.closeup,
-        facing: a.facing,
-        personality: view.personality,
-        wariness: view.wariness ?? 0,
+      withAlpha(alpha, (g) => {
+        g.save();
+        g.translate(p.x, p.y);
+        g.scale(p.s, p.s);
+        drawShadow(g, cat.mode);
+        drawCat(g, cat.mode, {
+          t,
+          modeT: t - a.modeStart,
+          blink: eyelidAmount(t),
+          lapT: look.lapT,
+          scale: p.s,
+          walking: !!cat.walking,
+          closeup: look.closeup,
+          facing: a.facing,
+          personality: look.personality,
+          wariness: look.wariness,
+        });
+        drawEffects(g, t);
+        g.restore();
       });
-      drawEffects(ctx, t);
-      ctx.restore();
       if (!onLap) lap();
 
       drawReach(ctx, t, p);
@@ -441,6 +487,39 @@ __modules['src/render/renderer.js'] = (() => {
       drawPlayerEyelids(ctx, view.blinkHoldMs ?? 0, dt);
       drawBlinkGauge(ctx, view.blinkHoldMs ?? 0);
       a.effects = a.effects.filter((e) => t - e.t0 < 2);
+    }
+
+    // paint(g) で描いたものを、alpha の濃さで重ねる。薄くするときは下書き用の Canvas に描いてからまとめて重ねる
+    // （そのまま薄く描くと、体と頭の重なりなど、下の線が透けて見える）。下書きを作れない環境では、そのまま薄く描く
+    function withAlpha(alpha, paint) {
+      if (alpha >= 1) return paint(ctx);
+      const layer = alphaLayer();
+      ctx.save();
+      if (!layer) {
+        ctx.globalAlpha = alpha;
+        paint(ctx);
+        ctx.restore();
+        return;
+      }
+      const g = layer.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.clearRect(0, 0, layer.width, layer.height);
+      g.setTransform(ctx.getTransform());
+      g.lineJoin = 'round';
+      g.lineCap = 'round';
+      paint(g);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(layer, 0, 0);
+      ctx.restore();
+    }
+
+    function alphaLayer() {
+      if (typeof document === 'undefined' || !ctx.getTransform) return null;
+      if (!a.layer) a.layer = document.createElement('canvas');
+      if (a.layer.width !== canvas.width) a.layer.width = canvas.width;
+      if (a.layer.height !== canvas.height) a.layer.height = canvas.height;
+      return a.layer;
     }
 
     function poseFor(view) {
@@ -570,8 +649,10 @@ __modules['src/render/renderer.js'] = (() => {
 
     // 直前に猫を描いた位置 {x, y, s}（まだ描いていなければ null）
     const shownPosition = () => a.shownP;
+    // 直前に描いた猫の濃さ・毛色・姿勢 { alpha, coat, mode }
+    const shownCat = () => a.shown;
 
-    return { resize, toLogical, hitTestCat, addEffect, draw, shownPosition };
+    return { resize, toLogical, hitTestCat, addEffect, draw, shownPosition, shownCat };
   }
 
   // ---------------------------------------------------------------- 部屋（ベタ塗り）
@@ -1306,7 +1387,7 @@ __modules['src/render/renderer.js'] = (() => {
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
   }
-  return { W, H, COATS, LINE_COLOR, LINE_WIDTH, LAP_COLORS, createRenderer };
+  return { W, H, COATS, LINE_COLOR, LINE_WIDTH, LAP_COLORS, CAT_FADE_SEC, createRenderer };
 })();
 
 // ---- src/ui/input.js
@@ -1850,12 +1931,13 @@ __modules['src/ui/sound.js'] = (() => {
     // 効果音の出口。声を大きくしても音割れしないよう、軽くまとめる（リミッター）
     let out = null;
     let enabled = load();
+    // 音の準備に失敗した（この環境では効果音を鳴らせない）
+    let failed = false;
 
-    function unlock() {
-      if (!enabled) return;
-      if (!ac) {
-        const AC = window.AudioContext || window.webkitAudioContext;
-        if (!AC) return;
+    // 音を準備できない環境では、一度だけ知らせて効果音なしでゲームを続ける（src/ui/music.js の BGM と同じ）。
+    // 失敗したら作りかけの AudioContext は捨て、以後は作り直さない
+    function prepare(AC) {
+      try {
         ac = new AC();
         noise = makeNoise(ac);
         out = ac.createDynamicsCompressor();
@@ -1869,12 +1951,29 @@ __modules['src/ui/sound.js'] = (() => {
         const trim = ac.createGain();
         trim.gain.value = 0.8;
         out.connect(trim).connect(ac.destination);
+        return true;
+      } catch (e) {
+        console.warn('効果音を準備できませんでした', e);
+        failed = true;
+        ac?.close?.().catch(() => {});
+        ac = null;
+        noise = null;
+        out = null;
+        return false;
+      }
+    }
+
+    function unlock() {
+      if (!enabled || failed) return;
+      if (!ac) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC || !prepare(AC)) return;
       }
       if (ac.state === 'suspended') ac.resume();
     }
 
     function ready() {
-      return enabled && ac && ac.state === 'running';
+      return enabled && !failed && ac && ac.state === 'running';
     }
 
     function vibrate(pattern) {
@@ -2606,7 +2705,7 @@ __modules['src/ui/music.js'] = (() => {
   const STORAGE_KEY = 'neko-wakai:bgm';
   const BGM_OFF = 'off';
   // BGM は、猫の声（ゴロゴロ・にゃーん）が埋もれない大きさにする。測り方と数値は docs/spec.md 13.2
-  const BGM_VOLUME = 0.046;
+  const BGM_VOLUME = 0.08;
 
   function nextTrack(current, ids) {
     const order = [...ids, BGM_OFF];

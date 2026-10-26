@@ -7,7 +7,7 @@ import { createBgm } from './bgm.js';
 const STORAGE_KEY = 'neko-wakai:bgm';
 export const BGM_OFF = 'off';
 // BGM は、猫の声（ゴロゴロ・にゃーん）が埋もれない大きさにする。測り方と数値は docs/spec.md 13.2
-export const BGM_VOLUME = 0.046;
+export const BGM_VOLUME = 0.08;
 
 export function nextTrack(current, ids) {
   const order = [...ids, BGM_OFF];

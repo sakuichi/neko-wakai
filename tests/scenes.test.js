@@ -129,7 +129,7 @@ test('夜に渡す猫の様子には、歩いていたかどうかも含める',
   const hud = { show: noop, update: noop };
   const renderer = { addEffect: noop, hitTestCat: () => false };
   const input = { setBlinkEnabled: noop, holdMs: () => 0 };
-  const sound = { purr: noop, chime: noop, bump: noop };
+  const sound = { purr: noop, meow: noop, bump: noop };
   const session = {
     game: { ...createGame({ personality: 'amaenbo', seed: 1 }), catName: 'たま', seenCards: Object.keys(CARDS) },
     misses: {},
@@ -162,4 +162,37 @@ test('鳴らす効果音は、なでた → ゴロゴロ、逃げた・猫キッ
   assert.ok(others.includes('stare'), 'FEEDBACK のほかのキーが読めていない');
   for (const key of others) assert.deepEqual(soundsFor(key), [], key);
   assert.deepEqual(soundsFor(null), []);
+});
+
+test('昼の画面で、まばたきを返してくれたら「にゃーん」を1回鳴らし、ほかの効果音は鳴らさない', async () => {
+  const { createDayScene } = await import('../src/scenes/dayScene.js');
+  const { createGame } = await import('../src/game/progression.js');
+  const { CARDS } = await import('../src/data/texts.js');
+  const { fixedRng } = await import('./helpers.js');
+  const noop = () => {};
+  const overlay = { busy: false, splash: noop, card: noop, bubble: noop, toast: noop, clear: noop };
+  const hud = { show: noop, update: noop };
+  const effects = [];
+  const renderer = { addEffect: (name) => effects.push(name), hitTestCat: () => false };
+  const input = { setBlinkEnabled: noop, holdMs: () => 0 };
+  const played = [];
+  const sound = {
+    purr: () => played.push('purr'),
+    meow: () => played.push('meow'),
+    bump: () => played.push('bump'),
+  };
+  // 2日目から、まばたきが使える
+  const session = {
+    game: { ...createGame({ personality: 'amaenbo', seed: 1 }), day: 2, catName: 'たま', seenCards: Object.keys(CARDS) },
+    misses: {},
+  };
+  const scene = createDayScene({ session, overlay, hud, renderer, input, sound, rng: fixedRng(0.5), onEnd: noop });
+  // 猫がこちらを見る（look）まで待つ
+  for (let i = 0; i < 400 && scene.state().cat.mode !== 'look'; i++) scene.update(0.05);
+  assert.equal(scene.state().cat.mode, 'look', 'こちらを見る前に上限に達した');
+  assert.deepEqual(played, [], 'まばたきの前に効果音が鳴っている');
+  // ゆっくりまばたき（1秒押して離す）
+  scene.act({ type: 'blink', holdMs: 1000 });
+  assert.deepEqual(effects, ['blinkBack']);
+  assert.deepEqual(played, ['meow']);
 });

@@ -37,9 +37,9 @@ flowchart TD
     BRAIN -->|"CatState（walking を含む）, DayState, enteredMode"| DAY
 
     DAY -->|"説明カード（止める）/ 吹き出し・ヒント・トースト（止めない）/ 日付"| OVERLAY["チュートリアル・説明カード・吹き出し・トースト<br/>src/ui/overlay.js"]
-    DAY -->|"鳴らす音（soundsFor：purr→ゴロゴロ / blinkBack→にゃーん / flee・kick→ぽふっ）。膝の上では直接ゴロゴロ（長め・大きめ）"| SOUND["効果音（WebAudioで合成・出口にリミッター）・振動<br/>src/ui/sound.js"]
+    DAY -->|"鳴らす音（soundsFor：purr→ゴロゴロ / blinkBack→にゃーん / flee・kick→ぽふっ）。膝の上では直接ゴロゴロ（長め・大きめ）"| SOUND["効果音（WebAudioで合成・出口にリミッター）・振動・準備に失敗したら一度だけ知らせて効果音なしで続ける<br/>src/ui/sound.js"]
     MAIN -->|"ON/OFF"| SOUND
-    MUSIC["BGMの選曲（左下の曲名をタップで次の曲／OFF）・端末に保存・音量（猫の声より約20dB小さく）・準備に失敗したら一度だけ知らせてBGMなしで続ける<br/>src/ui/music.js"] -->|"Song（再生・停止）"| BGMPLAY["BGMの再生<br/>src/ui/bgm.js（下の図）"]
+    MUSIC["BGMの選曲（左下の曲名をタップで次の曲／OFF）・端末に保存・音量（猫の声より約15dB小さく）・準備に失敗したら一度だけ知らせてBGMなしで続ける<br/>src/ui/music.js"] -->|"Song（再生・停止）"| BGMPLAY["BGMの再生<br/>src/ui/bgm.js（下の図）"]
     MAIN -->|"最初の操作で unlock"| MUSIC
     OVERLAY -->|"closed（一時停止の解除）"| DAY
 
@@ -61,7 +61,7 @@ flowchart TD
     DATA -->|"COAT_LORE（柄の言い伝え）・ENDINGS"| END
     DATA -->|"BGM_TEXT・曲データ（src/data/bgmSongs.js）"| MUSIC
 
-    DAY -->|"View {cat, wariness, blinkHoldMs, lapTime}"| RENDER["猫・部屋・膝の描画（Canvas。お腹見せの手前の足は胴体に重ねる）・毛色・性格の仕草・見つめる合図（チラッ）・歩く姿と蛇行する道すじ・膝に跳び乗る・まばたきゲージ・足あと<br/>src/render/renderer.js"]
+    DAY -->|"View {cat, wariness, blinkHoldMs, lapTime}"| RENDER["猫・部屋・膝の描画（Canvas。お腹見せの手前の足は胴体に重ねる）・毛色・性格の仕草・見つめる合図（チラッ）・歩く姿と蛇行する道すじ・膝に跳び乗る・タイトルに戻るときは猫がその場で消えて奥に現れる（フェード）・まばたきゲージ・足あと<br/>src/render/renderer.js"]
     MAIN -->|"coat, personality"| RENDER
     DAY -->|"DayState"| HUD["日数・残り時間・まばたきボタン<br/>src/ui/hud.js"]
 
@@ -120,6 +120,7 @@ stateDiagram-v2
 - 置き場所：`tests/*.test.js`（共通の状態生成は `tests/helpers.js`）。実行：`node --test` または `npm test`（Node 24 の標準機能。追加ライブラリなし）
 - 対象：`src/game/rules.js`、`src/game/catBrain.js`、`src/game/progression.js`（すべて純粋関数）、`game.js` が最新か・通常スクリプトとして読めるか（`tests/bundle.test.js`）
 - BGM：`tests/bgm.test.js` は曲の切り替え順（…→OFF→最初の曲）、楽譜の書式、小節をまたぐのばし、「メロディの長い音がコードの音（か9度）になっている」こと、試聴ページのスクリプトが最新かを確かめる
-- 画面：`tests/scenes.test.js` は、夜の画面が表示しきるまで猫が昼の終わりの場所にいること、名前の候補が毛色に合っていること、「チラッ」が名前付けのアップに出ないことを確かめる
-- 描画：`tests/renderer.test.js` は描画命令を記録する偽の Canvas を使い、全ポーズで「毛色で塗った形に輪郭線がある」「塗っていない線（柄・白い部分）をこげ茶でなぞらない」こと、近づいただけの猫は膝の奥・膝に乗った猫は膝の手前に描くこと、手が袖口より手前にあること、手を伸ばしても袖があることを確かめる
+- 画面：`tests/scenes.test.js` は、夜の画面が表示しきるまで猫が昼の終わりの場所にいること、名前の候補が毛色に合っていること、「チラッ」が名前付けのアップに出ないこと、まばたきを返したら「にゃーん」が鳴ることを確かめる
+- 描画：`tests/renderer.test.js` は描画命令を記録する偽の Canvas を使い、全ポーズで「毛色で塗った形に輪郭線がある」「塗っていない線（柄・白い部分）をこげ茶でなぞらない」こと、近づいただけの猫は膝の奥・膝に乗った猫は膝の手前に描くこと、手が袖口より手前にあること、手を伸ばしても袖があること、タイトルに戻るときに猫が見えたまま動かない（消えてから移り、毛色も消えている間に変わる）ことを確かめる
+- 効果音：`tests/sound.test.js` は、効果音 OFF では「にゃーん」を鳴らさないこと、準備に失敗しても一度だけ知らせて例外を出さないことを確かめる
 - 画面の確認：`index.html` をダブルクリックで開く
