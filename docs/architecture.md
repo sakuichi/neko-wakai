@@ -62,15 +62,15 @@ flowchart TD
     DATA -->|"BGM_TEXT・曲データ（src/data/bgmSongs.js）"| MUSIC
 
     DAY -->|"View {cat, wariness, blinkHoldMs, lapTime, dayTime（その日の進み具合 0〜1）}"| RENDER["猫・部屋・膝の描画（Canvas。お腹見せの手前の足は胴体に重ねる）・毛色・性格の仕草・見つめる合図（チラッ）・歩く姿と蛇行する道すじ・膝に跳び乗る・タイトルに戻るとき／夜に帰っていくときは猫がその場で消え、タイトルの位置／次の日の昼のスタート位置に現れる（フェード）・ページを開いた直後は猫をはじめからその場面の位置に置く・まばたきゲージ・足あと<br/>src/render/renderer.js"]
-    MAIN -->|"coat, personality"| RENDER
+    MAIN -->|"coat, personality, face（顔の形：輪郭4種×耳3種。FACE_SHAPES・EAR_SIZES）"| RENDER
     RENDER -->|"dayTime（タイトル・名前付けは朝）, 夜かどうか"| LIGHT["時間帯の景色：朝→昼→夕方→夜の空の色・太陽／月・部屋にかける薄い色（猫は染めない）・床の日だまり・スタンドライトの明るさ<br/>src/render/daylight.js（daylightAt）"]
     LIGHT -->|"Daylight {phase, skyTop, skyBottom, hill, cloud, tint, lamp, sun, patch}"| RENDER
     DATA -->|"DAYLIGHT（時間帯の区切り）"| LIGHT
     DAY -->|"DayState"| HUD["日数・残り時間・まばたきボタン<br/>src/ui/hud.js"]
 
-    DEBUG["デバッグパネル<br/>src/ui/debugPanel.js"] -->|"personality / coat / skipDay / trustMax / reset / speed / clearRecords"| MAIN
+    DEBUG["デバッグパネル<br/>src/ui/debugPanel.js"] -->|"personality / coat / face / skipDay / trustMax / reset / speed / clearRecords"| MAIN
     MAIN -->|"固定した personality / coat（なければ null）"| PROG
-    PROG -->|"chooseCat：毛色で性格が決まる（COAT_PERSONALITY）"| MAIN
+    PROG -->|"chooseCat：毛色で性格が決まる（COAT_PERSONALITY）／chooseFace：顔の形は毛色と関係なくランダム（FACES）"| MAIN
     MAIN -->|"GameState, DayState, CatState"| DEBUG
 
     RNG["シード付き乱数<br/>src/util/rng.js"] -->|"rng()"| BRAIN
@@ -130,16 +130,16 @@ stateDiagram-v2
 
 | 名前 | 中身 | 持ち主 |
 |---|---|---|
-| GameState | `day`, `trust`, `personality`, `coat`（毛色）, `catName`（名前）, `nightChoice`, `mistakes`, `seenCards`（表示済みの説明）, `seed` | `src/main.js` の `session.game`（更新は `progression.js` が返す） |
+| GameState | `day`, `trust`, `personality`, `coat`（毛色）, `face`（顔の形 `{ shape, ears }`）, `catName`（名前）, `nightChoice`, `mistakes`, `seenCards`（表示済みの説明）, `seed` | `src/main.js` の `session.game`（更新は `progression.js` が返す） |
 | Session | `game`（GameState）, `misses`（猫の様子ごとの失敗回数。ヒント用） | `src/main.js` |
 | DayState | `dayNumber`, `trust`, `wariness`, `timeLeft`, `trustRate`（おやつで ×0.85）, `boxLockLeft`, `floorBonus`（おやつの日に距離の下限を近くする分）, `mistakes`, `actions`, `signs`, `canLap`, `approachMul` | `src/scenes/dayScene.js` |
 | CatState | `mode`（relax／look／tailUp／tailFlick／belly／backTurn／rub／fakeRub／purr／flee／inBox／lap）, `distance`, `modeTimeLeft`, `walking`（くつろぎで歩いて近づいている間 true。描画で歩く姿にする）。夜の画面の猫だけ `hidden`（帰っていて見えない。`nightCatPose` が付け、描画でその場で消す） | `src/scenes/dayScene.js`（更新は `catBrain.js` / `rules.js` が返す） |
 | Action | `{ type: 'pet' }` / `{ type: 'blink', holdMs, sawLook }` | `src/ui/input.js` が作り、`sawLook` は `src/scenes/dayScene.js` が付ける |
-| View | `{ scene, cat, coat, personality, wariness, closeup, blinkHoldMs, lapTime, endingId, dayTime }`（dayTime は昼の画面だけ。その日の進み具合 0〜1） | 各画面の `view()` と `src/main.js` が作り、`src/render/renderer.js` が描く |
+| View | `{ scene, cat, coat, face, personality, wariness, closeup, blinkHoldMs, lapTime, endingId, dayTime }`（dayTime は昼の画面だけ。その日の進み具合 0〜1） | 各画面の `view()` と `src/main.js` が作り、`src/render/renderer.js` が描く |
 | ActionResult | `{ cat, day, feedback: 'flee' \| 'kick' \| 'hide' \| 'stare' \| 'blinkBack' \| 'purr' \| 'tooFar' \| null, mistake }` | `src/game/rules.js` が返す |
 | DayResult | `{ lapped, trust, mistakes, cat }`（cat は昼の終わりの `{mode, distance, walking}`。progression は使わず、main.js が夜の画面に渡す） | `src/scenes/dayScene.js` が作る |
 | NightChoice | `'treat' \| 'box' \| 'nothing'` | `src/scenes/nightScene.js` が作る |
-| Ending | `{ name, coat, personality, endingId, day, mistakes, date }`（date は 'YYYY-MM-DD'。visitor の day は 7） | `src/main.js` がエンディングのときに作る |
+| Ending | `{ name, coat, face, personality, endingId, day, mistakes, date }`（date は 'YYYY-MM-DD'。visitor の day は 7。face は思い出の絵に使う。古い記録にはない） | `src/main.js` がエンディングのときに作る |
 | Records | `{ v: 1, memories: Ending[]（新しい順・最大50件）, dex: { [coat]: { stamps: endingId[], bestDay } }, titles: 称号id[], metCount }` | `src/main.js`（読み書きは `recordStore.js`、更新は `records.js` が返す） |
 | EndingId | `'fate' \| 'patient' \| 'persistent' \| 'visitor'` | `src/game/progression.js` が返す |
 
@@ -149,7 +149,7 @@ stateDiagram-v2
 - 対象：`src/game/rules.js`、`src/game/catBrain.js`、`src/game/progression.js`（すべて純粋関数）、`game.js` が最新か・通常スクリプトとして読めるか（`tests/bundle.test.js`）
 - BGM：`tests/bgm.test.js` は曲の切り替え順（…→OFF→最初の曲）、楽譜の書式、小節をまたぐのばし、「メロディの長い音がコードの音（か9度）になっている」こと、試聴ページのスクリプトが最新かを確かめる
 - 画面：`tests/scenes.test.js` は、夜の画面が表示しきるまで猫が昼の終わりの場所にいて、そのあと hidden（帰っていて見えない）になること、名前の候補が毛色に合っていること、「チラッ」が名前付けのアップに出ないこと、まばたきを返したら「にゃーん」が鳴ることを確かめる
-- 描画：`tests/renderer.test.js` は描画命令を記録する偽の Canvas を使い、全ポーズで「毛色で塗った形に輪郭線がある」「塗っていない線（柄・白い部分）をこげ茶でなぞらない」こと、近づいただけの猫は膝の奥・膝に乗った猫は膝の手前に描くこと、手が袖口より手前にあること、手を伸ばしても袖があること、タイトルに戻るとき・夜から次の日に移るときに猫が見えたまま動かない（消えてから移り、毛色も消えている間に変わる）こと、ページを開いた直後に猫が滑ってこないこと、夕方の部屋にかける色を猫より先に塗る（猫を染めない）ことを確かめる
+- 描画：`tests/renderer.test.js` は描画命令を記録する偽の Canvas を使い、全ポーズで「毛色で塗った形に輪郭線がある」「塗っていない線（柄・白い部分）をこげ茶でなぞらない」こと、近づいただけの猫は膝の奥・膝に乗った猫は膝の手前に描くこと、手が袖口より手前にあること、手を伸ばしても袖があること、タイトルに戻るとき・夜から次の日に移るときに猫が見えたまま動かない（消えてから移り、毛色も消えている間に変わる）こと、ページを開いた直後に猫が滑ってこないこと、顔の形（輪郭4種×耳3種）ごとに輪郭が変わり、どの顔・どの姿勢でも輪郭線の決まりを守ること、夕方の部屋にかける色を猫より先に塗る（猫を染めない）ことを確かめる
 - ねこ手帳：`tests/records.test.js` は、思い出の追加と50件の上限、図鑑のスタンプといちばん早い和解、称号の条件と「新しく手に入れたものだけ知らせる」こと、壊れた保存データを空の記録として読むこと、端末の保存が使えなくても例外を出さないことを確かめる。`tests/scenes.test.js` は、エンディングに「思い出に残しました」と新しい称号が出ることを確かめる
 - 時間帯の景色：`tests/daylight.test.js` は、朝・昼・夕方・夜の名前と空の色、なめらかに変わること、部屋にかける色が薄いこと（0〜0.15）、スタンドライトが夕方からつくこと、太陽と月が窓の中にあることを確かめる
 - 効果音：`tests/sound.test.js` は、効果音 OFF では「にゃーん」を鳴らさないこと、準備に失敗しても一度だけ知らせて例外を出さないことを確かめる

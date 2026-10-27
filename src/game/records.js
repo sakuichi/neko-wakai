@@ -1,6 +1,6 @@
 // ねこ手帳の記録：思い出（遊んだ猫）・図鑑（毛色ごとのスタンプと最短日数）・称号。
 // 描画や保存には依存しない純粋な関数（保存は src/ui/recordStore.js、表示は src/scenes/notebookScene.js）
-import { COAT_PERSONALITY, PERSONALITIES } from '../data/params.js';
+import { COAT_PERSONALITY, PERSONALITIES, FACES } from '../data/params.js';
 import { ENDINGS } from '../data/texts.js';
 
 // 思い出は新しいものからこの件数まで残す（図鑑のスタンプと称号は消えない）
@@ -34,12 +34,13 @@ const TITLE_RULES = {
 
 /**
  * エンディングを1件記録する。
- * ending: { name, coat, personality, endingId, day, mistakes, date }
+ * ending: { name, coat, personality, endingId, day, mistakes, date, face }（face は顔の形。なくてもよい）
  * @returns {{ records, newTitles: string[] }}
  */
 export function addEnding(records, ending) {
-  const { name, coat, personality, endingId, day, mistakes, date } = ending;
+  const { name, coat, personality, endingId, day, mistakes, date, face } = ending;
   const memory = { name, coat, personality, endingId, day, mistakes, date };
+  if (face) memory.face = { shape: face.shape, ears: face.ears };
   const prev = records.dex[coat] ?? { stamps: [], bestDay: null };
   const bestDay = reconciled(endingId) && (prev.bestDay === null || day < prev.bestDay) ? day : prev.bestDay;
   const entry = { stamps: prev.stamps.includes(endingId) ? [...prev.stamps] : [...prev.stamps, endingId], bestDay };
@@ -70,6 +71,15 @@ function validMemory(m) {
     && typeof m.date === 'string';
 }
 
+const validFace = (f) => isObject(f) && FACES.shapes.includes(f.shape) && FACES.ears.includes(f.ears);
+
+// 顔の形が壊れている思い出は、思い出は残して顔だけ取り除く（顔のない思い出は、いままでの形で描く）
+function cleanFace(m) {
+  if (!('face' in m) || validFace(m.face)) return m;
+  const { face, ...rest } = m;
+  return rest;
+}
+
 // 図鑑のうち、正しい形の毛色だけ残す。スタンプは知っているエンディングだけにして、重複を除く
 function cleanDex(dex) {
   const out = {};
@@ -96,7 +106,7 @@ export function parseRecords(text) {
   if (typeof metCount !== 'number' || !Number.isFinite(metCount) || metCount < 0) return emptyRecords();
   return {
     v: 1,
-    memories: memories.filter(validMemory).slice(0, MEMORY_LIMIT),
+    memories: memories.filter(validMemory).map(cleanFace).slice(0, MEMORY_LIMIT),
     dex: cleanDex(dex),
     titles: [...new Set(titles.filter((id) => TITLE_IDS.includes(id)))],
     metCount,

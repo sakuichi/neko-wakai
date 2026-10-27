@@ -27,6 +27,32 @@ export const COATS = {
 // いま描いている猫の毛色。draw() の最初に view.coat から決める
 let COAT = COATS.chatora;
 
+// 顔の形（猫ごとに変える）：輪郭と耳の大きさ。種類は src/data/params.js の FACES。
+// 輪郭は「左右の端（cy の高さ）・てっぺん（top）・あご（bottom）」を4本の曲線でつなぐ。
+// tS / bS は上下の曲線が横にふくらむ量、tR / bR はてっぺん・あごの平らさ（小さいほどとがる）
+export const FACE_SHAPES = {
+  // いままでの「おもち形」（上下が少し平らな横長）
+  mochi: { w: 50, top: -40, bottom: 38, cy: 0, tS: 0.75, tR: 0.6, bS: 27 / 38, bR: 0.56 },
+  // まんまる
+  maru: { w: 46, top: -44, bottom: 40, cy: 0, tS: 0.55, tR: 0.55, bS: 0.55, bR: 0.55 },
+  // 下ぶくれ（頭のてっぺんが細く、ほっぺが下のほうで大きく張る。おもち形と見分けがつくよう、はっきりさせる）
+  shimobukure: { w: 58, top: -40, bottom: 33, cy: 15, tS: 0.92, tR: 0.32, bS: 0.5, bR: 0.85 },
+  // ほっぺもち（横に大きく張った、平たい顔）
+  hoppe: { w: 57, top: -36, bottom: 34, cy: 4, tS: 0.82, tR: 0.5, bS: 0.78, bR: 0.66 },
+};
+// 耳の大きさ（倍率）
+export const EAR_SIZES = { small: 0.82, normal: 1, big: 1.1 };
+const DEFAULT_FACE = { shape: 'mochi', ears: 'normal' };
+let FACE = faceParams(DEFAULT_FACE);
+
+// face: { shape, ears }（キーは上の表。省略・不明なものは、いままでの形）
+function faceParams(face = DEFAULT_FACE) {
+  return {
+    shape: FACE_SHAPES[face?.shape] ?? FACE_SHAPES.mochi,
+    ear: EAR_SIZES[face?.ears] ?? 1,
+  };
+}
+
 const C = {
   line: '#4e3d36',
   eye: '#3b2f2a',
@@ -198,13 +224,15 @@ export function createRenderer(canvas) {
     }
     const coatKey = fadingOut ? a.fade.coat : view.coat;
     COAT = COATS[coatKey] ?? COATS.chatora;
+    const faceKey = fadingOut ? a.fade.face : view.face;
+    FACE = faceParams(faceKey);
     const cat = fadingOut ? a.fade.pose : poseFor(view);
     // 消えている間は、前の画面の猫の見た目（アップ・寝姿の動き・性格の仕草）のまま描く
     const look = fadingOut
       ? a.fade.look
       : { closeup: !!view.closeup, lapT: view.lapTime ?? 0, personality: view.personality, wariness: view.wariness ?? 0 };
-    a.last = { pose: cat, coat: coatKey, look };
-    a.shown = { alpha, coat: coatKey, mode: cat.mode };
+    a.last = { pose: cat, coat: coatKey, face: faceKey, look };
+    a.shown = { alpha, coat: coatKey, face: faceKey, mode: cat.mode };
     if (cat.mode !== a.lastMode) {
       a.lastMode = cat.mode;
       a.modeStart = t;
@@ -433,7 +461,7 @@ export function createRenderer(canvas) {
 
   // 直前に猫を描いた位置 {x, y, s}（まだ描いていなければ null）
   const shownPosition = () => a.shownP;
-  // 直前に描いた猫の濃さ・毛色・姿勢 { alpha, coat, mode }
+  // 直前に描いた猫の濃さ・毛色・顔・姿勢 { alpha, coat, face, mode }
   const shownCat = () => a.shown;
 
   return { resize, toLogical, hitTestCat, addEffect, draw, shownPosition, shownCat };
@@ -443,13 +471,15 @@ export function createRenderer(canvas) {
 
 // ねこ手帳の小さな絵：座ってこちらを見ている猫だけを、部屋なしで描く。
 // silhouette が true なら、まだ出会っていない毛色として影だけにする
-export function drawCatPortrait(canvas, coat, { silhouette = false } = {}) {
+export function drawCatPortrait(canvas, coat, { silhouette = false, face = DEFAULT_FACE } = {}) {
   const ctx = canvas.getContext('2d');
   const size = 120;
   const prev = COAT;
+  const prevFace = FACE;
   COAT = COATS[coat] ?? COATS.chatora;
+  FACE = faceParams(face);
   ctx.save();
-  // 途中で失敗しても、ゲームの描画の毛色と Canvas の状態は元に戻す
+  // 途中で失敗しても、ゲームの描画の毛色・顔と Canvas の状態は元に戻す
   try {
     ctx.setTransform(canvas.width / size, 0, 0, canvas.height / size, 0, 0);
     ctx.clearRect(0, 0, size, size);
@@ -461,6 +491,7 @@ export function drawCatPortrait(canvas, coat, { silhouette = false } = {}) {
   } finally {
     ctx.restore();
     COAT = prev;
+    FACE = prevFace;
   }
   if (silhouette) {
     ctx.save();
@@ -775,7 +806,7 @@ function drawCat(ctx, mode, k) {
       return sit({ eyes: 'dot', tail: 'up' });
     case 'tailFlick':
       sit({ eyes: 'grumpy', mouth: 'he', tail: 'flick', ears: 'back' });
-      return angerMark(ctx, 38, -126, k.t);
+      return angerMark(ctx, 38 + cueShift()[0], -126 + cueShift()[1], k.t);
     case 'belly':
       return belly(ctx, k, breath);
     case 'backTurn':
@@ -883,7 +914,8 @@ function backView(ctx, k, breath) {
   furShape(ctx, mochi, () => {
     ctx.strokeStyle = COAT.stripe;
     ctx.lineWidth = 6;
-    for (const dx of [-14, 0, 14]) line(ctx, dx, -42, dx * 0.9, -20);
+    const { top } = FACE.shape;
+    for (const dx of [-14, 0, 14]) line(ctx, dx, top - 2, dx * 0.9, top + 20);
   });
   ctx.restore();
   drawTail(ctx, 'curl', k.t);
@@ -978,14 +1010,30 @@ function furShape(ctx, pathFn, pattern) {
   ctx.stroke();
 }
 
-// 頭の輪郭：上下が少し平らな横長の「おもち形」
+// 頭の輪郭（形は FACE_SHAPES）。いままでの形は、上下が少し平らな横長の「おもち形」
 function mochi(ctx) {
-  ctx.moveTo(-50, 0);
-  ctx.bezierCurveTo(-50, -30, -30, -40, 0, -40);
-  ctx.bezierCurveTo(30, -40, 50, -30, 50, 0);
-  ctx.bezierCurveTo(50, 27, 28, 38, 0, 38);
-  ctx.bezierCurveTo(-28, 38, -50, 27, -50, 0);
+  const { w, top, bottom, cy, tS, tR, bS, bR } = FACE.shape;
+  ctx.moveTo(-w, cy);
+  ctx.bezierCurveTo(-w, cy + (top - cy) * tS, -w * tR, top, 0, top);
+  ctx.bezierCurveTo(w * tR, top, w, cy + (top - cy) * tS, w, cy);
+  ctx.bezierCurveTo(w, cy + (bottom - cy) * bS, w * bR, bottom, 0, bottom);
+  ctx.bezierCurveTo(-w * bR, bottom, -w, cy + (bottom - cy) * bS, -w, cy);
   ctx.closePath();
+}
+
+// おもち形（幅50・てっぺん−40・端の高さ0）で決めた座標を、いまの顔の形の座標に直す
+function onFace(x, y) {
+  const { w, top, cy } = FACE.shape;
+  return [x * (w / 50), top + (y + 40) * ((cy - top) / 40)];
+}
+
+// 頭のまわりに出す合図（「チラッ」・怒りマーク）を、顔の形に合わせてずらす量。
+// おもち形・耳 中のときは [0, 0]。耳が横に張るほど右へ、頭のてっぺんが高いほど上へ
+function cueShift() {
+  const b0 = onFace(12, -36);
+  const b1 = onFace(47, -16);
+  const tipX = (b0[0] + b1[0]) / 2 + (40 - 29.5) * FACE.ear;
+  return [Math.max(0, tipX - 40), Math.min(0, FACE.shape.top + 40)];
 }
 
 // faceDx: 顔のパーツを横にずらして、そっぽを向かせる
@@ -995,15 +1043,18 @@ function head(ctx, x, y, { tilt = 0, eyes = 'dot', mouth = 'w', ears = 'up', fac
   ctx.rotate(tilt);
   ctx.scale(scale, scale);
   for (const side of [-1, 1]) ear(ctx, side, ears, true);
+  const { w, top, cy } = FACE.shape;
   furShape(ctx, mochi, () => {
     ctx.strokeStyle = COAT.stripe;
     ctx.lineWidth = 6;
-    for (const dx of [-12, 0, 12]) line(ctx, dx, -44, dx * 0.9, -27);
+    for (const dx of [-12, 0, 12]) line(ctx, dx, top - 4, dx * 0.9, top + 13);
   });
 
-  ctx.translate(faceDx, 0);
-  ellipse(ctx, -31, 12, 7.5, 4.5, C.blush);
-  ellipse(ctx, 31, 12, 7.5, 4.5, C.blush);
+  // 目・ほっぺ・口は、顔のいちばん広いところ（cy）を基準に置く
+  ctx.translate(faceDx, cy);
+  const cheek = 31 * (w / 50);
+  ellipse(ctx, -cheek, 12, 7.5, 4.5, C.blush);
+  ellipse(ctx, cheek, 12, 7.5, 4.5, C.blush);
   for (const side of [-1, 1]) eye(ctx, side * 20, 2, eyes, blink, side);
   drawMouth(ctx, mouth);
   ctx.restore();
@@ -1011,24 +1062,32 @@ function head(ctx, x, y, { tilt = 0, eyes = 'dot', mouth = 'w', ears = 'up', fac
 
 function ear(ctx, side, ears, inner) {
   // up：ピンと立つ / half：少し伏せる（不安） / back：横に寝かせる（怒り・驚き）
-  const tip = { up: [side * 40, -60], half: [side * 54, -46], back: [side * 60, -26] }[ears];
+  // 座標はおもち形で決める。付け根だけを顔の形に合わせて付け直し、耳そのものの形（付け根の真ん中から先までの伸び）は
+  // 顔の形によらず同じにして、耳の大きさ（FACE.ear）だけで伸ばす（縦長の顔で耳まで伸びないように）
+  const raw = { up: [side * 40, -60], half: [side * 54, -46], back: [side * 60, -26] }[ears];
+  const b0 = onFace(side * 12, -36);
+  const b1 = onFace(side * 47, -16);
+  const mid = [(b0[0] + b1[0]) / 2, (b0[1] + b1[1]) / 2];
+  const rawMid = [side * 29.5, -26];
+  const grow = ([x, y]) => [mid[0] + (x - rawMid[0]) * FACE.ear, mid[1] + (y - rawMid[1]) * FACE.ear];
+  const tip = grow(raw);
   ctx.save();
   ctx.lineWidth = LW;
   ctx.strokeStyle = C.line;
   ctx.fillStyle = COAT.fur;
   ctx.beginPath();
-  ctx.moveTo(side * 12, -36);
+  ctx.moveTo(b0[0], b0[1]);
   ctx.quadraticCurveTo(tip[0] - side * 6, tip[1] + 2, tip[0], tip[1]);
-  ctx.quadraticCurveTo(tip[0] + side * 4, tip[1] + 8, side * 47, -16);
+  ctx.quadraticCurveTo(tip[0] + side * 4, tip[1] + 8, b1[0], b1[1]);
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
   if (inner) {
     ctx.fillStyle = C.earIn;
     ctx.beginPath();
-    ctx.moveTo(side * 20, -34);
-    ctx.lineTo(tip[0] * 0.84, tip[1] * 0.8);
-    ctx.lineTo(side * 40, -20);
+    ctx.moveTo(...onFace(side * 20, -34));
+    ctx.lineTo(...grow([raw[0] * 0.84, raw[1] * 0.8]));
+    ctx.lineTo(...onFace(side * 40, -20));
     ctx.closePath();
     ctx.fill();
   }
@@ -1204,7 +1263,8 @@ function sweat(ctx, x, y, u) {
 function lookCue(ctx, k) {
   const fit = Math.max(1, 0.85 / (k.scale ?? 1));
   ctx.save();
-  ctx.translate(50, -128);
+  const [dx, dy] = cueShift();
+  ctx.translate(50 + dx, -128 + dy);
   ctx.scale(fit, fit);
   // 出た瞬間だけ、少し横にすべり込む
   const u = clamp01(k.modeT / 0.25);

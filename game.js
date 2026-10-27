@@ -78,6 +78,12 @@ __modules['src/data/params.js'] = (() => {
   // 40秒の日なら、8秒で昼になり、残り14秒から夕焼けが始まり、残り8秒で夕方になる（色は src/render/daylight.js）
   const DAYLIGHT = { noonAt: 0.2, eveningFrom: 0.65, eveningAt: 0.8 };
 
+  // 猫の顔の種類（猫ごとにランダムで選ぶ）。形そのものは src/render/renderer.js の FACE_SHAPES・EAR_SIZES
+  const FACES = {
+    shapes: ['mochi', 'maru', 'shimobukure', 'hoppe'],
+    ears: ['small', 'normal', 'big'],
+  };
+
   const NIGHT = {
     // おやつを置くと、その場で信頼が増える。代わりに翌日の信頼の増え方が下がる
     treatTrust: 8,
@@ -129,17 +135,28 @@ __modules['src/data/params.js'] = (() => {
     kijitora: 'bibiri',
     kuro: 'bibiri',
   };
-  return { MAX_VALUE, MAX_DAY, RULES, DAYS, DAYLIGHT, NIGHT, PERSONALITIES, DEFAULT_PERSONALITY, COAT_PERSONALITY };
+  return { MAX_VALUE, MAX_DAY, RULES, DAYS, DAYLIGHT, FACES, NIGHT, PERSONALITIES, DEFAULT_PERSONALITY, COAT_PERSONALITY };
 })();
 
 // ---- src/game/progression.js
 __modules['src/game/progression.js'] = (() => {
   // 日の進行・夜の選択の効果・エンディング判定。描画や入力には依存しない。
-  const { DAYS, NIGHT, PERSONALITIES, MAX_DAY, MAX_VALUE, DEFAULT_PERSONALITY, COAT_PERSONALITY } = __modules['src/data/params.js'];
+  const { DAYS, NIGHT, PERSONALITIES, MAX_DAY, MAX_VALUE, DEFAULT_PERSONALITY, COAT_PERSONALITY, FACES } = __modules['src/data/params.js'];
 
-  // catName は1日目の最初にプレイヤーが付ける。coat は毛色（src/render/renderer.js の COATS のキー）
-  function createGame({ personality = DEFAULT_PERSONALITY, seed = Date.now(), coat = 'chatora' } = {}) {
-    return { day: 1, trust: 0, personality, coat, catName: null, nightChoice: null, mistakes: 0, seed, seenCards: [] };
+  // catName は1日目の最初にプレイヤーが付ける。coat は毛色（src/render/renderer.js の COATS のキー）、face は顔の形（chooseFace）
+  function createGame({ personality = DEFAULT_PERSONALITY, seed = Date.now(), coat = 'chatora', face = { shape: 'mochi', ears: 'normal' } } = {}) {
+    return { day: 1, trust: 0, personality, coat, face, catName: null, nightChoice: null, mistakes: 0, seed, seenCards: [] };
+  }
+
+  /**
+   * 今回の猫の顔（輪郭と耳の大きさ）を決める。毛色や性格とは関係なく、それぞれ同じくらい出る。
+   * shape / ears はデバッグで固定したいときだけ渡す
+   */
+  function chooseFace({ shape = null, ears = null } = {}, random = Math.random) {
+    return {
+      shape: shape ?? FACES.shapes[Math.floor(random() * FACES.shapes.length)],
+      ears: ears ?? FACES.ears[Math.floor(random() * FACES.ears.length)],
+    };
   }
 
   /**
@@ -219,7 +236,7 @@ __modules['src/game/progression.js'] = (() => {
     if (dayNumber <= 5) return 'patient';
     return 'persistent';
   }
-  return { createGame, chooseCat, startDay, finishDay, chooseNight, endingFor };
+  return { createGame, chooseFace, chooseCat, startDay, finishDay, chooseNight, endingFor };
 })();
 
 // ---- src/util/rng.js
@@ -357,6 +374,32 @@ __modules['src/render/renderer.js'] = (() => {
   };
   // いま描いている猫の毛色。draw() の最初に view.coat から決める
   let COAT = COATS.chatora;
+
+  // 顔の形（猫ごとに変える）：輪郭と耳の大きさ。種類は src/data/params.js の FACES。
+  // 輪郭は「左右の端（cy の高さ）・てっぺん（top）・あご（bottom）」を4本の曲線でつなぐ。
+  // tS / bS は上下の曲線が横にふくらむ量、tR / bR はてっぺん・あごの平らさ（小さいほどとがる）
+  const FACE_SHAPES = {
+    // いままでの「おもち形」（上下が少し平らな横長）
+    mochi: { w: 50, top: -40, bottom: 38, cy: 0, tS: 0.75, tR: 0.6, bS: 27 / 38, bR: 0.56 },
+    // まんまる
+    maru: { w: 46, top: -44, bottom: 40, cy: 0, tS: 0.55, tR: 0.55, bS: 0.55, bR: 0.55 },
+    // 下ぶくれ（頭のてっぺんが細く、ほっぺが下のほうで大きく張る。おもち形と見分けがつくよう、はっきりさせる）
+    shimobukure: { w: 58, top: -40, bottom: 33, cy: 15, tS: 0.92, tR: 0.32, bS: 0.5, bR: 0.85 },
+    // ほっぺもち（横に大きく張った、平たい顔）
+    hoppe: { w: 57, top: -36, bottom: 34, cy: 4, tS: 0.82, tR: 0.5, bS: 0.78, bR: 0.66 },
+  };
+  // 耳の大きさ（倍率）
+  const EAR_SIZES = { small: 0.82, normal: 1, big: 1.1 };
+  const DEFAULT_FACE = { shape: 'mochi', ears: 'normal' };
+  let FACE = faceParams(DEFAULT_FACE);
+
+  // face: { shape, ears }（キーは上の表。省略・不明なものは、いままでの形）
+  function faceParams(face = DEFAULT_FACE) {
+    return {
+      shape: FACE_SHAPES[face?.shape] ?? FACE_SHAPES.mochi,
+      ear: EAR_SIZES[face?.ears] ?? 1,
+    };
+  }
 
   const C = {
     line: '#4e3d36',
@@ -529,13 +572,15 @@ __modules['src/render/renderer.js'] = (() => {
       }
       const coatKey = fadingOut ? a.fade.coat : view.coat;
       COAT = COATS[coatKey] ?? COATS.chatora;
+      const faceKey = fadingOut ? a.fade.face : view.face;
+      FACE = faceParams(faceKey);
       const cat = fadingOut ? a.fade.pose : poseFor(view);
       // 消えている間は、前の画面の猫の見た目（アップ・寝姿の動き・性格の仕草）のまま描く
       const look = fadingOut
         ? a.fade.look
         : { closeup: !!view.closeup, lapT: view.lapTime ?? 0, personality: view.personality, wariness: view.wariness ?? 0 };
-      a.last = { pose: cat, coat: coatKey, look };
-      a.shown = { alpha, coat: coatKey, mode: cat.mode };
+      a.last = { pose: cat, coat: coatKey, face: faceKey, look };
+      a.shown = { alpha, coat: coatKey, face: faceKey, mode: cat.mode };
       if (cat.mode !== a.lastMode) {
         a.lastMode = cat.mode;
         a.modeStart = t;
@@ -764,7 +809,7 @@ __modules['src/render/renderer.js'] = (() => {
 
     // 直前に猫を描いた位置 {x, y, s}（まだ描いていなければ null）
     const shownPosition = () => a.shownP;
-    // 直前に描いた猫の濃さ・毛色・姿勢 { alpha, coat, mode }
+    // 直前に描いた猫の濃さ・毛色・顔・姿勢 { alpha, coat, face, mode }
     const shownCat = () => a.shown;
 
     return { resize, toLogical, hitTestCat, addEffect, draw, shownPosition, shownCat };
@@ -774,13 +819,15 @@ __modules['src/render/renderer.js'] = (() => {
 
   // ねこ手帳の小さな絵：座ってこちらを見ている猫だけを、部屋なしで描く。
   // silhouette が true なら、まだ出会っていない毛色として影だけにする
-  function drawCatPortrait(canvas, coat, { silhouette = false } = {}) {
+  function drawCatPortrait(canvas, coat, { silhouette = false, face = DEFAULT_FACE } = {}) {
     const ctx = canvas.getContext('2d');
     const size = 120;
     const prev = COAT;
+    const prevFace = FACE;
     COAT = COATS[coat] ?? COATS.chatora;
+    FACE = faceParams(face);
     ctx.save();
-    // 途中で失敗しても、ゲームの描画の毛色と Canvas の状態は元に戻す
+    // 途中で失敗しても、ゲームの描画の毛色・顔と Canvas の状態は元に戻す
     try {
       ctx.setTransform(canvas.width / size, 0, 0, canvas.height / size, 0, 0);
       ctx.clearRect(0, 0, size, size);
@@ -792,6 +839,7 @@ __modules['src/render/renderer.js'] = (() => {
     } finally {
       ctx.restore();
       COAT = prev;
+      FACE = prevFace;
     }
     if (silhouette) {
       ctx.save();
@@ -1106,7 +1154,7 @@ __modules['src/render/renderer.js'] = (() => {
         return sit({ eyes: 'dot', tail: 'up' });
       case 'tailFlick':
         sit({ eyes: 'grumpy', mouth: 'he', tail: 'flick', ears: 'back' });
-        return angerMark(ctx, 38, -126, k.t);
+        return angerMark(ctx, 38 + cueShift()[0], -126 + cueShift()[1], k.t);
       case 'belly':
         return belly(ctx, k, breath);
       case 'backTurn':
@@ -1214,7 +1262,8 @@ __modules['src/render/renderer.js'] = (() => {
     furShape(ctx, mochi, () => {
       ctx.strokeStyle = COAT.stripe;
       ctx.lineWidth = 6;
-      for (const dx of [-14, 0, 14]) line(ctx, dx, -42, dx * 0.9, -20);
+      const { top } = FACE.shape;
+      for (const dx of [-14, 0, 14]) line(ctx, dx, top - 2, dx * 0.9, top + 20);
     });
     ctx.restore();
     drawTail(ctx, 'curl', k.t);
@@ -1309,14 +1358,30 @@ __modules['src/render/renderer.js'] = (() => {
     ctx.stroke();
   }
 
-  // 頭の輪郭：上下が少し平らな横長の「おもち形」
+  // 頭の輪郭（形は FACE_SHAPES）。いままでの形は、上下が少し平らな横長の「おもち形」
   function mochi(ctx) {
-    ctx.moveTo(-50, 0);
-    ctx.bezierCurveTo(-50, -30, -30, -40, 0, -40);
-    ctx.bezierCurveTo(30, -40, 50, -30, 50, 0);
-    ctx.bezierCurveTo(50, 27, 28, 38, 0, 38);
-    ctx.bezierCurveTo(-28, 38, -50, 27, -50, 0);
+    const { w, top, bottom, cy, tS, tR, bS, bR } = FACE.shape;
+    ctx.moveTo(-w, cy);
+    ctx.bezierCurveTo(-w, cy + (top - cy) * tS, -w * tR, top, 0, top);
+    ctx.bezierCurveTo(w * tR, top, w, cy + (top - cy) * tS, w, cy);
+    ctx.bezierCurveTo(w, cy + (bottom - cy) * bS, w * bR, bottom, 0, bottom);
+    ctx.bezierCurveTo(-w * bR, bottom, -w, cy + (bottom - cy) * bS, -w, cy);
     ctx.closePath();
+  }
+
+  // おもち形（幅50・てっぺん−40・端の高さ0）で決めた座標を、いまの顔の形の座標に直す
+  function onFace(x, y) {
+    const { w, top, cy } = FACE.shape;
+    return [x * (w / 50), top + (y + 40) * ((cy - top) / 40)];
+  }
+
+  // 頭のまわりに出す合図（「チラッ」・怒りマーク）を、顔の形に合わせてずらす量。
+  // おもち形・耳 中のときは [0, 0]。耳が横に張るほど右へ、頭のてっぺんが高いほど上へ
+  function cueShift() {
+    const b0 = onFace(12, -36);
+    const b1 = onFace(47, -16);
+    const tipX = (b0[0] + b1[0]) / 2 + (40 - 29.5) * FACE.ear;
+    return [Math.max(0, tipX - 40), Math.min(0, FACE.shape.top + 40)];
   }
 
   // faceDx: 顔のパーツを横にずらして、そっぽを向かせる
@@ -1326,15 +1391,18 @@ __modules['src/render/renderer.js'] = (() => {
     ctx.rotate(tilt);
     ctx.scale(scale, scale);
     for (const side of [-1, 1]) ear(ctx, side, ears, true);
+    const { w, top, cy } = FACE.shape;
     furShape(ctx, mochi, () => {
       ctx.strokeStyle = COAT.stripe;
       ctx.lineWidth = 6;
-      for (const dx of [-12, 0, 12]) line(ctx, dx, -44, dx * 0.9, -27);
+      for (const dx of [-12, 0, 12]) line(ctx, dx, top - 4, dx * 0.9, top + 13);
     });
 
-    ctx.translate(faceDx, 0);
-    ellipse(ctx, -31, 12, 7.5, 4.5, C.blush);
-    ellipse(ctx, 31, 12, 7.5, 4.5, C.blush);
+    // 目・ほっぺ・口は、顔のいちばん広いところ（cy）を基準に置く
+    ctx.translate(faceDx, cy);
+    const cheek = 31 * (w / 50);
+    ellipse(ctx, -cheek, 12, 7.5, 4.5, C.blush);
+    ellipse(ctx, cheek, 12, 7.5, 4.5, C.blush);
     for (const side of [-1, 1]) eye(ctx, side * 20, 2, eyes, blink, side);
     drawMouth(ctx, mouth);
     ctx.restore();
@@ -1342,24 +1410,32 @@ __modules['src/render/renderer.js'] = (() => {
 
   function ear(ctx, side, ears, inner) {
     // up：ピンと立つ / half：少し伏せる（不安） / back：横に寝かせる（怒り・驚き）
-    const tip = { up: [side * 40, -60], half: [side * 54, -46], back: [side * 60, -26] }[ears];
+    // 座標はおもち形で決める。付け根だけを顔の形に合わせて付け直し、耳そのものの形（付け根の真ん中から先までの伸び）は
+    // 顔の形によらず同じにして、耳の大きさ（FACE.ear）だけで伸ばす（縦長の顔で耳まで伸びないように）
+    const raw = { up: [side * 40, -60], half: [side * 54, -46], back: [side * 60, -26] }[ears];
+    const b0 = onFace(side * 12, -36);
+    const b1 = onFace(side * 47, -16);
+    const mid = [(b0[0] + b1[0]) / 2, (b0[1] + b1[1]) / 2];
+    const rawMid = [side * 29.5, -26];
+    const grow = ([x, y]) => [mid[0] + (x - rawMid[0]) * FACE.ear, mid[1] + (y - rawMid[1]) * FACE.ear];
+    const tip = grow(raw);
     ctx.save();
     ctx.lineWidth = LW;
     ctx.strokeStyle = C.line;
     ctx.fillStyle = COAT.fur;
     ctx.beginPath();
-    ctx.moveTo(side * 12, -36);
+    ctx.moveTo(b0[0], b0[1]);
     ctx.quadraticCurveTo(tip[0] - side * 6, tip[1] + 2, tip[0], tip[1]);
-    ctx.quadraticCurveTo(tip[0] + side * 4, tip[1] + 8, side * 47, -16);
+    ctx.quadraticCurveTo(tip[0] + side * 4, tip[1] + 8, b1[0], b1[1]);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
     if (inner) {
       ctx.fillStyle = C.earIn;
       ctx.beginPath();
-      ctx.moveTo(side * 20, -34);
-      ctx.lineTo(tip[0] * 0.84, tip[1] * 0.8);
-      ctx.lineTo(side * 40, -20);
+      ctx.moveTo(...onFace(side * 20, -34));
+      ctx.lineTo(...grow([raw[0] * 0.84, raw[1] * 0.8]));
+      ctx.lineTo(...onFace(side * 40, -20));
       ctx.closePath();
       ctx.fill();
     }
@@ -1535,7 +1611,8 @@ __modules['src/render/renderer.js'] = (() => {
   function lookCue(ctx, k) {
     const fit = Math.max(1, 0.85 / (k.scale ?? 1));
     ctx.save();
-    ctx.translate(50, -128);
+    const [dx, dy] = cueShift();
+    ctx.translate(50 + dx, -128 + dy);
     ctx.scale(fit, fit);
     // 出た瞬間だけ、少し横にすべり込む
     const u = clamp01(k.modeT / 0.25);
@@ -1621,7 +1698,7 @@ __modules['src/render/renderer.js'] = (() => {
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
   }
-  return { W, H, COATS, LINE_COLOR, LINE_WIDTH, LAP_COLORS, CAT_FADE_SEC, createRenderer, drawCatPortrait };
+  return { W, H, COATS, FACE_SHAPES, EAR_SIZES, LINE_COLOR, LINE_WIDTH, LAP_COLORS, CAT_FADE_SEC, createRenderer, drawCatPortrait };
 })();
 
 // ---- src/ui/input.js
@@ -2096,13 +2173,16 @@ __modules['src/game/catBrain.js'] = (() => {
 // ---- src/ui/debugPanel.js
 __modules['src/ui/debugPanel.js'] = (() => {
   // デバッグパネル（試作用）。性格・毛色の切り替え・数値の表示・日のスキップ。
-  const { PERSONALITIES } = __modules['src/data/params.js'];
+  const { PERSONALITIES, FACES } = __modules['src/data/params.js'];
   const { COAT_LABELS } = __modules['src/data/texts.js'];
   const { distanceFloor } = __modules['src/game/catBrain.js'];
 
   const SPEEDS = [1, 2, 4, 8];
+  // 顔の形の名前（デバッグ表示だけで使う）
+  const SHAPE_LABELS = { mochi: 'おもち', maru: 'まんまる', shimobukure: '下ぶくれ', hoppe: 'ほっぺもち' };
+  const EAR_LABELS = { small: '小', normal: '中', big: '大' };
 
-  function createDebugPanel(el, { onPersonality, onCoat, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords }) {
+  function createDebugPanel(el, { onPersonality, onCoat, onFace, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords }) {
     const details = document.createElement('details');
     // スマホ幅ではゲーム画面に重なるので、折りたたんだ状態で始める
     details.open = window.innerWidth >= 800;
@@ -2129,6 +2209,18 @@ __modules['src/ui/debugPanel.js'] = (() => {
     const coatRow = document.createElement('div');
     coatRow.append('毛色: ', coatSelect);
     details.append(coatRow);
+
+    // 顔の形（輪郭と耳の大きさ）
+    const shapeSelect = document.createElement('select');
+    for (const key of FACES.shapes) shapeSelect.append(new Option(SHAPE_LABELS[key] ?? key, key));
+    const earSelect = document.createElement('select');
+    for (const key of FACES.ears) earSelect.append(new Option(EAR_LABELS[key] ?? key, key));
+    const changeFace = () => onFace({ shape: shapeSelect.value, ears: earSelect.value });
+    shapeSelect.addEventListener('change', changeFace);
+    earSelect.addEventListener('change', changeFace);
+    const faceRow = document.createElement('div');
+    faceRow.append('顔: ', shapeSelect, ' 耳: ', earSelect);
+    details.append(faceRow);
 
     const buttons = document.createElement('div');
     for (const [text, fn] of [['次の日へ', onSkipDay], ['信頼MAX', onTrustMax], ['最初から', onReset], ['記録を消す', onClearRecords]]) {
@@ -2163,9 +2255,11 @@ __modules['src/ui/debugPanel.js'] = (() => {
     const fmt = (v) => (typeof v === 'number' ? v.toFixed(1) : v);
 
     return {
-      update({ personality, coat, scene, day, cat, mistakes }) {
+      update({ personality, coat, face, scene, day, cat, mistakes }) {
         radios[personality].checked = true;
         if (document.activeElement !== coatSelect) coatSelect.value = coat;
+        if (face && document.activeElement !== shapeSelect) shapeSelect.value = face.shape;
+        if (face && document.activeElement !== earSelect) earSelect.value = face.ears;
         const lines = [`画面: ${scene}`, `ミス(累計): ${mistakes}`];
         if (day && cat) {
           lines.push(
@@ -3593,7 +3687,7 @@ __modules['src/scenes/endingScene.js'] = (() => {
 __modules['src/game/records.js'] = (() => {
   // ねこ手帳の記録：思い出（遊んだ猫）・図鑑（毛色ごとのスタンプと最短日数）・称号。
   // 描画や保存には依存しない純粋な関数（保存は src/ui/recordStore.js、表示は src/scenes/notebookScene.js）
-  const { COAT_PERSONALITY, PERSONALITIES } = __modules['src/data/params.js'];
+  const { COAT_PERSONALITY, PERSONALITIES, FACES } = __modules['src/data/params.js'];
   const { ENDINGS } = __modules['src/data/texts.js'];
 
   // 思い出は新しいものからこの件数まで残す（図鑑のスタンプと称号は消えない）
@@ -3627,12 +3721,13 @@ __modules['src/game/records.js'] = (() => {
 
   /**
    * エンディングを1件記録する。
-   * ending: { name, coat, personality, endingId, day, mistakes, date }
+   * ending: { name, coat, personality, endingId, day, mistakes, date, face }（face は顔の形。なくてもよい）
    * @returns {{ records, newTitles: string[] }}
    */
   function addEnding(records, ending) {
-    const { name, coat, personality, endingId, day, mistakes, date } = ending;
+    const { name, coat, personality, endingId, day, mistakes, date, face } = ending;
     const memory = { name, coat, personality, endingId, day, mistakes, date };
+    if (face) memory.face = { shape: face.shape, ears: face.ears };
     const prev = records.dex[coat] ?? { stamps: [], bestDay: null };
     const bestDay = reconciled(endingId) && (prev.bestDay === null || day < prev.bestDay) ? day : prev.bestDay;
     const entry = { stamps: prev.stamps.includes(endingId) ? [...prev.stamps] : [...prev.stamps, endingId], bestDay };
@@ -3663,6 +3758,15 @@ __modules['src/game/records.js'] = (() => {
       && typeof m.date === 'string';
   }
 
+  const validFace = (f) => isObject(f) && FACES.shapes.includes(f.shape) && FACES.ears.includes(f.ears);
+
+  // 顔の形が壊れている思い出は、思い出は残して顔だけ取り除く（顔のない思い出は、いままでの形で描く）
+  function cleanFace(m) {
+    if (!('face' in m) || validFace(m.face)) return m;
+    const { face, ...rest } = m;
+    return rest;
+  }
+
   // 図鑑のうち、正しい形の毛色だけ残す。スタンプは知っているエンディングだけにして、重複を除く
   function cleanDex(dex) {
     const out = {};
@@ -3689,7 +3793,7 @@ __modules['src/game/records.js'] = (() => {
     if (typeof metCount !== 'number' || !Number.isFinite(metCount) || metCount < 0) return emptyRecords();
     return {
       v: 1,
-      memories: memories.filter(validMemory).slice(0, MEMORY_LIMIT),
+      memories: memories.filter(validMemory).map(cleanFace).slice(0, MEMORY_LIMIT),
       dex: cleanDex(dex),
       titles: [...new Set(titles.filter((id) => TITLE_IDS.includes(id)))],
       metCount,
@@ -3725,11 +3829,12 @@ __modules['src/scenes/notebookScene.js'] = (() => {
     return node;
   };
 
-  function portrait(coat, silhouette = false) {
+  // face: 思い出の猫の顔の形（図鑑や、顔を残していない古い思い出では省略＝いままでの形）
+  function portrait(coat, { silhouette = false, face } = {}) {
     const canvas = el('canvas', 'portrait');
     canvas.width = PORTRAIT_PX * 2;
     canvas.height = PORTRAIT_PX * 2;
-    drawCatPortrait(canvas, coat, { silhouette });
+    drawCatPortrait(canvas, coat, { silhouette, face });
     return canvas;
   }
 
@@ -3744,7 +3849,7 @@ __modules['src/scenes/notebookScene.js'] = (() => {
         el('span', 'memory-result', NOTEBOOK_TEXT.memoryResult(m, ENDINGS[m.endingId].name)),
         el('span', 'memory-date', String(m.date).replaceAll('-', '/')),
       );
-      item.append(portrait(m.coat), info);
+      item.append(portrait(m.coat, { face: m.face }), info);
       return item;
     });
   }
@@ -3753,7 +3858,7 @@ __modules['src/scenes/notebookScene.js'] = (() => {
     return Object.keys(COAT_PERSONALITY).map((coat) => {
       const entry = records.dex[coat];
       const card = el('div', entry ? 'dex-card' : 'dex-card unknown');
-      card.append(portrait(coat, !entry));
+      card.append(portrait(coat, { silhouette: !entry }));
       if (!entry) {
         card.append(el('strong', '', NOTEBOOK_TEXT.unknownCoat));
         return card;
@@ -3873,7 +3978,7 @@ __modules['src/ui/recordStore.js'] = (() => {
 // ---- src/main.js
 __modules['src/main.js'] = (() => {
   // 起動・ゲームループ・画面切替。
-  const { createGame, finishDay, chooseNight, chooseCat } = __modules['src/game/progression.js'];
+  const { createGame, finishDay, chooseNight, chooseCat, chooseFace } = __modules['src/game/progression.js'];
   const { createRng } = __modules['src/util/rng.js'];
   const { createRenderer } = __modules['src/render/renderer.js'];
   const { createInput } = __modules['src/ui/input.js'];
@@ -3920,6 +4025,8 @@ __modules['src/main.js'] = (() => {
   // 試作中はデバッグパネルで性格・毛色を固定できる（null ならランダム。性格は毛色で決まる）
   let fixedPersonality = null;
   let fixedCoat = null;
+  // 顔の形も固定できる（null ならランダム）
+  let fixedFace = null;
   // ねこ手帳の記録（端末の中に保存。src/ui/recordStore.js）
   let records = loadRecords();
 
@@ -3928,7 +4035,7 @@ __modules['src/main.js'] = (() => {
     hud.show(false);
     // BGM の切り替えは、はじめてから表示する
     bgmBtn.hidden = true;
-    session.game = createGame(chooseCat({ personality: fixedPersonality, coat: fixedCoat }));
+    session.game = createGame({ ...chooseCat({ personality: fixedPersonality, coat: fixedCoat }), face: chooseFace(fixedFace ?? {}) });
     session.misses = {};
     rng = createRng(session.game.seed);
     showTitle();
@@ -3986,7 +4093,7 @@ __modules['src/main.js'] = (() => {
     overlay.clear();
     // ねこ手帳に思い出を残す（visitor の day は7日目）
     const g = session.game;
-    const r = addEnding(records, { name: g.catName, coat: g.coat, personality: g.personality, endingId, day: g.day, mistakes: g.mistakes, date: today() });
+    const r = addEnding(records, { name: g.catName, coat: g.coat, face: g.face, personality: g.personality, endingId, day: g.day, mistakes: g.mistakes, date: today() });
     records = r.records;
     const saved = saveRecords(records);
     scene = createEndingScene({ screenEl, session, endingId, onRetry: goTitle, saved, newTitles: r.newTitles });
@@ -4006,6 +4113,10 @@ __modules['src/main.js'] = (() => {
       onPersonality(key) {
         fixedPersonality = key;
         session.game = { ...session.game, personality: key };
+      },
+      onFace(face) {
+        fixedFace = face;
+        session.game = { ...session.game, face };
       },
       onCoat(key) {
         fixedCoat = key;
@@ -4054,11 +4165,11 @@ __modules['src/main.js'] = (() => {
     // 更新中に画面が切り替わったら、残りの回数は新しい画面で回さない
     const current = scene;
     for (let i = 0; i < speed && scene === current; i++) scene.update(dt);
-    renderer.draw({ personality: session.game.personality, coat: session.game.coat, ...scene.view() }, now / 1000, dt);
+    renderer.draw({ personality: session.game.personality, coat: session.game.coat, face: session.game.face, ...scene.view() }, now / 1000, dt);
     if (debug && now - debugAt > 100) {
       debugAt = now;
       const s = scene.state?.() ?? {};
-      debug.update({ personality: session.game.personality, coat: session.game.coat, scene: scene.name, mistakes: session.game.mistakes, ...s });
+      debug.update({ personality: session.game.personality, coat: session.game.coat, face: session.game.face, scene: scene.name, mistakes: session.game.mistakes, ...s });
     }
     requestAnimationFrame(frame);
   }

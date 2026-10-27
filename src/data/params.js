@@ -71,6 +71,12 @@ export const DAYS = [
 // 40秒の日なら、8秒で昼になり、残り14秒から夕焼けが始まり、残り8秒で夕方になる（色は src/render/daylight.js）
 export const DAYLIGHT = { noonAt: 0.2, eveningFrom: 0.65, eveningAt: 0.8 };
 
+// 猫の顔の種類（猫ごとにランダムで選ぶ）。形そのものは src/render/renderer.js の FACE_SHAPES・EAR_SIZES
+export const FACES = {
+  shapes: ['mochi', 'maru', 'shimobukure', 'hoppe'],
+  ears: ['small', 'normal', 'big'],
+};
+
 export const NIGHT = {
   // おやつを置くと、その場で信頼が増える。代わりに翌日の信頼の増え方が下がる
   treatTrust: 8,

@@ -1,9 +1,20 @@
 // 日の進行・夜の選択の効果・エンディング判定。描画や入力には依存しない。
-import { DAYS, NIGHT, PERSONALITIES, MAX_DAY, MAX_VALUE, DEFAULT_PERSONALITY, COAT_PERSONALITY } from '../data/params.js';
+import { DAYS, NIGHT, PERSONALITIES, MAX_DAY, MAX_VALUE, DEFAULT_PERSONALITY, COAT_PERSONALITY, FACES } from '../data/params.js';
 
-// catName は1日目の最初にプレイヤーが付ける。coat は毛色（src/render/renderer.js の COATS のキー）
-export function createGame({ personality = DEFAULT_PERSONALITY, seed = Date.now(), coat = 'chatora' } = {}) {
-  return { day: 1, trust: 0, personality, coat, catName: null, nightChoice: null, mistakes: 0, seed, seenCards: [] };
+// catName は1日目の最初にプレイヤーが付ける。coat は毛色（src/render/renderer.js の COATS のキー）、face は顔の形（chooseFace）
+export function createGame({ personality = DEFAULT_PERSONALITY, seed = Date.now(), coat = 'chatora', face = { shape: 'mochi', ears: 'normal' } } = {}) {
+  return { day: 1, trust: 0, personality, coat, face, catName: null, nightChoice: null, mistakes: 0, seed, seenCards: [] };
+}
+
+/**
+ * 今回の猫の顔（輪郭と耳の大きさ）を決める。毛色や性格とは関係なく、それぞれ同じくらい出る。
+ * shape / ears はデバッグで固定したいときだけ渡す
+ */
+export function chooseFace({ shape = null, ears = null } = {}, random = Math.random) {
+  return {
+    shape: shape ?? FACES.shapes[Math.floor(random() * FACES.shapes.length)],
+    ears: ears ?? FACES.ears[Math.floor(random() * FACES.ears.length)],
+  };
 }
 
 /**

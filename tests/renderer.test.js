@@ -655,3 +655,148 @@ test('夕方の部屋にかける色は猫より先に塗る（猫の毛色は�
   assert.ok(tintAt.length > 0, `部屋にかける色 ${tint.color} の塗りが見つからない`);
   assert.ok(Math.max(...tintAt) < firstFur, `部屋にかける色の塗り ${tintAt.join(',')} / 猫の最初の塗り ${firstFur}`);
 });
+
+// ---------------------------------------------------------------- 猫の顔（輪郭と耳）
+
+// FACES がまだなくても読み込みが止まらないように、テストの中で読み込む
+async function loadFaceKinds() {
+  const { FACES } = await import('../src/data/params.js');
+  assert.ok(FACES, 'params.js に FACES がない');
+  return FACES;
+}
+
+test('描画の輪郭と耳の表は、params.js の FACES と同じ種類で、耳は small < normal(1) < big < 1.2', async () => {
+  const FACES = await loadFaceKinds();
+  assert.ok(R.FACE_SHAPES, 'FACE_SHAPES がない');
+  assert.ok(R.EAR_SIZES, 'EAR_SIZES がない');
+  assert.deepEqual(Object.keys(R.FACE_SHAPES).sort(), [...FACES.shapes].sort());
+  assert.deepEqual(Object.keys(R.EAR_SIZES).sort(), [...FACES.ears].sort());
+  const { small, normal, big } = R.EAR_SIZES;
+  assert.equal(normal, 1);
+  assert.ok(small < normal, `small ${small}`);
+  assert.ok(big > normal && big < 1.2, `big ${big}`);
+});
+
+// 名前付けのアップ（いつも同じ位置・姿勢）を1フレーム描き、塗りと線を順に返す
+function drawFace(face) {
+  const rec = orderedRecordingCanvas();
+  const r = R.createRenderer(rec.canvas);
+  const view = { scene: 'name', closeup: true, coat: 'chatora', cat: { mode: 'look', distance: 0 } };
+  r.draw(face === undefined ? view : { ...view, face }, 1, FRAME);
+  return rec.ops;
+}
+// 頭の輪郭：毛色で塗った形のうち、ベジェ曲線でできたもの
+const headOutlines = (ops) => ops.filter((o) => o.op === 'fill' && o.style === COATS.chatora.fur && o.path.includes('bezierCurveTo')).map((o) => o.path);
+// 耳：毛色で塗った形のうち、moveTo と2本の quadraticCurveTo でできたもの。
+// 付け根（moveTo の点と、2本目の曲線の終わりの点）の真ん中から、耳の先（1本目の曲線の終わりの点）までの長さを返す
+function earLengths(ops) {
+  const nums = (s) => s.split(',').map(Number);
+  return ops
+    .filter((o) => o.op === 'fill' && o.style === COATS.chatora.fur && /^moveTo\([^)]*\) quadraticCurveTo\([^)]*\) quadraticCurveTo\([^)]*\) closePath\(\)$/.test(o.path))
+    .map((o) => {
+      const [m, q1, q2] = [...o.path.matchAll(/\(([^)]*)\)/g)].map((x) => nums(x[1]));
+      const base = [(m[0] + q2[2]) / 2, (m[1] + q2[3]) / 2];
+      return { side: Math.sign(q1[2] - base[0]), len: Math.hypot(q1[2] - base[0], q1[3] - base[1]) };
+    })
+    .sort((a, b) => a.side - b.side);
+}
+
+test('顔の輪郭を変えると、頭の輪郭が変わる（5種すべて違う形）', async () => {
+  const FACES = await loadFaceKinds();
+  const outlines = FACES.shapes.map((shape) => {
+    const list = headOutlines(drawFace({ shape, ears: 'normal' }));
+    assert.equal(list.length, 1, `${shape}: 頭の輪郭が1つ見つからない`);
+    return list[0];
+  });
+  assert.equal(new Set(outlines).size, FACES.shapes.length, '同じ輪郭の顔がある');
+});
+
+test('顔を省略したときは、mochi・normal の顔と同じ絵になる', () => {
+  assert.deepEqual(drawFace(undefined), drawFace({ shape: 'mochi', ears: 'normal' }));
+});
+
+test('耳 big は normal より大きく（耳の先が付け根から遠い）、small は小さい', () => {
+  const len = (ears) => earLengths(drawFace({ shape: 'mochi', ears }));
+  const [small, normal, big] = ['small', 'normal', 'big'].map(len);
+  for (const ears of [small, normal, big]) assert.equal(ears.length, 2, '左右の耳が見つからない');
+  for (let i = 0; i < 2; i++) {
+    assert.ok(big[i].len > normal[i].len + 0.5, `big ${big[i].len} / normal ${normal[i].len}`);
+    assert.ok(small[i].len < normal[i].len - 0.5, `small ${small[i].len} / normal ${normal[i].len}`);
+  }
+});
+
+// 顔の組み合わせ（輪郭5種×耳3種）
+async function allFaces() {
+  const FACES = await loadFaceKinds();
+  return FACES.shapes.flatMap((shape) => FACES.ears.map((ears) => ({ shape, ears })));
+}
+function drawPoseWithFace(mode, lapTime, face) {
+  const rec = recordingCanvas();
+  const r = R.createRenderer(rec.canvas);
+  const view = mode === 'lap'
+    ? { scene: 'day', face, cat: { mode, distance: 0 }, lapTime }
+    : { scene: 'day', face, cat: { mode, distance: 50 } };
+  r.draw(view, 1, 0.016);
+  return rec;
+}
+const faceName = (f) => `${f.shape}・${f.ears}`;
+
+test('どの顔でも、どの姿勢でも、毛色で塗った形にはこげ茶の輪郭線が引かれている', async () => {
+  for (const face of await allFaces()) {
+    for (const [mode, lapTime] of poses) {
+      const { fills, strokes } = drawPoseWithFace(mode, lapTime, face);
+      const outlined = new Set(strokes.filter((s) => s.style === LINE_COLOR).map((s) => s.path));
+      const furFills = fills.filter((f) => furColors.includes(f.style));
+      assert.ok(furFills.length > 0, `${faceName(face)} ${mode}`);
+      for (const f of furFills) assert.ok(outlined.has(f.path), `${faceName(face)} ${mode}: 輪郭線のない形 ${f.path}`);
+    }
+  }
+});
+
+test('どの顔でも、輪郭でない線（柄・白い部分）を、こげ茶の輪郭線でなぞらない', async () => {
+  for (const face of await allFaces()) {
+    for (const [mode, lapTime] of poses) {
+      const { fills, strokes } = drawPoseWithFace(mode, lapTime, face);
+      const filled = new Set(fills.map((f) => f.path));
+      for (const s of strokes.filter((x) => x.style === LINE_COLOR && x.lw === LINE_WIDTH)) {
+        assert.ok(filled.has(s.path), `${faceName(face)} ${mode}: 塗っていない線をなぞっている ${s.path}`);
+      }
+    }
+  }
+});
+
+test('どの顔でも、歩いている姿の毛色で塗った形には輪郭線がある', async () => {
+  for (const face of await allFaces()) {
+    const { fills, strokes } = drawFrames({ scene: 'day', face, cat: { mode: 'relax', distance: 50, walking: true } }, 0.3);
+    const outlined = new Set(strokes.filter((s) => s.style === LINE_COLOR).map((s) => s.path));
+    const furFills = fills.filter((f) => furColors.includes(f.style));
+    assert.ok(furFills.length > 0, faceName(face));
+    for (const f of furFills) assert.ok(outlined.has(f.path), `${faceName(face)}: 輪郭線のない形 ${f.path}`);
+  }
+});
+
+test('タイトルに戻るとき、消える間は前の猫の顔、現れる間は新しい猫の顔で描く', () => {
+  const fade = fadeSec();
+  const faceA = { shape: 'maru', ears: 'big' };
+  const faceB = { shape: 'onigiri', ears: 'small' };
+  const rec = recordingCanvas();
+  const r = R.createRenderer(rec.canvas);
+  let t = 1;
+  for (let i = 0; i < framesOf(3); i++, t = 1 + i * FRAME) {
+    r.draw({ scene: 'ending', endingId: LAP_ENDING, coat: OLD_COAT, face: faceA, lapTime: i * FRAME }, t, FRAME);
+  }
+  assert.deepEqual(r.shownCat().face, faceA, '切り替え前');
+  const tSwitch = 1 + framesOf(3) * FRAME;
+  for (let i = 0; i < framesOf(2 * fade + 0.5); i++) {
+    const e = i * FRAME;
+    r.draw({ scene: 'title', coat: NEW_COAT, face: faceB }, tSwitch + e, FRAME);
+    const shown = r.shownCat();
+    if (e < fade - EDGE) {
+      assert.deepEqual(shown.face, faceA, `e=${e.toFixed(3)}: 消える間の顔`);
+      assert.equal(shown.coat, OLD_COAT);
+    } else if (e > fade + EDGE) {
+      assert.deepEqual(shown.face, faceB, `e=${e.toFixed(3)}: 現れる間の顔`);
+      assert.equal(shown.coat, NEW_COAT);
+    }
+  }
+});

@@ -23,11 +23,12 @@ const el = (tag, className, text) => {
   return node;
 };
 
-function portrait(coat, silhouette = false) {
+// face: 思い出の猫の顔の形（図鑑や、顔を残していない古い思い出では省略＝いままでの形）
+function portrait(coat, { silhouette = false, face } = {}) {
   const canvas = el('canvas', 'portrait');
   canvas.width = PORTRAIT_PX * 2;
   canvas.height = PORTRAIT_PX * 2;
-  drawCatPortrait(canvas, coat, { silhouette });
+  drawCatPortrait(canvas, coat, { silhouette, face });
   return canvas;
 }
 
@@ -42,7 +43,7 @@ function memoriesTab(records) {
       el('span', 'memory-result', NOTEBOOK_TEXT.memoryResult(m, ENDINGS[m.endingId].name)),
       el('span', 'memory-date', String(m.date).replaceAll('-', '/')),
     );
-    item.append(portrait(m.coat), info);
+    item.append(portrait(m.coat, { face: m.face }), info);
     return item;
   });
 }
@@ -51,7 +52,7 @@ function dexTab(records) {
   return Object.keys(COAT_PERSONALITY).map((coat) => {
     const entry = records.dex[coat];
     const card = el('div', entry ? 'dex-card' : 'dex-card unknown');
-    card.append(portrait(coat, !entry));
+    card.append(portrait(coat, { silhouette: !entry }));
     if (!entry) {
       card.append(el('strong', '', NOTEBOOK_TEXT.unknownCoat));
       return card;

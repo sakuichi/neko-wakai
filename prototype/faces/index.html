@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>猫の顔の試作</title>
+<style>
+  :root { --bg: #fff6e9; --card: #fffdf8; --ink: #5a3a22; --sub: #8a6a50; --accent: #e0894a; --line: #ecd9c2; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Hiragino Maru Gothic ProN", "BIZ UDPGothic", "Yu Gothic UI", sans-serif; line-height: 1.6; word-break: auto-phrase; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  h2 { font-size: 1.05rem; margin: 0 0 6px; }
+  .lead, .note { color: var(--sub); font-size: .9rem; }
+  .row, .box { background: var(--card); border: 2px solid var(--line); border-radius: 16px; padding: 12px; margin-top: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cell { text-align: center; }
+  .cell canvas { width: 100%; max-width: 200px; aspect-ratio: 1; }
+  .cell p { margin: 0; font-size: .75rem; color: var(--sub); }
+  select { font: inherit; padding: 4px 8px; border-radius: 8px; border: 2px solid var(--line); background: #fff; color: var(--ink); }
+</style>
+</head>
+<body>
+<main>
+  <h1>猫の顔の試作</h1>
+  <p class="lead">猫ごとに変わる顔の形です（輪郭4種×耳3種）。ゲームと同じ描き方で描いています。</p>
+  <div id="shapes"></div>
+  <section class="box">
+    <h2>耳の大きさ</h2>
+    <p class="note">輪郭：<select id="parts-shape"></select></p>
+    <div id="parts"></div>
+  </section>
+  <p class="note">※試作です。形を調整するときの見比べ用に残しています。</p>
+</main>
+<!-- faces.js を1つにまとめたもの（作り方は faces.js の冒頭）。ダブルクリック（file://）でも動くよう通常スクリプトにしている -->
+<script src="faces.bundle.js"></script>
+</body>
+</html>

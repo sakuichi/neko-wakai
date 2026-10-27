@@ -379,3 +379,58 @@ test('中身の壊れた保存データを読んでからエンディングを�
   assert.deepEqual(result.records.memories, [e]);
   assert.equal(result.records.metCount, 4);
 });
+
+// ---------------------------------------------------------------- 猫の顔
+
+test('エンディングの猫の顔は、思い出に残る', async () => {
+  const R = await loadRecordsModule();
+  const face = { shape: 'onigiri', ears: 'big' };
+  const e = ending({ face });
+  const { records } = R.addEnding(R.emptyRecords(), e);
+  assert.deepEqual(records.memories[0].face, face);
+  assert.deepEqual(records.memories, [e]);
+});
+
+test('顔のある思い出は、JSON にして読み直すと同じものに戻る', async () => {
+  const R = await loadRecordsModule();
+  const { records } = addAll(R, [
+    visitor({ coat: 'kuro', face: { shape: 'maru', ears: 'small' } }),
+    ending({ coat: 'shiro', endingId: 'fate', day: 3, face: { shape: 'hoppe', ears: 'normal' } }),
+    ending({ coat: 'chatora', face: { shape: 'shimobukure', ears: 'big' } }),
+  ]);
+  assert.deepEqual(R.parseRecords(JSON.stringify(records)), records);
+});
+
+test('顔のない古い思い出は、そのまま残す', async () => {
+  const R = await loadRecordsModule();
+  const old = ending({ name: 'むかし' });
+  assert.ok(!('face' in old));
+  const r = R.parseRecords(savedText({ memories: [old] }));
+  assert.deepEqual(r.memories, [old]);
+  assert.ok(!('face' in r.memories[0]), '顔のない思い出に face が付いた');
+});
+
+test('顔が壊れている思い出は、思い出を残して顔だけ取り除く', async () => {
+  const R = await loadRecordsModule();
+  const base = ending({ name: 'こわれ' });
+  const broken = [
+    'maru',
+    3,
+    null,
+    ['maru', 'big'],
+    { shape: 'hossori', ears: 'normal' },
+    { shape: 'maru', ears: 'huge' },
+    { shape: 'maru' },
+    { ears: 'big' },
+  ];
+  const good = { ...base, name: 'まとも', face: { shape: 'maru', ears: 'big' } };
+  const memories = [...broken.map((face) => ({ ...base, face })), good];
+  const r = R.parseRecords(savedText({ memories }));
+  assert.equal(r.memories.length, broken.length + 1, '思い出が消えた');
+  broken.forEach((face, i) => {
+    const m = r.memories[i];
+    assert.ok(!('face' in m), `${JSON.stringify(face)}: 壊れた顔が残っている`);
+    assert.deepEqual(m, base, `${JSON.stringify(face)}: 顔以外が変わった`);
+  });
+  assert.deepEqual(r.memories.at(-1), good);
+});

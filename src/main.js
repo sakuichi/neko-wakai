@@ -1,5 +1,5 @@
 // 起動・ゲームループ・画面切替。
-import { createGame, finishDay, chooseNight, chooseCat } from './game/progression.js';
+import { createGame, finishDay, chooseNight, chooseCat, chooseFace } from './game/progression.js';
 import { createRng } from './util/rng.js';
 import { createRenderer } from './render/renderer.js';
 import { createInput } from './ui/input.js';
@@ -46,6 +46,8 @@ let scene;
 // 試作中はデバッグパネルで性格・毛色を固定できる（null ならランダム。性格は毛色で決まる）
 let fixedPersonality = null;
 let fixedCoat = null;
+// 顔の形も固定できる（null ならランダム）
+let fixedFace = null;
 // ねこ手帳の記録（端末の中に保存。src/ui/recordStore.js）
 let records = loadRecords();
 
@@ -54,7 +56,7 @@ function goTitle() {
   hud.show(false);
   // BGM の切り替えは、はじめてから表示する
   bgmBtn.hidden = true;
-  session.game = createGame(chooseCat({ personality: fixedPersonality, coat: fixedCoat }));
+  session.game = createGame({ ...chooseCat({ personality: fixedPersonality, coat: fixedCoat }), face: chooseFace(fixedFace ?? {}) });
   session.misses = {};
   rng = createRng(session.game.seed);
   showTitle();
@@ -112,7 +114,7 @@ function goEnding(endingId) {
   overlay.clear();
   // ねこ手帳に思い出を残す（visitor の day は7日目）
   const g = session.game;
-  const r = addEnding(records, { name: g.catName, coat: g.coat, personality: g.personality, endingId, day: g.day, mistakes: g.mistakes, date: today() });
+  const r = addEnding(records, { name: g.catName, coat: g.coat, face: g.face, personality: g.personality, endingId, day: g.day, mistakes: g.mistakes, date: today() });
   records = r.records;
   const saved = saveRecords(records);
   scene = createEndingScene({ screenEl, session, endingId, onRetry: goTitle, saved, newTitles: r.newTitles });
@@ -132,6 +134,10 @@ if (SHOW_DEBUG) {
     onPersonality(key) {
       fixedPersonality = key;
       session.game = { ...session.game, personality: key };
+    },
+    onFace(face) {
+      fixedFace = face;
+      session.game = { ...session.game, face };
     },
     onCoat(key) {
       fixedCoat = key;
@@ -180,11 +186,11 @@ function frame(now) {
   // 更新中に画面が切り替わったら、残りの回数は新しい画面で回さない
   const current = scene;
   for (let i = 0; i < speed && scene === current; i++) scene.update(dt);
-  renderer.draw({ personality: session.game.personality, coat: session.game.coat, ...scene.view() }, now / 1000, dt);
+  renderer.draw({ personality: session.game.personality, coat: session.game.coat, face: session.game.face, ...scene.view() }, now / 1000, dt);
   if (debug && now - debugAt > 100) {
     debugAt = now;
     const s = scene.state?.() ?? {};
-    debug.update({ personality: session.game.personality, coat: session.game.coat, scene: scene.name, mistakes: session.game.mistakes, ...s });
+    debug.update({ personality: session.game.personality, coat: session.game.coat, face: session.game.face, scene: scene.name, mistakes: session.game.mistakes, ...s });
   }
   requestAnimationFrame(frame);
 }

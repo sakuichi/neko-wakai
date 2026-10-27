@@ -172,3 +172,64 @@ test('デバッグで性格だけ決めたら、その性格の毛色から選�
 test('デバッグで性格と毛色の両方を決めたら、組み合わせが違っていてもそのまま使う', () => {
   assert.deepEqual(chooseCat({ personality: 'bibiri', coat: 'chatora' }, () => 0.5), { personality: 'bibiri', coat: 'chatora' });
 });
+
+// ---------------------------------------------------------------- 猫の顔
+
+// いつも同じ値を返す乱数
+const sameRng = (v) => () => v;
+
+// FACES・chooseFace がまだなくても読み込みが止まらないように、テストの中で読み込む
+async function loadFaces() {
+  const { FACES } = await import('../src/data/params.js');
+  const P = await import('../src/game/progression.js');
+  assert.ok(FACES, 'params.js に FACES がない');
+  assert.equal(typeof P.chooseFace, 'function', 'chooseFace がない');
+  return { FACES, chooseFace: P.chooseFace };
+}
+
+test('顔の種類は、輪郭4種（mochi・maru・shimobukure・hoppe）と耳3種（small・normal・big）', async () => {
+  const { FACES } = await import('../src/data/params.js');
+  assert.deepEqual(FACES, { shapes: ['mochi', 'maru', 'shimobukure', 'hoppe'], ears: ['small', 'normal', 'big'] });
+});
+
+test('猫の顔を選ぶと、輪郭と耳は決まった種類の中から選ばれ、乱数しだいで全種類が出る', async () => {
+  const { FACES, chooseFace } = await loadFaces();
+  const shapes = new Set();
+  const ears = new Set();
+  // 0〜1 を細かく刻んだ乱数（輪郭と耳で別の値になるよう、呼ばれるたびに進める）
+  for (let i = 0; i < 200; i++) {
+    let n = 0;
+    const random = () => ((i * 0.37 + n++ * 0.61) % 1);
+    const face = chooseFace({}, random);
+    assert.ok(FACES.shapes.includes(face.shape), `shape ${face.shape}`);
+    assert.ok(FACES.ears.includes(face.ears), `ears ${face.ears}`);
+    shapes.add(face.shape);
+    ears.add(face.ears);
+  }
+  assert.deepEqual([...shapes].sort(), [...FACES.shapes].sort());
+  assert.deepEqual([...ears].sort(), [...FACES.ears].sort());
+  // 乱数がいつも同じなら、同じ顔
+  assert.deepEqual(chooseFace({}, sameRng(0)), chooseFace({}, sameRng(0)));
+});
+
+test('デバッグで顔を決めたら、そのとおりになる（片方だけ決めたら、もう片方は選ぶ）', async () => {
+  const { FACES, chooseFace } = await loadFaces();
+  for (const shape of FACES.shapes) {
+    for (const ears of FACES.ears) {
+      for (const r of [0, 0.5, 0.99]) assert.deepEqual(chooseFace({ shape, ears }, sameRng(r)), { shape, ears });
+    }
+  }
+  const onlyShape = chooseFace({ shape: 'onigiri' }, sameRng(0.5));
+  assert.equal(onlyShape.shape, 'onigiri');
+  assert.ok(FACES.ears.includes(onlyShape.ears));
+  const onlyEars = chooseFace({ ears: 'big' }, sameRng(0.5));
+  assert.equal(onlyEars.ears, 'big');
+  assert.ok(FACES.shapes.includes(onlyEars.shape));
+});
+
+test('新しいゲームに顔を渡すと GameState.face に入り、省略したら mochi・normal', () => {
+  const face = { shape: 'hoppe', ears: 'small' };
+  assert.deepEqual(createGame({ personality: 'bibiri', seed: 1, coat: 'kuro', face }).face, face);
+  assert.deepEqual(createGame({ personality: 'bibiri', seed: 1 }).face, { shape: 'mochi', ears: 'normal' });
+  assert.deepEqual(createGame().face, { shape: 'mochi', ears: 'normal' });
+});
