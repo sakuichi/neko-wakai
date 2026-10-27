@@ -74,6 +74,11 @@ function goName() {
   scene = createNameScene({
     screenEl,
     coat: session.game.coat,
+    // 同じ猫のままタイトルに戻る（BGM の切り替えはタイトルでは出さない）
+    onBack() {
+      bgmBtn.hidden = true;
+      showTitle();
+    },
     onDecide(name) {
       session.game = { ...session.game, catName: name };
       goDay();

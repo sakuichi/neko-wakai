@@ -9,8 +9,8 @@ export function namePicks(coat, random = Math.random) {
   return picks;
 }
 
-// coat: 今回の猫の毛色（名前の候補を決める）
-export function createNameScene({ screenEl, coat, onDecide }) {
+// coat: 今回の猫の毛色（名前の候補を決める）。onBack: 「もどる」で、同じ猫のままタイトルに戻る
+export function createNameScene({ screenEl, coat, onDecide, onBack }) {
   const node = document.createElement('div');
   node.className = 'name-screen';
 
@@ -45,20 +45,28 @@ export function createNameScene({ screenEl, coat, onDecide }) {
   ok.className = 'name-ok';
   ok.textContent = NAME_TEXT.ok;
 
-  let decided = false;
-  function decide() {
-    if (decided) return;
-    decided = true;
+  const back = document.createElement('button');
+  back.type = 'button';
+  back.className = 'name-back';
+  back.textContent = NAME_TEXT.back;
+
+  // 名前を決めるか「もどる」を押したら、この画面を離れる（そのあとの操作は受け付けない）
+  let left = false;
+  function leave(then) {
+    if (left) return;
+    left = true;
     field.blur();
     screenEl.replaceChildren();
-    onDecide(cleanName(field.value) || picks[0]);
+    then();
   }
+  const decide = () => leave(() => onDecide(cleanName(field.value) || picks[0]));
   ok.addEventListener('click', decide);
+  back.addEventListener('click', () => leave(onBack));
   field.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.isComposing) decide();
   });
 
-  band.append(h2, field, chips, ok);
+  band.append(back, h2, field, chips, ok);
   node.append(band);
   screenEl.replaceChildren(node);
 

@@ -21,7 +21,7 @@ flowchart TD
     MAIN["起動・ゲームループ・画面切替<br/>src/main.js"]
     MAIN -->|"GameState"| TITLE["タイトル画面<br/>src/scenes/titleScene.js"]
     MAIN -->|"GameState"| NAME["名前付け（猫のアップ）<br/>src/scenes/nameScene.js"]
-    NAME -->|"catName"| MAIN
+    NAME -->|"catName／もどる（同じ猫のままタイトルへ）"| MAIN
     MAIN -->|"coat（毛色に合った名前の候補を出す）"| NAME
     MAIN -->|"GameState"| DAY["昼：駆け引き<br/>src/scenes/dayScene.js"]
     MAIN -->|"GameState"| NIGHT["夜：選択<br/>src/scenes/nightScene.js"]
@@ -118,6 +118,7 @@ stateDiagram-v2
     タイトル --> ねこ手帳: 「ねこ手帳」ボタン
     ねこ手帳 --> タイトル: もどる
     名前付け --> 昼: 名前を決める
+    名前付け --> タイトル: もどる（同じ猫のまま）
     昼 --> 夜: 時間切れ（6日目まで）
     昼 --> エンディング: 膝に乗った（3日目以降）
     昼 --> エンディング: 7日目の時間切れ（通い猫）

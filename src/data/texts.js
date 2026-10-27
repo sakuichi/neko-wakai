@@ -24,6 +24,7 @@ export const NAME_TEXT = {
   prompt: '名前は何にしよう？',
   placeholder: 'なまえ',
   ok: 'この名前にする',
+  back: 'もどる',
   maxLength: 10,
   // 名前の候補は毛色に合わせる（毛色のキーは src/render/renderer.js の COATS）。毎回この中から4つ出す
   byCoat: {

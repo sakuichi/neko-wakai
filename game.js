@@ -1822,6 +1822,7 @@ __modules['src/data/texts.js'] = (() => {
     prompt: '名前は何にしよう？',
     placeholder: 'なまえ',
     ok: 'この名前にする',
+    back: 'もどる',
     maxLength: 10,
     // 名前の候補は毛色に合わせる（毛色のキーは src/render/renderer.js の COATS）。毎回この中から4つ出す
     byCoat: {
@@ -3135,8 +3136,8 @@ __modules['src/scenes/nameScene.js'] = (() => {
     return picks;
   }
 
-  // coat: 今回の猫の毛色（名前の候補を決める）
-  function createNameScene({ screenEl, coat, onDecide }) {
+  // coat: 今回の猫の毛色（名前の候補を決める）。onBack: 「もどる」で、同じ猫のままタイトルに戻る
+  function createNameScene({ screenEl, coat, onDecide, onBack }) {
     const node = document.createElement('div');
     node.className = 'name-screen';
 
@@ -3171,20 +3172,28 @@ __modules['src/scenes/nameScene.js'] = (() => {
     ok.className = 'name-ok';
     ok.textContent = NAME_TEXT.ok;
 
-    let decided = false;
-    function decide() {
-      if (decided) return;
-      decided = true;
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'name-back';
+    back.textContent = NAME_TEXT.back;
+
+    // 名前を決めるか「もどる」を押したら、この画面を離れる（そのあとの操作は受け付けない）
+    let left = false;
+    function leave(then) {
+      if (left) return;
+      left = true;
       field.blur();
       screenEl.replaceChildren();
-      onDecide(cleanName(field.value) || picks[0]);
+      then();
     }
+    const decide = () => leave(() => onDecide(cleanName(field.value) || picks[0]));
     ok.addEventListener('click', decide);
+    back.addEventListener('click', () => leave(onBack));
     field.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.isComposing) decide();
     });
 
-    band.append(h2, field, chips, ok);
+    band.append(back, h2, field, chips, ok);
     node.append(band);
     screenEl.replaceChildren(node);
 
@@ -3939,6 +3948,11 @@ __modules['src/main.js'] = (() => {
     scene = createNameScene({
       screenEl,
       coat: session.game.coat,
+      // 同じ猫のままタイトルに戻る（BGM の切り替えはタイトルでは出さない）
+      onBack() {
+        bgmBtn.hidden = true;
+        showTitle();
+      },
       onDecide(name) {
         session.game = { ...session.game, catName: name };
         goDay();

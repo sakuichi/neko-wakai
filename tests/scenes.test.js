@@ -414,3 +414,82 @@ test('タイトルの「ねこ手帳」ボタンには、猫の小さな絵（ca
     assert.ok(textOf(button).includes(NOTEBOOK_TEXT.open), `ボタンの文字: ${textOf(button)}`);
   });
 });
+
+// ---------------------------------------------------------------- 名前付け画面の「もどる」
+
+// イベントを記録して、あとから発火できる偽 DOM 要素（{ once: true } と onclick なども扱う）
+function eventElement(tag) {
+  const node = taggedElement(tag);
+  const listeners = [];
+  node.value = '';
+  node.addEventListener = (type, fn, opts) => {
+    listeners.push({ type, fn, once: typeof opts === 'object' && !!opts?.once });
+  };
+  node.removeEventListener = (type, fn) => {
+    const i = listeners.findIndex((l) => l.type === type && l.fn === fn);
+    if (i >= 0) listeners.splice(i, 1);
+  };
+  node.blur = () => {};
+  node.focus = () => {};
+  node.fire = (type, extra = {}) => {
+    const event = { type, target: node, currentTarget: node, preventDefault() {}, stopPropagation() {}, ...extra };
+    for (const l of [...listeners]) {
+      if (l.type !== type) continue;
+      if (l.once) listeners.splice(listeners.indexOf(l), 1);
+      l.fn.call(node, event);
+    }
+    if (typeof node[`on${type}`] === 'function') node[`on${type}`](event);
+  };
+  return node;
+}
+
+// 名前付け画面を作り、呼ばれた回数と、ボタンを返す
+async function nameScreen() {
+  const { createNameScene } = await import('../src/scenes/nameScene.js');
+  const calls = { decide: [], back: 0 };
+  const screenEl = eventElement('div');
+  withGlobals({ document: { createElement: (tag) => eventElement(tag) } }, () => {
+    createNameScene({
+      screenEl,
+      coat: 'chatora',
+      onDecide: (name) => calls.decide.push(name),
+      onBack: () => { calls.back += 1; },
+    });
+  });
+  const byClass = (cls) => findAll(screenEl, (n) => String(n.className ?? '').split(/\s+/).includes(cls));
+  return { screenEl, calls, back: byClass('name-back'), ok: byClass('name-ok') };
+}
+
+test('名前付け画面には「もどる」ボタンがある', async () => {
+  const { NAME_TEXT } = await import('../src/data/texts.js');
+  assert.equal(typeof NAME_TEXT.back, 'string', 'NAME_TEXT.back がない');
+  assert.ok(NAME_TEXT.back.length > 0);
+  const { back } = await nameScreen();
+  assert.equal(back.length, 1, 'class name-back のボタンが1つない');
+  assert.equal(textOf(back[0]).trim(), NAME_TEXT.back);
+});
+
+test('「もどる」を押すと一度だけ戻り、名前は決まらず、画面は空になる（そのあと押しても何も起きない）', async () => {
+  const { screenEl, calls, back, ok } = await nameScreen();
+  assert.equal(back.length, 1, 'class name-back のボタンが1つない');
+  assert.equal(ok.length, 1, 'class name-ok のボタンが1つない');
+  back[0].fire('click');
+  assert.equal(calls.back, 1);
+  assert.deepEqual(calls.decide, []);
+  assert.equal(screenEl.children.length, 0, '画面が空になっていない');
+  back[0].fire('click');
+  assert.equal(calls.back, 1, 'もう一度押したら、また戻った');
+  ok[0].fire('click');
+  assert.deepEqual(calls.decide, [], '戻ったあとに「この名前にする」で名前が決まった');
+  assert.equal(calls.back, 1);
+});
+
+test('名前を決めたあとで「もどる」を押しても、戻らない', async () => {
+  const { calls, back, ok } = await nameScreen();
+  assert.equal(back.length, 1, 'class name-back のボタンが1つない');
+  ok[0].fire('click');
+  assert.equal(calls.decide.length, 1, '名前が決まっていない（このテストの前提）');
+  back[0].fire('click');
+  assert.equal(calls.back, 0);
+  assert.equal(calls.decide.length, 1);
+});
