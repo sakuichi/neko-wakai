@@ -13,6 +13,9 @@ import { createNameScene } from './scenes/nameScene.js';
 import { createDayScene } from './scenes/dayScene.js';
 import { createNightScene } from './scenes/nightScene.js';
 import { createEndingScene } from './scenes/endingScene.js';
+import { createNotebookScene } from './scenes/notebookScene.js';
+import { addEnding, emptyRecords } from './game/records.js';
+import { loadRecords, saveRecords, clearRecords } from './ui/recordStore.js';
 import { SOUND_LABEL } from './data/texts.js';
 
 // 試作中はデバッグパネルを常に表示する。本番では ?debug=1 のときだけ表示する
@@ -43,6 +46,8 @@ let scene;
 // 試作中はデバッグパネルで性格・毛色を固定できる（null ならランダム。性格は毛色で決まる）
 let fixedPersonality = null;
 let fixedCoat = null;
+// ねこ手帳の記録（端末の中に保存。src/ui/recordStore.js）
+let records = loadRecords();
 
 function goTitle() {
   overlay.clear();
@@ -52,7 +57,16 @@ function goTitle() {
   session.game = createGame(chooseCat({ personality: fixedPersonality, coat: fixedCoat }));
   session.misses = {};
   rng = createRng(session.game.seed);
-  scene = createTitleScene({ screenEl, onStart: goName });
+  showTitle();
+}
+
+// タイトルの画面だけを出す（ねこ手帳から戻るときは、次の猫を選び直さない）
+function showTitle() {
+  scene = createTitleScene({ screenEl, onStart: goName, onNotebook: goNotebook });
+}
+
+function goNotebook() {
+  scene = createNotebookScene({ screenEl, records, onBack: showTitle });
 }
 
 function goName() {
@@ -91,7 +105,18 @@ function goNight(lastCat) {
 
 function goEnding(endingId) {
   overlay.clear();
-  scene = createEndingScene({ screenEl, session, endingId, onRetry: goTitle });
+  // ねこ手帳に思い出を残す（visitor の day は7日目）
+  const g = session.game;
+  const r = addEnding(records, { name: g.catName, coat: g.coat, personality: g.personality, endingId, day: g.day, mistakes: g.mistakes, date: today() });
+  records = r.records;
+  const saved = saveRecords(records);
+  scene = createEndingScene({ screenEl, session, endingId, onRetry: goTitle, saved, newTitles: r.newTitles });
+}
+
+// この端末の日付 'YYYY-MM-DD'
+function today() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 let debug = null;
@@ -115,6 +140,10 @@ if (SHOW_DEBUG) {
     },
     onSpeed(s) {
       speed = s;
+    },
+    onClearRecords() {
+      clearRecords();
+      records = emptyRecords();
     },
   });
 }

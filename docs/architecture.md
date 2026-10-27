@@ -68,13 +68,32 @@ flowchart TD
     DATA -->|"DAYLIGHT（時間帯の区切り）"| LIGHT
     DAY -->|"DayState"| HUD["日数・残り時間・まばたきボタン<br/>src/ui/hud.js"]
 
-    DEBUG["デバッグパネル<br/>src/ui/debugPanel.js"] -->|"personality / coat / skipDay / trustMax / reset / speed"| MAIN
+    DEBUG["デバッグパネル<br/>src/ui/debugPanel.js"] -->|"personality / coat / skipDay / trustMax / reset / speed / clearRecords"| MAIN
     MAIN -->|"固定した personality / coat（なければ null）"| PROG
     PROG -->|"chooseCat：毛色で性格が決まる（COAT_PERSONALITY）"| MAIN
     MAIN -->|"GameState, DayState, CatState"| DEBUG
 
     RNG["シード付き乱数<br/>src/util/rng.js"] -->|"rng()"| BRAIN
     RNG -->|"rng()"| PROG
+```
+
+### ねこ手帳（第3弾：思い出・図鑑・称号）
+
+```mermaid
+flowchart TD
+    MAIN["src/main.js"] -->|"Ending {name, coat, personality, endingId, day, mistakes, date}"| REC["記録の更新・称号の判定（純粋関数）<br/>src/game/records.js（addEnding / parseRecords）"]
+    REC -->|"{records, newTitles}"| MAIN
+    MAIN -->|"Records"| STORE["端末の中に保存（localStorage の neko-wakai:records。外には送らない・使えなくても遊べる）<br/>src/ui/recordStore.js"]
+    STORE -->|"Records（壊れていたら空）"| MAIN
+    MAIN -->|"newTitles, saved"| END2["エンディング：「思い出に残しました」「称号を手に入れた」<br/>src/scenes/endingScene.js"]
+    TITLE2["タイトル：「ねこ手帳」ボタン<br/>src/scenes/titleScene.js"] -->|"開く"| MAIN
+    MAIN -->|"Records"| BOOK["ねこ手帳（思い出・図鑑・称号のタブ）<br/>src/scenes/notebookScene.js"]
+    BOOK -->|"毛色（猫の小さな絵を描く）"| PORTRAIT["猫の絵（ゲームと同じ描き方）<br/>src/render/renderer.js（drawCatPortrait）"]
+    DATA2["称号の名前・条件の説明（TITLES）・手帳の文章（NOTEBOOK_TEXT）<br/>src/data/texts.js"] --> BOOK
+    DATA2 --> END2
+    DATA3["毛色・性格・エンディングの一覧（COAT_PERSONALITY・PERSONALITIES・ENDINGS。記録の形を確かめるのに使う）<br/>src/data/params.js<br/>src/data/texts.js"] --> REC
+    DEBUG2["デバッグパネル：記録を消す<br/>src/ui/debugPanel.js"] -->|"onClearRecords"| MAIN
+    MAIN -->|"clearRecords（main.js の記録も空に戻す）"| STORE
 ```
 
 ### BGM（ゲームでは src/ui/music.js から、試聴ページでは preview.js から鳴らす）
@@ -95,6 +114,8 @@ flowchart LR
 stateDiagram-v2
     [*] --> タイトル
     タイトル --> 名前付け: タップ
+    タイトル --> ねこ手帳: 「ねこ手帳」ボタン
+    ねこ手帳 --> タイトル: もどる
     名前付け --> 昼: 名前を決める
     昼 --> 夜: 時間切れ（6日目まで）
     昼 --> エンディング: 膝に乗った（3日目以降）
@@ -116,6 +137,8 @@ stateDiagram-v2
 | ActionResult | `{ cat, day, feedback: 'flee' \| 'kick' \| 'hide' \| 'stare' \| 'blinkBack' \| 'purr' \| 'tooFar' \| null, mistake }` | `src/game/rules.js` が返す |
 | DayResult | `{ lapped, trust, mistakes, cat }`（cat は昼の終わりの `{mode, distance, walking}`。progression は使わず、main.js が夜の画面に渡す） | `src/scenes/dayScene.js` が作る |
 | NightChoice | `'treat' \| 'box' \| 'nothing'` | `src/scenes/nightScene.js` が作る |
+| Ending | `{ name, coat, personality, endingId, day, mistakes, date }`（date は 'YYYY-MM-DD'。visitor の day は 7） | `src/main.js` がエンディングのときに作る |
+| Records | `{ v: 1, memories: Ending[]（新しい順・最大50件）, dex: { [coat]: { stamps: endingId[], bestDay } }, titles: 称号id[], metCount }` | `src/main.js`（読み書きは `recordStore.js`、更新は `records.js` が返す） |
 | EndingId | `'fate' \| 'patient' \| 'persistent' \| 'visitor'` | `src/game/progression.js` が返す |
 
 ## テスト
@@ -125,6 +148,7 @@ stateDiagram-v2
 - BGM：`tests/bgm.test.js` は曲の切り替え順（…→OFF→最初の曲）、楽譜の書式、小節をまたぐのばし、「メロディの長い音がコードの音（か9度）になっている」こと、試聴ページのスクリプトが最新かを確かめる
 - 画面：`tests/scenes.test.js` は、夜の画面が表示しきるまで猫が昼の終わりの場所にいて、そのあと hidden（帰っていて見えない）になること、名前の候補が毛色に合っていること、「チラッ」が名前付けのアップに出ないこと、まばたきを返したら「にゃーん」が鳴ることを確かめる
 - 描画：`tests/renderer.test.js` は描画命令を記録する偽の Canvas を使い、全ポーズで「毛色で塗った形に輪郭線がある」「塗っていない線（柄・白い部分）をこげ茶でなぞらない」こと、近づいただけの猫は膝の奥・膝に乗った猫は膝の手前に描くこと、手が袖口より手前にあること、手を伸ばしても袖があること、タイトルに戻るとき・夜から次の日に移るときに猫が見えたまま動かない（消えてから移り、毛色も消えている間に変わる）こと、ページを開いた直後に猫が滑ってこないこと、夕方の部屋にかける色を猫より先に塗る（猫を染めない）ことを確かめる
+- ねこ手帳：`tests/records.test.js` は、思い出の追加と50件の上限、図鑑のスタンプといちばん早い和解、称号の条件と「新しく手に入れたものだけ知らせる」こと、壊れた保存データを空の記録として読むこと、端末の保存が使えなくても例外を出さないことを確かめる。`tests/scenes.test.js` は、エンディングに「思い出に残しました」と新しい称号が出ることを確かめる
 - 時間帯の景色：`tests/daylight.test.js` は、朝・昼・夕方・夜の名前と空の色、なめらかに変わること、部屋にかける色が薄いこと（0〜0.15）、スタンドライトが夕方からつくこと、太陽と月が窓の中にあることを確かめる
 - 効果音：`tests/sound.test.js` は、効果音 OFF では「にゃーん」を鳴らさないこと、準備に失敗しても一度だけ知らせて例外を出さないことを確かめる
 - 画面の確認：`index.html` をダブルクリックで開く

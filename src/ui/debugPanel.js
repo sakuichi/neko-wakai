@@ -5,7 +5,7 @@ import { distanceFloor } from '../game/catBrain.js';
 
 const SPEEDS = [1, 2, 4, 8];
 
-export function createDebugPanel(el, { onPersonality, onCoat, onSkipDay, onTrustMax, onReset, onSpeed }) {
+export function createDebugPanel(el, { onPersonality, onCoat, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords }) {
   const details = document.createElement('details');
   // スマホ幅ではゲーム画面に重なるので、折りたたんだ状態で始める
   details.open = window.innerWidth >= 800;
@@ -34,7 +34,7 @@ export function createDebugPanel(el, { onPersonality, onCoat, onSkipDay, onTrust
   details.append(coatRow);
 
   const buttons = document.createElement('div');
-  for (const [text, fn] of [['次の日へ', onSkipDay], ['信頼MAX', onTrustMax], ['最初から', onReset]]) {
+  for (const [text, fn] of [['次の日へ', onSkipDay], ['信頼MAX', onTrustMax], ['最初から', onReset], ['記録を消す', onClearRecords]]) {
     const b = document.createElement('button');
     b.type = 'button';
     b.textContent = text;

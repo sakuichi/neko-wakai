@@ -772,6 +772,36 @@ __modules['src/render/renderer.js'] = (() => {
 
   // ---------------------------------------------------------------- 部屋（ベタ塗り）
 
+  // ねこ手帳の小さな絵：座ってこちらを見ている猫だけを、部屋なしで描く。
+  // silhouette が true なら、まだ出会っていない毛色として影だけにする
+  function drawCatPortrait(canvas, coat, { silhouette = false } = {}) {
+    const ctx = canvas.getContext('2d');
+    const size = 120;
+    const prev = COAT;
+    COAT = COATS[coat] ?? COATS.chatora;
+    ctx.save();
+    // 途中で失敗しても、ゲームの描画の毛色と Canvas の状態は元に戻す
+    try {
+      ctx.setTransform(canvas.width / size, 0, 0, canvas.height / size, 0, 0);
+      ctx.clearRect(0, 0, size, size);
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.translate(size / 2, size - 10);
+      ctx.scale(0.62, 0.62);
+      drawCat(ctx, 'look', { t: 0, modeT: 10, blink: 0, lapT: 0, scale: 0.62, walking: false, closeup: true, facing: 0, wariness: 0 });
+    } finally {
+      ctx.restore();
+      COAT = prev;
+    }
+    if (silhouette) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-in';
+      ctx.fillStyle = '#d9cbbd';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+  }
+
   // light: 時間帯の景色（src/render/daylight.js の daylightAt）
   function drawRoom(ctx, light) {
     const night = light.phase === 'night';
@@ -1591,7 +1621,7 @@ __modules['src/render/renderer.js'] = (() => {
     ctx.arcTo(x, y, x + w, y, r);
     ctx.closePath();
   }
-  return { W, H, COATS, LINE_COLOR, LINE_WIDTH, LAP_COLORS, CAT_FADE_SEC, createRenderer };
+  return { W, H, COATS, LINE_COLOR, LINE_WIDTH, LAP_COLORS, CAT_FADE_SEC, createRenderer, drawCatPortrait };
 })();
 
 // ---- src/ui/input.js
@@ -1936,6 +1966,35 @@ __modules['src/data/texts.js'] = (() => {
     kijitora: 'キジトラは、用心深くて警戒心の強い子が多いと言われている',
   };
 
+  // ねこ手帳（思い出・図鑑・称号）。記録の中身は src/game/records.js
+  const NOTEBOOK_TEXT = {
+    open: 'ねこ手帳',
+    back: 'もどる',
+    tabs: { memories: '思い出', dex: '図鑑', titles: '称号' },
+    saved: '思い出に残しました',
+    newTitle: (name) => `称号を手に入れた：${name}`,
+    noMemories: 'まだ思い出はありません。猫と7日間を過ごすと、ここに残ります',
+    memoryResult: (m) => (m.endingId === 'visitor' ? '通い猫になった' : `${m.day}日目で和解`),
+    unknownCoat: '？？？',
+    bestDay: (day) => (day === null ? 'まだ和解していない' : `いちばん早い和解：${day}日目`),
+    locked: '？？？',
+    count: (got, all) => `${got} / ${all}`,
+  };
+
+  // 称号。条件の判定は src/game/records.js の TITLE_IDS と同じ順
+  const TITLES = {
+    first: { name: 'はじめての和解', how: '初めて猫と和解する' },
+    fate: { name: '運命の人', how: '3日目で和解する' },
+    noMistake: { name: '手を出さない人', how: '一度も焦らずに和解する' },
+    amaenbo: { name: '甘えん坊の友だち', how: '甘えん坊の猫と和解する' },
+    tsundere: { name: 'ツンデレ使い', how: 'ツンデレの猫と和解する' },
+    bibiri: { name: 'ビビりの味方', how: 'ビビりの猫と和解する' },
+    visitor: { name: '通い猫も悪くない', how: '通い猫になったエンディングを見る' },
+    allCoats: { name: '毛色コンプリート', how: '6種すべての毛色の猫と和解する' },
+    allStamps: { name: 'スタンプコンプリート', how: '図鑑のスタンプを24個すべて集める' },
+    tenCats: { name: 'ねこ好き', how: '10匹の猫と出会う' },
+  };
+
   const SOUND_LABEL = { on: '効果音ON', off: '効果音OFF' };
 
   // 画面左下の BGM 表示。曲名は src/data/bgmSongs.js
@@ -1943,7 +2002,7 @@ __modules['src/data/texts.js'] = (() => {
     off: 'BGM OFF',
     aria: (label) => `BGM：${label}（タップで次の曲）`,
   };
-  return { withName, TITLE, DAY_TITLES, NAME_TEXT, TUTORIAL, CARDS, HINTS, FEEDBACK, LAP_TEXT, NIGHT_TEXT, ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, SOUND_LABEL, BGM_TEXT };
+  return { withName, TITLE, DAY_TITLES, NAME_TEXT, TUTORIAL, CARDS, HINTS, FEEDBACK, LAP_TEXT, NIGHT_TEXT, ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, NOTEBOOK_TEXT, TITLES, SOUND_LABEL, BGM_TEXT };
 })();
 
 // ---- src/game/catBrain.js
@@ -2041,7 +2100,7 @@ __modules['src/ui/debugPanel.js'] = (() => {
 
   const SPEEDS = [1, 2, 4, 8];
 
-  function createDebugPanel(el, { onPersonality, onCoat, onSkipDay, onTrustMax, onReset, onSpeed }) {
+  function createDebugPanel(el, { onPersonality, onCoat, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords }) {
     const details = document.createElement('details');
     // スマホ幅ではゲーム画面に重なるので、折りたたんだ状態で始める
     details.open = window.innerWidth >= 800;
@@ -2070,7 +2129,7 @@ __modules['src/ui/debugPanel.js'] = (() => {
     details.append(coatRow);
 
     const buttons = document.createElement('div');
-    for (const [text, fn] of [['次の日へ', onSkipDay], ['信頼MAX', onTrustMax], ['最初から', onReset]]) {
+    for (const [text, fn] of [['次の日へ', onSkipDay], ['信頼MAX', onTrustMax], ['最初から', onReset], ['記録を消す', onClearRecords]]) {
       const b = document.createElement('button');
       b.type = 'button';
       b.textContent = text;
@@ -3007,9 +3066,10 @@ __modules['src/ui/music.js'] = (() => {
 
 // ---- src/scenes/titleScene.js
 __modules['src/scenes/titleScene.js'] = (() => {
-  const { TITLE } = __modules['src/data/texts.js'];
+  const { TITLE, NOTEBOOK_TEXT } = __modules['src/data/texts.js'];
 
-  function createTitleScene({ screenEl, onStart }) {
+  // onNotebook: 「ねこ手帳」ボタン（画面のほかの場所をタップすると、はじめる）
+  function createTitleScene({ screenEl, onStart, onNotebook }) {
     const node = document.createElement('div');
     node.className = 'title-screen';
     node.innerHTML = `
@@ -3022,10 +3082,23 @@ __modules['src/scenes/titleScene.js'] = (() => {
     node.querySelector('.title-logo').textContent = TITLE.main;
     node.querySelector('.title-sub').textContent = TITLE.sub;
     node.querySelector('.title-start').textContent = TITLE.start;
-    node.addEventListener('pointerdown', () => {
+    const notebook = document.createElement('button');
+    notebook.type = 'button';
+    notebook.className = 'title-notebook';
+    notebook.textContent = NOTEBOOK_TEXT.open;
+    notebook.addEventListener('click', () => {
+      screenEl.replaceChildren();
+      onNotebook();
+    }, { once: true });
+    node.append(notebook);
+    // 「ねこ手帳」ボタンを押したときは、はじめない（押した操作は window まで伝わり、音の準備は始まる）
+    const start = (e) => {
+      if (e.target.closest?.('.title-notebook')) return;
+      node.removeEventListener('pointerdown', start);
       screenEl.replaceChildren();
       onStart();
-    }, { once: true });
+    };
+    node.addEventListener('pointerdown', start);
     screenEl.replaceChildren(node);
 
     return {
@@ -3423,10 +3496,11 @@ __modules['src/scenes/nightScene.js'] = (() => {
 
 // ---- src/scenes/endingScene.js
 __modules['src/scenes/endingScene.js'] = (() => {
-  const { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, withName } = __modules['src/data/texts.js'];
+  const { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, NOTEBOOK_TEXT, TITLES, withName } = __modules['src/data/texts.js'];
   const { PERSONALITIES } = __modules['src/data/params.js'];
 
-  function createEndingScene({ screenEl, session, endingId, onRetry }) {
+  // saved: ねこ手帳に思い出を残せたか。newTitles: 今回新しく手に入れた称号の id（src/game/records.js）
+  function createEndingScene({ screenEl, session, endingId, onRetry, saved = true, newTitles = [] }) {
     const g = session.game;
     const ending = ENDINGS[endingId];
     const reconciled = endingId !== 'visitor';
@@ -3466,7 +3540,20 @@ __modules['src/scenes/endingScene.js'] = (() => {
       screenEl.replaceChildren();
       onRetry();
     }, { once: true });
-    node.append(label, h2, body, ul, retry);
+    // ねこ手帳に残したこと・新しい称号
+    const notes = [];
+    if (saved) notes.push(NOTEBOOK_TEXT.saved);
+    for (const id of newTitles) notes.push(NOTEBOOK_TEXT.newTitle(TITLES[id].name));
+    const notebook = document.createElement('div');
+    notebook.className = 'notebook-note';
+    for (const text of notes) {
+      const p = document.createElement('p');
+      p.textContent = text;
+      notebook.append(p);
+    }
+    node.append(label, h2, body, ul);
+    if (notes.length) node.append(notebook);
+    node.append(retry);
     screenEl.replaceChildren(node);
 
     return {
@@ -3479,6 +3566,286 @@ __modules['src/scenes/endingScene.js'] = (() => {
     };
   }
   return { createEndingScene };
+})();
+
+// ---- src/game/records.js
+__modules['src/game/records.js'] = (() => {
+  // ねこ手帳の記録：思い出（遊んだ猫）・図鑑（毛色ごとのスタンプと最短日数）・称号。
+  // 描画や保存には依存しない純粋な関数（保存は src/ui/recordStore.js、表示は src/scenes/notebookScene.js）
+  const { COAT_PERSONALITY, PERSONALITIES } = __modules['src/data/params.js'];
+  const { ENDINGS } = __modules['src/data/texts.js'];
+
+  // 思い出は新しいものからこの件数まで残す（図鑑のスタンプと称号は消えない）
+  const MEMORY_LIMIT = 50;
+  // 称号の表示名と条件の説明は src/data/texts.js の TITLES
+  const TITLE_IDS = ['first', 'fate', 'noMistake', 'amaenbo', 'tsundere', 'bibiri', 'visitor', 'allCoats', 'allStamps', 'tenCats'];
+  // 図鑑のスタンプになるエンディング・毛色・性格。あとで足したときに直し忘れないよう、元のデータから取る
+  const ENDING_IDS = Object.keys(ENDINGS);
+  const COAT_KEYS = Object.keys(COAT_PERSONALITY);
+  const PERSONALITY_IDS = Object.keys(PERSONALITIES);
+
+  function emptyRecords() {
+    return { v: 1, memories: [], dex: {}, titles: [], metCount: 0 };
+  }
+
+  const reconciled = (endingId) => endingId !== 'visitor';
+
+  // 称号ごとの条件。records は今回のエンディングを足したあとの記録
+  const TITLE_RULES = {
+    first: (r, e) => reconciled(e.endingId),
+    fate: (r, e) => e.endingId === 'fate',
+    noMistake: (r, e) => reconciled(e.endingId) && e.mistakes === 0,
+    amaenbo: (r, e) => reconciled(e.endingId) && e.personality === 'amaenbo',
+    tsundere: (r, e) => reconciled(e.endingId) && e.personality === 'tsundere',
+    bibiri: (r, e) => reconciled(e.endingId) && e.personality === 'bibiri',
+    visitor: (r, e) => e.endingId === 'visitor',
+    allCoats: (r) => COAT_KEYS.every((c) => r.dex[c] && r.dex[c].bestDay !== null),
+    allStamps: (r) => COAT_KEYS.every((c) => r.dex[c] && ENDING_IDS.every((id) => r.dex[c].stamps.includes(id))),
+    tenCats: (r) => r.metCount >= 10,
+  };
+
+  /**
+   * エンディングを1件記録する。
+   * ending: { name, coat, personality, endingId, day, mistakes, date }
+   * @returns {{ records, newTitles: string[] }}
+   */
+  function addEnding(records, ending) {
+    const { name, coat, personality, endingId, day, mistakes, date } = ending;
+    const memory = { name, coat, personality, endingId, day, mistakes, date };
+    const prev = records.dex[coat] ?? { stamps: [], bestDay: null };
+    const bestDay = reconciled(endingId) && (prev.bestDay === null || day < prev.bestDay) ? day : prev.bestDay;
+    const entry = { stamps: prev.stamps.includes(endingId) ? [...prev.stamps] : [...prev.stamps, endingId], bestDay };
+    const next = {
+      v: 1,
+      memories: [memory, ...records.memories].slice(0, MEMORY_LIMIT),
+      dex: { ...records.dex, [coat]: entry },
+      titles: [...records.titles],
+      metCount: records.metCount + 1,
+    };
+    const newTitles = TITLE_IDS.filter((id) => !next.titles.includes(id) && TITLE_RULES[id](next, memory));
+    next.titles.push(...newTitles);
+    return { records: next, newTitles };
+  }
+
+  const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+  const isNumber = (v) => typeof v === 'number' && Number.isFinite(v);
+
+  // 1件の思い出として正しい形か
+  function validMemory(m) {
+    return isObject(m)
+      && typeof m.name === 'string'
+      && COAT_KEYS.includes(m.coat)
+      && PERSONALITY_IDS.includes(m.personality)
+      && ENDING_IDS.includes(m.endingId)
+      && isNumber(m.day)
+      && isNumber(m.mistakes)
+      && typeof m.date === 'string';
+  }
+
+  // 図鑑のうち、正しい形の毛色だけ残す。スタンプは知っているエンディングだけにして、重複を除く
+  function cleanDex(dex) {
+    const out = {};
+    for (const coat of COAT_KEYS) {
+      const e = dex[coat];
+      if (!isObject(e) || !Array.isArray(e.stamps) || !(e.bestDay === null || isNumber(e.bestDay))) continue;
+      out[coat] = { stamps: [...new Set(e.stamps.filter((id) => ENDING_IDS.includes(id)))], bestDay: e.bestDay };
+    }
+    return out;
+  }
+
+  // 端末に保存した文字列を読む。全体の形が違うときは空の記録にし、中身の一部だけ壊れているときは
+  // その要素だけ捨てて残りの記録を守る（どちらでも遊べなくならないように）
+  function parseRecords(text) {
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return emptyRecords();
+    }
+    if (!isObject(data) || data.v !== 1) return emptyRecords();
+    const { memories, dex, titles, metCount } = data;
+    if (!Array.isArray(memories) || !isObject(dex) || !Array.isArray(titles)) return emptyRecords();
+    if (typeof metCount !== 'number' || !Number.isFinite(metCount) || metCount < 0) return emptyRecords();
+    return {
+      v: 1,
+      memories: memories.filter(validMemory).slice(0, MEMORY_LIMIT),
+      dex: cleanDex(dex),
+      titles: [...new Set(titles.filter((id) => TITLE_IDS.includes(id)))],
+      metCount,
+    };
+  }
+  return { MEMORY_LIMIT, TITLE_IDS, emptyRecords, addEnding, parseRecords };
+})();
+
+// ---- src/scenes/notebookScene.js
+__modules['src/scenes/notebookScene.js'] = (() => {
+  // ねこ手帳：思い出（遊んだ猫）・図鑑（毛色ごとのスタンプ）・称号の3つのタブ。タイトルから開く。
+  // 記録の中身は src/game/records.js、猫の小さな絵は src/render/renderer.js の drawCatPortrait
+  const { NOTEBOOK_TEXT, TITLES, COAT_LABELS, COAT_LORE, ENDINGS } = __modules['src/data/texts.js'];
+  const { PERSONALITIES, COAT_PERSONALITY } = __modules['src/data/params.js'];
+  const { TITLE_IDS } = __modules['src/game/records.js'];
+  const { drawCatPortrait } = __modules['src/render/renderer.js'];
+
+  const TABS = ['memories', 'dex', 'titles'];
+  // 図鑑のスタンプ（エンディングごと）の短い名前
+  const STAMPS = [
+    ['fate', '運命'],
+    ['patient', '待てる'],
+    ['persistent', '根気'],
+    ['visitor', '通い'],
+  ];
+  // 猫の絵の大きさ（画面上の px。高精細な画面でもぼやけないよう、Canvas は2倍で描く）
+  const PORTRAIT_PX = 64;
+
+  const el = (tag, className, text) => {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+
+  function portrait(coat, silhouette = false) {
+    const canvas = el('canvas', 'portrait');
+    canvas.width = PORTRAIT_PX * 2;
+    canvas.height = PORTRAIT_PX * 2;
+    drawCatPortrait(canvas, coat, { silhouette });
+    return canvas;
+  }
+
+  function memoriesTab(records) {
+    if (records.memories.length === 0) return [el('p', 'notebook-empty', NOTEBOOK_TEXT.noMemories)];
+    return records.memories.map((m) => {
+      const item = el('div', 'memory');
+      const info = el('div', 'memory-info');
+      info.append(
+        el('strong', '', m.name),
+        el('span', '', `${COAT_LABELS[m.coat] ?? ''}・${PERSONALITIES[m.personality]?.label ?? ''}`),
+        el('span', 'memory-result', `${NOTEBOOK_TEXT.memoryResult(m)}　${String(m.date).replaceAll('-', '/')}`),
+      );
+      item.append(portrait(m.coat), info);
+      return item;
+    });
+  }
+
+  function dexTab(records) {
+    return Object.keys(COAT_PERSONALITY).map((coat) => {
+      const entry = records.dex[coat];
+      const card = el('div', entry ? 'dex-card' : 'dex-card unknown');
+      card.append(portrait(coat, !entry));
+      if (!entry) {
+        card.append(el('strong', '', NOTEBOOK_TEXT.unknownCoat));
+        return card;
+      }
+      const stamps = el('div', 'stamps');
+      for (const [id, label] of STAMPS) {
+        const got = entry.stamps.includes(id);
+        const stamp = el('span', got ? 'stamp got' : 'stamp', label);
+        stamp.title = ENDINGS[id].name;
+        stamps.append(stamp);
+      }
+      card.append(
+        el('strong', '', `${COAT_LABELS[coat]}（${PERSONALITIES[COAT_PERSONALITY[coat]].label}）`),
+        stamps,
+        el('span', 'dex-best', NOTEBOOK_TEXT.bestDay(entry.bestDay)),
+        el('span', 'dex-lore', COAT_LORE[coat]),
+      );
+      return card;
+    });
+  }
+
+  function titlesTab(records) {
+    const got = TITLE_IDS.filter((id) => records.titles.includes(id));
+    const nodes = [el('p', 'titles-count', NOTEBOOK_TEXT.count(got.length, TITLE_IDS.length))];
+    for (const id of TITLE_IDS) {
+      const has = records.titles.includes(id);
+      const item = el('div', has ? 'title-item got' : 'title-item');
+      item.append(el('strong', '', has ? TITLES[id].name : NOTEBOOK_TEXT.locked), el('span', '', TITLES[id].how));
+      nodes.push(item);
+    }
+    return nodes;
+  }
+
+  const RENDER_TAB = { memories: memoriesTab, dex: dexTab, titles: titlesTab };
+
+  function createNotebookScene({ screenEl, records, onBack }) {
+    const node = el('div', 'notebook-screen');
+    const head = el('div', 'notebook-head');
+    const back = el('button', 'notebook-back', NOTEBOOK_TEXT.back);
+    back.type = 'button';
+    back.addEventListener('click', () => {
+      screenEl.replaceChildren();
+      onBack();
+    }, { once: true });
+    head.append(el('h2', '', NOTEBOOK_TEXT.open), back);
+
+    const tabs = el('div', 'notebook-tabs');
+    tabs.setAttribute('role', 'tablist');
+    const body = el('div', 'notebook-body');
+    const buttons = TABS.map((key) => {
+      const b = el('button', 'notebook-tab', NOTEBOOK_TEXT.tabs[key]);
+      b.type = 'button';
+      b.setAttribute('role', 'tab');
+      b.addEventListener('click', () => show(key));
+      tabs.append(b);
+      return b;
+    });
+
+    function show(key) {
+      TABS.forEach((k, i) => buttons[i].setAttribute('aria-selected', String(k === key)));
+      body.className = `notebook-body ${key}`;
+      body.replaceChildren(...RENDER_TAB[key](records));
+      body.scrollTop = 0;
+    }
+
+    node.append(head, tabs, body);
+    screenEl.replaceChildren(node);
+    show('memories');
+
+    return {
+      name: 'notebook',
+      update() {},
+      // 手帳の後ろは、タイトルと同じ部屋と猫のまま
+      view: () => ({ scene: 'title' }),
+    };
+  }
+  return { createNotebookScene };
+})();
+
+// ---- src/ui/recordStore.js
+__modules['src/ui/recordStore.js'] = (() => {
+  // ねこ手帳の記録の保存。保存はこの端末の中だけ（外部には送らない）。
+  // 使えない環境（保存が禁止されている・容量がいっぱいなど）でも、記録なしでそのまま遊べる
+  const { emptyRecords, parseRecords } = __modules['src/game/records.js'];
+
+  const RECORDS_KEY = 'neko-wakai:records';
+
+  function loadRecords() {
+    try {
+      return parseRecords(localStorage.getItem(RECORDS_KEY));
+    } catch {
+      return emptyRecords();
+    }
+  }
+
+  // 保存できたら true
+  function saveRecords(records) {
+    try {
+      localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // デバッグパネル用（遊ぶ人の画面には置かない）
+  function clearRecords() {
+    try {
+      localStorage.removeItem(RECORDS_KEY);
+    } catch {
+      // 消せなくても遊べる
+    }
+  }
+  return { RECORDS_KEY, loadRecords, saveRecords, clearRecords };
 })();
 
 // ---- src/main.js
@@ -3498,6 +3865,9 @@ __modules['src/main.js'] = (() => {
   const { createDayScene } = __modules['src/scenes/dayScene.js'];
   const { createNightScene } = __modules['src/scenes/nightScene.js'];
   const { createEndingScene } = __modules['src/scenes/endingScene.js'];
+  const { createNotebookScene } = __modules['src/scenes/notebookScene.js'];
+  const { addEnding, emptyRecords } = __modules['src/game/records.js'];
+  const { loadRecords, saveRecords, clearRecords } = __modules['src/ui/recordStore.js'];
   const { SOUND_LABEL } = __modules['src/data/texts.js'];
 
   // 試作中はデバッグパネルを常に表示する。本番では ?debug=1 のときだけ表示する
@@ -3528,6 +3898,8 @@ __modules['src/main.js'] = (() => {
   // 試作中はデバッグパネルで性格・毛色を固定できる（null ならランダム。性格は毛色で決まる）
   let fixedPersonality = null;
   let fixedCoat = null;
+  // ねこ手帳の記録（端末の中に保存。src/ui/recordStore.js）
+  let records = loadRecords();
 
   function goTitle() {
     overlay.clear();
@@ -3537,7 +3909,16 @@ __modules['src/main.js'] = (() => {
     session.game = createGame(chooseCat({ personality: fixedPersonality, coat: fixedCoat }));
     session.misses = {};
     rng = createRng(session.game.seed);
-    scene = createTitleScene({ screenEl, onStart: goName });
+    showTitle();
+  }
+
+  // タイトルの画面だけを出す（ねこ手帳から戻るときは、次の猫を選び直さない）
+  function showTitle() {
+    scene = createTitleScene({ screenEl, onStart: goName, onNotebook: goNotebook });
+  }
+
+  function goNotebook() {
+    scene = createNotebookScene({ screenEl, records, onBack: showTitle });
   }
 
   function goName() {
@@ -3576,7 +3957,18 @@ __modules['src/main.js'] = (() => {
 
   function goEnding(endingId) {
     overlay.clear();
-    scene = createEndingScene({ screenEl, session, endingId, onRetry: goTitle });
+    // ねこ手帳に思い出を残す（visitor の day は7日目）
+    const g = session.game;
+    const r = addEnding(records, { name: g.catName, coat: g.coat, personality: g.personality, endingId, day: g.day, mistakes: g.mistakes, date: today() });
+    records = r.records;
+    const saved = saveRecords(records);
+    scene = createEndingScene({ screenEl, session, endingId, onRetry: goTitle, saved, newTitles: r.newTitles });
+  }
+
+  // この端末の日付 'YYYY-MM-DD'
+  function today() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
   let debug = null;
@@ -3600,6 +3992,10 @@ __modules['src/main.js'] = (() => {
       },
       onSpeed(s) {
         speed = s;
+      },
+      onClearRecords() {
+        clearRecords();
+        records = emptyRecords();
       },
     });
   }

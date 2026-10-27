@@ -242,3 +242,92 @@ test('昼の画面は、その日の進み具合（dayTime：始まり 0 → 時
   }
   assert.ok(prev > 0.99 && prev <= 1, `時間切れのあとの dayTime ${prev}`);
 });
+
+// エンディング画面を作るための偽 DOM 要素。fakeElement に、要素を並べ替える操作を足したもの
+function notebookElement() {
+  const el = {
+    ...fakeElement(),
+    parent: null,
+    style: {},
+    dataset: {},
+    classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+  };
+  const adopt = (nodes) => {
+    for (const n of nodes) if (n && typeof n === 'object') n.parent = el;
+    return nodes;
+  };
+  el.append = (...nodes) => { el.children.push(...adopt(nodes)); };
+  el.appendChild = (node) => { el.append(node); return node; };
+  el.prepend = (...nodes) => { el.children.unshift(...adopt(nodes)); };
+  el.replaceChildren = (...nodes) => { el.children = adopt(nodes); };
+  el.insertBefore = (node, ref) => {
+    const i = el.children.indexOf(ref);
+    el.children.splice(i < 0 ? el.children.length : i, 0, ...adopt([node]));
+    return node;
+  };
+  const siblings = (offset, nodes) => {
+    const p = el.parent;
+    if (!p) return;
+    const i = p.children.indexOf(el);
+    for (const n of nodes) if (n && typeof n === 'object') n.parent = p;
+    p.children.splice(i + offset, 0, ...nodes);
+  };
+  el.after = (...nodes) => siblings(1, nodes);
+  el.before = (...nodes) => siblings(0, nodes);
+  el.remove = () => {
+    if (el.parent) el.parent.children = el.parent.children.filter((c) => c !== el);
+  };
+  return el;
+}
+
+// 画面に出ている文章（textContent）を、子要素までたどって集める
+function collectTexts(el, out = []) {
+  if (typeof el === 'string') {
+    out.push(el);
+    return out;
+  }
+  if (el.textContent) out.push(String(el.textContent));
+  for (const c of el.children ?? []) collectTexts(c, out);
+  return out;
+}
+
+async function endingTexts(extra) {
+  const { createEndingScene } = await import('../src/scenes/endingScene.js');
+  return withGlobals({ document: { createElement: () => notebookElement() } }, () => {
+    const screenEl = notebookElement();
+    createEndingScene({
+      screenEl,
+      session: { game: { day: 3, catName: 'たま', personality: 'amaenbo', coat: 'chatora', mistakes: 0 } },
+      endingId: 'fate',
+      onRetry: () => {},
+      ...extra,
+    });
+    return collectTexts(screenEl);
+  });
+}
+
+test('エンディング画面：思い出に残せたら「思い出に残しました」、新しい称号はその名前を出す', async () => {
+  const { NOTEBOOK_TEXT, TITLES } = await import('../src/data/texts.js');
+  assert.ok(NOTEBOOK_TEXT, 'texts.js に NOTEBOOK_TEXT がない');
+  assert.equal(typeof NOTEBOOK_TEXT.saved, 'string');
+  assert.equal(typeof NOTEBOOK_TEXT.newTitle, 'function');
+  const texts = await endingTexts({ saved: true, newTitles: ['first', 'noMistake'] });
+  assert.ok(texts.some((t) => t.includes(NOTEBOOK_TEXT.saved)), `「${NOTEBOOK_TEXT.saved}」が出ていない: ${texts.join(' / ')}`);
+  for (const id of ['first', 'noMistake']) {
+    const line = NOTEBOOK_TEXT.newTitle(TITLES[id].name);
+    assert.ok(line.includes(TITLES[id].name), `newTitle の文に称号名が入っていない: ${line}`);
+    assert.ok(texts.some((t) => t.includes(line)), `「${line}」が出ていない: ${texts.join(' / ')}`);
+  }
+});
+
+test('エンディング画面：新しい称号がなければ、称号の文は出ない', async () => {
+  const { NOTEBOOK_TEXT, TITLES } = await import('../src/data/texts.js');
+  const { TITLE_IDS } = await import('../src/game/records.js');
+  assert.ok(NOTEBOOK_TEXT, 'texts.js に NOTEBOOK_TEXT がない');
+  const texts = await endingTexts({ saved: true, newTitles: [] });
+  assert.ok(texts.some((t) => t.includes(NOTEBOOK_TEXT.saved)), `「${NOTEBOOK_TEXT.saved}」が出ていない: ${texts.join(' / ')}`);
+  for (const id of TITLE_IDS) {
+    const line = NOTEBOOK_TEXT.newTitle(TITLES[id].name);
+    assert.ok(!texts.some((t) => t.includes(line)), `称号がないのに「${line}」が出ている`);
+  }
+});

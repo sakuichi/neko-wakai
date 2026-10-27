@@ -441,6 +441,36 @@ export function createRenderer(canvas) {
 
 // ---------------------------------------------------------------- 部屋（ベタ塗り）
 
+// ねこ手帳の小さな絵：座ってこちらを見ている猫だけを、部屋なしで描く。
+// silhouette が true なら、まだ出会っていない毛色として影だけにする
+export function drawCatPortrait(canvas, coat, { silhouette = false } = {}) {
+  const ctx = canvas.getContext('2d');
+  const size = 120;
+  const prev = COAT;
+  COAT = COATS[coat] ?? COATS.chatora;
+  ctx.save();
+  // 途中で失敗しても、ゲームの描画の毛色と Canvas の状態は元に戻す
+  try {
+    ctx.setTransform(canvas.width / size, 0, 0, canvas.height / size, 0, 0);
+    ctx.clearRect(0, 0, size, size);
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.translate(size / 2, size - 10);
+    ctx.scale(0.62, 0.62);
+    drawCat(ctx, 'look', { t: 0, modeT: 10, blink: 0, lapT: 0, scale: 0.62, walking: false, closeup: true, facing: 0, wariness: 0 });
+  } finally {
+    ctx.restore();
+    COAT = prev;
+  }
+  if (silhouette) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-in';
+    ctx.fillStyle = '#d9cbbd';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }
+}
+
 // light: 時間帯の景色（src/render/daylight.js の daylightAt）
 function drawRoom(ctx, light) {
   const night = light.phase === 'night';

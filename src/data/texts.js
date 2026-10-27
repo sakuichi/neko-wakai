@@ -168,6 +168,35 @@ export const COAT_LORE = {
   kijitora: 'キジトラは、用心深くて警戒心の強い子が多いと言われている',
 };
 
+// ねこ手帳（思い出・図鑑・称号）。記録の中身は src/game/records.js
+export const NOTEBOOK_TEXT = {
+  open: 'ねこ手帳',
+  back: 'もどる',
+  tabs: { memories: '思い出', dex: '図鑑', titles: '称号' },
+  saved: '思い出に残しました',
+  newTitle: (name) => `称号を手に入れた：${name}`,
+  noMemories: 'まだ思い出はありません。猫と7日間を過ごすと、ここに残ります',
+  memoryResult: (m) => (m.endingId === 'visitor' ? '通い猫になった' : `${m.day}日目で和解`),
+  unknownCoat: '？？？',
+  bestDay: (day) => (day === null ? 'まだ和解していない' : `いちばん早い和解：${day}日目`),
+  locked: '？？？',
+  count: (got, all) => `${got} / ${all}`,
+};
+
+// 称号。条件の判定は src/game/records.js の TITLE_IDS と同じ順
+export const TITLES = {
+  first: { name: 'はじめての和解', how: '初めて猫と和解する' },
+  fate: { name: '運命の人', how: '3日目で和解する' },
+  noMistake: { name: '手を出さない人', how: '一度も焦らずに和解する' },
+  amaenbo: { name: '甘えん坊の友だち', how: '甘えん坊の猫と和解する' },
+  tsundere: { name: 'ツンデレ使い', how: 'ツンデレの猫と和解する' },
+  bibiri: { name: 'ビビりの味方', how: 'ビビりの猫と和解する' },
+  visitor: { name: '通い猫も悪くない', how: '通い猫になったエンディングを見る' },
+  allCoats: { name: '毛色コンプリート', how: '6種すべての毛色の猫と和解する' },
+  allStamps: { name: 'スタンプコンプリート', how: '図鑑のスタンプを24個すべて集める' },
+  tenCats: { name: 'ねこ好き', how: '10匹の猫と出会う' },
+};
+
 export const SOUND_LABEL = { on: '効果音ON', off: '効果音OFF' };
 
 // 画面左下の BGM 表示。曲名は src/data/bgmSongs.js

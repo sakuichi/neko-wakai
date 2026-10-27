@@ -1,7 +1,8 @@
-import { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, withName } from '../data/texts.js';
+import { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, NOTEBOOK_TEXT, TITLES, withName } from '../data/texts.js';
 import { PERSONALITIES } from '../data/params.js';
 
-export function createEndingScene({ screenEl, session, endingId, onRetry }) {
+// saved: ねこ手帳に思い出を残せたか。newTitles: 今回新しく手に入れた称号の id（src/game/records.js）
+export function createEndingScene({ screenEl, session, endingId, onRetry, saved = true, newTitles = [] }) {
   const g = session.game;
   const ending = ENDINGS[endingId];
   const reconciled = endingId !== 'visitor';
@@ -41,7 +42,20 @@ export function createEndingScene({ screenEl, session, endingId, onRetry }) {
     screenEl.replaceChildren();
     onRetry();
   }, { once: true });
-  node.append(label, h2, body, ul, retry);
+  // ねこ手帳に残したこと・新しい称号
+  const notes = [];
+  if (saved) notes.push(NOTEBOOK_TEXT.saved);
+  for (const id of newTitles) notes.push(NOTEBOOK_TEXT.newTitle(TITLES[id].name));
+  const notebook = document.createElement('div');
+  notebook.className = 'notebook-note';
+  for (const text of notes) {
+    const p = document.createElement('p');
+    p.textContent = text;
+    notebook.append(p);
+  }
+  node.append(label, h2, body, ul);
+  if (notes.length) node.append(notebook);
+  node.append(retry);
   screenEl.replaceChildren(node);
 
   return {
