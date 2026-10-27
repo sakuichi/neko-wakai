@@ -23,6 +23,9 @@
     <div id="screen"></div>
     <button id="bgm-btn" type="button"><span class="bgm-icon" aria-hidden="true">♪</span><span class="bgm-track"><span id="bgm-title"></span></span></button>
     <div id="overlay" hidden></div>
+    <!-- 一時停止（昼と夜の画面だけで出す。src/ui/pauseMenu.js） -->
+    <button id="pause-btn" type="button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.6"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.6"/></svg></button>
+    <div id="pause" hidden></div>
   </div>
   <aside id="debug"></aside>
   <!-- src/ から npm run build で生成。ダブルクリック（file://）でも動くよう通常スクリプトにしている -->

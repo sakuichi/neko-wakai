@@ -493,3 +493,57 @@ test('名前を決めたあとで「もどる」を押しても、戻らない',
   assert.equal(calls.back, 0);
   assert.equal(calls.decide.length, 1);
 });
+
+// ---------------------------------------------------------------- 昼の画面を途中でやめる（stop）
+
+// 1日目の昼の画面を作る。トーストに渡された文と、onEnd の呼ばれた回数を記録する
+async function fleeDayScene() {
+  const { createDayScene } = await import('../src/scenes/dayScene.js');
+  const { createGame } = await import('../src/game/progression.js');
+  const { CARDS } = await import('../src/data/texts.js');
+  const { fixedRng } = await import('./helpers.js');
+  const noop = () => {};
+  const toasts = [];
+  const overlay = { busy: false, splash: noop, card: noop, bubble: noop, toast: (text) => toasts.push(text), clear: noop };
+  const hud = { show: noop, update: noop };
+  const renderer = { addEffect: noop, hitTestCat: () => true };
+  const input = { setBlinkEnabled: noop, holdMs: () => 0 };
+  const sound = { purr: noop, meow: noop, bump: noop };
+  const session = {
+    game: { ...createGame({ personality: 'amaenbo', seed: 1 }), catName: 'たま', seenCards: Object.keys(CARDS) },
+    misses: {},
+  };
+  const ends = [];
+  const scene = createDayScene({ session, overlay, hud, renderer, input, sound, rng: fixedRng(0.5), onEnd: (r) => ends.push(r) });
+  return { scene, toasts, ends };
+}
+
+test('昼に猫が逃げると、少しあとに「焦りは禁物」のトーストが出る（stop しなければ）', async (t) => {
+  const { TUTORIAL } = await import('../src/data/texts.js');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { scene, toasts } = await fleeDayScene();
+  // 1日目の始まりはくつろぎ。なでると逃げる（ミス）
+  assert.equal(scene.state().cat.mode, 'relax', 'くつろぎから始まる（このテストの前提）');
+  scene.act({ type: 'pet' });
+  assert.equal(scene.state().cat.mode, 'flee', '逃げていない（このテストの前提）');
+  assert.ok(!toasts.includes(TUTORIAL.flee), 'すぐには出ない');
+  t.mock.timers.tick(2000);
+  assert.ok(toasts.includes(TUTORIAL.flee), `トーストが出ていない: ${toasts.join(' / ')}`);
+});
+
+test('昼の画面を stop したら、予約していたトーストを出さず、時間が進んでも一日を終えない', async (t) => {
+  const { TUTORIAL } = await import('../src/data/texts.js');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { scene, toasts, ends } = await fleeDayScene();
+  scene.act({ type: 'pet' });
+  assert.equal(scene.state().cat.mode, 'flee', '逃げていない（このテストの前提）');
+  assert.equal(typeof scene.stop, 'function', 'stop() がない');
+  scene.stop();
+  t.mock.timers.tick(2000);
+  assert.ok(!toasts.includes(TUTORIAL.flee), 'stop したのにトーストが出た');
+  // 一日の長さ（40秒）を大きく超えて進めても、onEnd は呼ばれない
+  for (let i = 0; i < 120; i++) scene.update(1);
+  t.mock.timers.tick(10000);
+  assert.deepEqual(ends, [], 'stop したのに一日が終わった');
+  assert.ok(!toasts.includes(TUTORIAL.flee));
+});

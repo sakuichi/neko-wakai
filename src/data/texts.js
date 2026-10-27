@@ -199,6 +199,17 @@ export const TITLES = {
   tenCats: { name: 'ねこ好き', how: '10匹の猫と出会う' },
 };
 
+// 一時停止メニュー（src/ui/pauseMenu.js）
+export const PAUSE_TEXT = {
+  button: '一時停止',
+  title: 'いったん休憩',
+  resume: 'つづける',
+  quit: 'タイトルにもどる',
+  confirm: 'この猫との7日間は、思い出に残りません。タイトルにもどりますか？',
+  confirmYes: 'タイトルにもどる',
+  confirmNo: 'やめておく',
+};
+
 export const SOUND_LABEL = { on: '効果音ON', off: '効果音OFF' };
 
 // 画面左下の BGM 表示。曲名は src/data/bgmSongs.js

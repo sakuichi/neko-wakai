@@ -8,6 +8,7 @@ import { createHud } from './ui/hud.js';
 import { createDebugPanel } from './ui/debugPanel.js';
 import { createSound } from './ui/sound.js';
 import { createMusic } from './ui/music.js';
+import { createPauseMenu } from './ui/pauseMenu.js';
 import { createTitleScene } from './scenes/titleScene.js';
 import { createNameScene } from './scenes/nameScene.js';
 import { createDayScene } from './scenes/dayScene.js';
@@ -16,7 +17,7 @@ import { createEndingScene } from './scenes/endingScene.js';
 import { createNotebookScene } from './scenes/notebookScene.js';
 import { addEnding, emptyRecords } from './game/records.js';
 import { loadRecords, saveRecords, clearRecords } from './ui/recordStore.js';
-import { SOUND_LABEL } from './data/texts.js';
+import { SOUND_LABEL, PAUSE_TEXT } from './data/texts.js';
 
 // 試作中はデバッグパネルを常に表示する。本番では ?debug=1 のときだけ表示する
 const PROTOTYPE = true;
@@ -30,13 +31,39 @@ const overlay = createOverlay($('overlay'), $('toast'), $('bubble'));
 const sound = createSound();
 const bgmBtn = $('bgm-btn');
 const music = createMusic({ button: bgmBtn, titleEl: $('bgm-title') });
+// 一時停止：昼と夜の画面だけで、右上の一時停止ボタン（#pause-btn）から開く。開いている間は scene.update を呼ばない
+const pauseBtn = $('pause-btn');
+pauseBtn.setAttribute('aria-label', PAUSE_TEXT.button);
+const pauseMenu = createPauseMenu({
+  el: $('pause'),
+  // 一時停止中に押しかけたまばたき（Space）は、つづけても数えない
+  onResume() {
+    input.cancelHold();
+  },
+  // この猫とのプレイは途中でやめる（思い出には残さない）
+  onQuit() {
+    scene.stop?.();
+    overlay.clear();
+    hud.show(false);
+    input.setBlinkEnabled(false);
+    screenEl.replaceChildren();
+    goTitle();
+  },
+});
+// 開くときは、押しかけのまばたきも取り消す（閉じてから離しても、まばたきにしない）
+function openPause() {
+  pauseMenu.open();
+  input.cancelHold();
+}
+pauseBtn.addEventListener('click', openPause);
 const hud = createHud({ root: $('hud'), dayEl: $('hud-day'), barEl: $('hud-timer-bar'), blinkBtn: $('blink-btn') });
 const input = createInput({
   canvas,
   blinkBtn: $('blink-btn'),
   toLogical: renderer.toLogical,
-  onPet: (x, y) => scene.pet?.(x, y),
-  onBlink: (action) => scene.act?.(action),
+  // 一時停止中は、なでる・まばたきを通さない
+  onPet: pauseMenu.whilePlaying((x, y) => scene.pet?.(x, y)),
+  onBlink: pauseMenu.whilePlaying((action) => scene.act?.(action)),
 });
 
 // misses: 猫の様子ごとの失敗回数（ヒントを出すため。1回のプレイの間だけ覚える）
@@ -54,6 +81,9 @@ let records = loadRecords();
 function goTitle() {
   overlay.clear();
   hud.show(false);
+  // 一時停止はやめて、メニューも閉じる（デバッグの「最初から」などで、開いたまま場面が変わったとき）
+  pauseBtn.hidden = true;
+  pauseMenu.close();
   // BGM の切り替えは、はじめてから表示する
   bgmBtn.hidden = true;
   session.game = createGame({ ...chooseCat({ personality: fixedPersonality, coat: fixedCoat }), face: chooseFace(fixedFace ?? {}) });
@@ -89,6 +119,7 @@ function goName() {
 }
 
 function goDay() {
+  pauseBtn.hidden = false;
   scene = createDayScene({
     session, overlay, hud, renderer, input, sound, rng,
     onEnd(result) {
@@ -101,6 +132,7 @@ function goDay() {
 }
 
 function goNight(lastCat) {
+  pauseBtn.hidden = false;
   scene = createNightScene({
     screenEl, session, lastCat,
     onChoose(choice) {
@@ -112,6 +144,8 @@ function goNight(lastCat) {
 
 function goEnding(endingId) {
   overlay.clear();
+  pauseBtn.hidden = true;
+  pauseMenu.close();
   // ねこ手帳に思い出を残す（visitor の day は7日目）
   const g = session.game;
   const r = addEnding(records, { name: g.catName, coat: g.coat, face: g.face, personality: g.personality, endingId, day: g.day, mistakes: g.mistakes, date: today() });
@@ -174,6 +208,11 @@ for (const type of ['pointerdown', 'keydown']) {
   window.addEventListener(type, music.unlock);
 }
 
+// ほかのアプリやタブに切り替えたら、昼と夜の画面では一時停止しておく（戻ったら「つづける」で再開）
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && !pauseBtn.hidden && !pauseMenu.isOpen) openPause();
+});
+
 window.addEventListener('resize', renderer.resize);
 renderer.resize();
 goTitle();
@@ -185,7 +224,7 @@ function frame(now) {
   last = now;
   // 更新中に画面が切り替わったら、残りの回数は新しい画面で回さない
   const current = scene;
-  for (let i = 0; i < speed && scene === current; i++) scene.update(dt);
+  if (!pauseMenu.isOpen) for (let i = 0; i < speed && scene === current; i++) scene.update(dt);
   renderer.draw({ personality: session.game.personality, coat: session.game.coat, face: session.game.face, ...scene.view() }, now / 1000, dt);
   if (debug && now - debugAt > 100) {
     debugAt = now;

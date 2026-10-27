@@ -42,6 +42,11 @@ export function createInput({ canvas, blinkBtn, toLogical, onPet, onBlink }) {
   });
 
   return {
+    // 押しかけのまばたきを取り消す（一時停止したとき。離しても、まばたきにしない）。まばたきが使えるかどうかは変えない
+    cancelHold() {
+      holdStart = null;
+      blinkBtn.classList.remove('holding');
+    },
     setBlinkEnabled(v) {
       blinkEnabled = v;
       if (!v) {

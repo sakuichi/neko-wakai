@@ -53,7 +53,7 @@ body {
 #hud { position: absolute; inset: 0; pointer-events: none; }
 .hud-top {
   position: absolute;
-  top: 3cqh; left: 4cqw; right: 4cqw;
+  top: 3cqh; left: 4cqw; right: 13cqw; /* 右端は一時停止ボタン（#pause-btn）の場所 */
   display: flex; align-items: center; gap: 3cqw;
   font-size: 4.2cqw; font-weight: bold;
 }
@@ -409,6 +409,48 @@ body {
 }
 .splash small { display: block; font-size: 5cqw; margin-top: 1cqh; }
 @keyframes card-in { from { opacity: 0; transform: translateY(10px) scale(0.97); } }
+
+/* ---- 一時停止（src/ui/pauseMenu.js） ---- */
+#pause-btn {
+  position: absolute; top: 3.3cqh; right: 4cqw;
+  width: 7cqw; height: 7cqw;
+  padding: 0;
+  border: 0; border-radius: 50%;
+  background: var(--paper); color: var(--ink-soft);
+  box-shadow: var(--shadow);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+#pause-btn svg { width: 62%; height: 62%; fill: currentColor; }
+#pause-btn[hidden] { display: none; }
+#pause {
+  position: absolute; inset: 0;
+  background: rgba(60, 40, 28, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 9cqw;
+  word-break: auto-phrase;
+}
+#pause[hidden] { display: none; }
+.pause-panel {
+  width: 100%;
+  background: var(--paper);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+  padding: 3.2cqh 7cqw;
+  text-align: center;
+  display: flex; flex-direction: column; gap: 1.6cqh;
+  animation: card-in 0.2s ease-out;
+}
+.pause-panel h3 { margin: 0 0 0.6cqh; font-size: 5.4cqw; color: var(--accent-deep); }
+.pause-panel p { margin: 0 0 0.6cqh; font-size: 3.8cqw; line-height: 1.7; }
+.pause-panel button {
+  border: 0; border-radius: 999px;
+  font: bold 4.2cqw var(--font);
+  padding: 1.4cqh 0;
+  cursor: pointer;
+}
+.pause-resume, .pause-cancel { background: var(--accent); color: #fff; box-shadow: var(--shadow); }
+.pause-quit, .pause-confirm { background: #fbe7dc; color: var(--ink); }
 
 /* ---- デバッグパネル（試作用） ---- */
 #debug {

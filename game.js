@@ -1747,6 +1747,11 @@ __modules['src/ui/input.js'] = (() => {
     });
 
     return {
+      // 押しかけのまばたきを取り消す（一時停止したとき。離しても、まばたきにしない）。まばたきが使えるかどうかは変えない
+      cancelHold() {
+        holdStart = null;
+        blinkBtn.classList.remove('holding');
+      },
       setBlinkEnabled(v) {
         blinkEnabled = v;
         if (!v) {
@@ -2074,6 +2079,17 @@ __modules['src/data/texts.js'] = (() => {
     tenCats: { name: 'ねこ好き', how: '10匹の猫と出会う' },
   };
 
+  // 一時停止メニュー（src/ui/pauseMenu.js）
+  const PAUSE_TEXT = {
+    button: '一時停止',
+    title: 'いったん休憩',
+    resume: 'つづける',
+    quit: 'タイトルにもどる',
+    confirm: 'この猫との7日間は、思い出に残りません。タイトルにもどりますか？',
+    confirmYes: 'タイトルにもどる',
+    confirmNo: 'やめておく',
+  };
+
   const SOUND_LABEL = { on: '効果音ON', off: '効果音OFF' };
 
   // 画面左下の BGM 表示。曲名は src/data/bgmSongs.js
@@ -2081,7 +2097,7 @@ __modules['src/data/texts.js'] = (() => {
     off: 'BGM OFF',
     aria: (label) => `BGM：${label}（タップで次の曲）`,
   };
-  return { withName, TITLE, DAY_TITLES, NAME_TEXT, TUTORIAL, CARDS, HINTS, FEEDBACK, LAP_TEXT, NIGHT_TEXT, ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, NOTEBOOK_TEXT, TITLES, SOUND_LABEL, BGM_TEXT };
+  return { withName, TITLE, DAY_TITLES, NAME_TEXT, TUTORIAL, CARDS, HINTS, FEEDBACK, LAP_TEXT, NIGHT_TEXT, ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, NOTEBOOK_TEXT, TITLES, PAUSE_TEXT, SOUND_LABEL, BGM_TEXT };
 })();
 
 // ---- src/game/catBrain.js
@@ -3160,6 +3176,93 @@ __modules['src/ui/music.js'] = (() => {
   return { BGM_OFF, BGM_VOLUME, nextTrack, createMusic };
 })();
 
+// ---- src/ui/pauseMenu.js
+__modules['src/ui/pauseMenu.js'] = (() => {
+  // 一時停止メニュー：「つづける」「タイトルにもどる」。タイトルにもどるときは、思い出に残らないことを一度確かめる。
+  // 開いている間は、src/main.js が昼の時間と猫の動きを止める
+  const { PAUSE_TEXT } = __modules['src/data/texts.js'];
+
+  function createPauseMenu({ el, onResume, onQuit }) {
+    // 開くたびに増える番号。閉じる前に作ったボタンを、閉じたあとに押しても何もしないように使う
+    let session = 0;
+    let open = false;
+
+    function button(className, text, onClick) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = className;
+      b.textContent = text;
+      const mine = session;
+      b.addEventListener('click', () => {
+        if (open && mine === session) onClick();
+      });
+      return b;
+    }
+
+    function panel(...children) {
+      const node = document.createElement('div');
+      node.className = 'pause-panel';
+      node.append(...children);
+      el.replaceChildren(node);
+    }
+
+    function text(tag, value) {
+      const node = document.createElement(tag);
+      node.textContent = value;
+      return node;
+    }
+
+    function showMenu() {
+      panel(
+        text('h3', PAUSE_TEXT.title),
+        button('pause-resume', PAUSE_TEXT.resume, () => {
+          close();
+          onResume();
+        }),
+        button('pause-quit', PAUSE_TEXT.quit, showConfirm),
+      );
+    }
+
+    function showConfirm() {
+      panel(
+        text('p', PAUSE_TEXT.confirm),
+        button('pause-cancel', PAUSE_TEXT.confirmNo, showMenu),
+        button('pause-confirm', PAUSE_TEXT.confirmYes, () => {
+          close();
+          onQuit();
+        }),
+      );
+    }
+
+    function close() {
+      open = false;
+      session++;
+      el.hidden = true;
+      el.replaceChildren();
+    }
+
+    return {
+      open() {
+        session++;
+        open = true;
+        el.hidden = false;
+        showMenu();
+      },
+      close,
+      get isOpen() {
+        return open;
+      },
+      // 遊びの操作（なでる・まばたき）を包む。メニューを開いている間は通さない
+      whilePlaying(fn) {
+        return (...args) => {
+          if (!open) fn(...args);
+        };
+      },
+    };
+  }
+  return { createPauseMenu };
+})();
+
 // ---- src/scenes/titleScene.js
 __modules['src/scenes/titleScene.js'] = (() => {
   const { TITLE, NOTEBOOK_TEXT } = __modules['src/data/texts.js'];
@@ -3432,6 +3535,8 @@ __modules['src/scenes/dayScene.js'] = (() => {
     // まばたきボタンを押している間に、一度でも目が合ったか
     let sawLook = false;
     const tut = { wait: false, approach: false, flee: false };
+    // あとで出す予定のトースト（途中でやめたら取り消す）
+    const timers = [];
 
     const personality = () => PERSONALITIES[session.game.personality];
     const text = (s) => withName(s, session.game.catName);
@@ -3484,7 +3589,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
       if (r.feedback === 'stare') countMiss('stare');
       if (r.mistake && day.dayNumber === 1 && !tut.flee) {
         tut.flee = true;
-        setTimeout(() => overlay.toast(TUTORIAL.flee, 3200), 1300);
+        timers.push(setTimeout(() => overlay.toast(TUTORIAL.flee, 3200), 1300));
       }
     }
 
@@ -3540,6 +3645,11 @@ __modules['src/scenes/dayScene.js'] = (() => {
       },
       act,
       skipDay: () => finish(false),
+      // 一時停止メニューから途中でやめたとき：一日を終えず（onEnd を呼ばず）、予約していたトーストも出さない
+      stop() {
+        ended = true;
+        for (const t of timers) clearTimeout(t);
+      },
       trustMax() {
         day = { ...day, trust: MAX_VALUE };
       },
@@ -3987,6 +4097,7 @@ __modules['src/main.js'] = (() => {
   const { createDebugPanel } = __modules['src/ui/debugPanel.js'];
   const { createSound } = __modules['src/ui/sound.js'];
   const { createMusic } = __modules['src/ui/music.js'];
+  const { createPauseMenu } = __modules['src/ui/pauseMenu.js'];
   const { createTitleScene } = __modules['src/scenes/titleScene.js'];
   const { createNameScene } = __modules['src/scenes/nameScene.js'];
   const { createDayScene } = __modules['src/scenes/dayScene.js'];
@@ -3995,7 +4106,7 @@ __modules['src/main.js'] = (() => {
   const { createNotebookScene } = __modules['src/scenes/notebookScene.js'];
   const { addEnding, emptyRecords } = __modules['src/game/records.js'];
   const { loadRecords, saveRecords, clearRecords } = __modules['src/ui/recordStore.js'];
-  const { SOUND_LABEL } = __modules['src/data/texts.js'];
+  const { SOUND_LABEL, PAUSE_TEXT } = __modules['src/data/texts.js'];
 
   // 試作中はデバッグパネルを常に表示する。本番では ?debug=1 のときだけ表示する
   const PROTOTYPE = true;
@@ -4009,13 +4120,39 @@ __modules['src/main.js'] = (() => {
   const sound = createSound();
   const bgmBtn = $('bgm-btn');
   const music = createMusic({ button: bgmBtn, titleEl: $('bgm-title') });
+  // 一時停止：昼と夜の画面だけで、右上の一時停止ボタン（#pause-btn）から開く。開いている間は scene.update を呼ばない
+  const pauseBtn = $('pause-btn');
+  pauseBtn.setAttribute('aria-label', PAUSE_TEXT.button);
+  const pauseMenu = createPauseMenu({
+    el: $('pause'),
+    // 一時停止中に押しかけたまばたき（Space）は、つづけても数えない
+    onResume() {
+      input.cancelHold();
+    },
+    // この猫とのプレイは途中でやめる（思い出には残さない）
+    onQuit() {
+      scene.stop?.();
+      overlay.clear();
+      hud.show(false);
+      input.setBlinkEnabled(false);
+      screenEl.replaceChildren();
+      goTitle();
+    },
+  });
+  // 開くときは、押しかけのまばたきも取り消す（閉じてから離しても、まばたきにしない）
+  function openPause() {
+    pauseMenu.open();
+    input.cancelHold();
+  }
+  pauseBtn.addEventListener('click', openPause);
   const hud = createHud({ root: $('hud'), dayEl: $('hud-day'), barEl: $('hud-timer-bar'), blinkBtn: $('blink-btn') });
   const input = createInput({
     canvas,
     blinkBtn: $('blink-btn'),
     toLogical: renderer.toLogical,
-    onPet: (x, y) => scene.pet?.(x, y),
-    onBlink: (action) => scene.act?.(action),
+    // 一時停止中は、なでる・まばたきを通さない
+    onPet: pauseMenu.whilePlaying((x, y) => scene.pet?.(x, y)),
+    onBlink: pauseMenu.whilePlaying((action) => scene.act?.(action)),
   });
 
   // misses: 猫の様子ごとの失敗回数（ヒントを出すため。1回のプレイの間だけ覚える）
@@ -4033,6 +4170,9 @@ __modules['src/main.js'] = (() => {
   function goTitle() {
     overlay.clear();
     hud.show(false);
+    // 一時停止はやめて、メニューも閉じる（デバッグの「最初から」などで、開いたまま場面が変わったとき）
+    pauseBtn.hidden = true;
+    pauseMenu.close();
     // BGM の切り替えは、はじめてから表示する
     bgmBtn.hidden = true;
     session.game = createGame({ ...chooseCat({ personality: fixedPersonality, coat: fixedCoat }), face: chooseFace(fixedFace ?? {}) });
@@ -4068,6 +4208,7 @@ __modules['src/main.js'] = (() => {
   }
 
   function goDay() {
+    pauseBtn.hidden = false;
     scene = createDayScene({
       session, overlay, hud, renderer, input, sound, rng,
       onEnd(result) {
@@ -4080,6 +4221,7 @@ __modules['src/main.js'] = (() => {
   }
 
   function goNight(lastCat) {
+    pauseBtn.hidden = false;
     scene = createNightScene({
       screenEl, session, lastCat,
       onChoose(choice) {
@@ -4091,6 +4233,8 @@ __modules['src/main.js'] = (() => {
 
   function goEnding(endingId) {
     overlay.clear();
+    pauseBtn.hidden = true;
+    pauseMenu.close();
     // ねこ手帳に思い出を残す（visitor の day は7日目）
     const g = session.game;
     const r = addEnding(records, { name: g.catName, coat: g.coat, face: g.face, personality: g.personality, endingId, day: g.day, mistakes: g.mistakes, date: today() });
@@ -4153,6 +4297,11 @@ __modules['src/main.js'] = (() => {
     window.addEventListener(type, music.unlock);
   }
 
+  // ほかのアプリやタブに切り替えたら、昼と夜の画面では一時停止しておく（戻ったら「つづける」で再開）
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden && !pauseBtn.hidden && !pauseMenu.isOpen) openPause();
+  });
+
   window.addEventListener('resize', renderer.resize);
   renderer.resize();
   goTitle();
@@ -4164,7 +4313,7 @@ __modules['src/main.js'] = (() => {
     last = now;
     // 更新中に画面が切り替わったら、残りの回数は新しい画面で回さない
     const current = scene;
-    for (let i = 0; i < speed && scene === current; i++) scene.update(dt);
+    if (!pauseMenu.isOpen) for (let i = 0; i < speed && scene === current; i++) scene.update(dt);
     renderer.draw({ personality: session.game.personality, coat: session.game.coat, face: session.game.face, ...scene.view() }, now / 1000, dt);
     if (debug && now - debugAt > 100) {
       debugAt = now;

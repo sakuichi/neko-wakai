@@ -28,6 +28,8 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   // まばたきボタンを押している間に、一度でも目が合ったか
   let sawLook = false;
   const tut = { wait: false, approach: false, flee: false };
+  // あとで出す予定のトースト（途中でやめたら取り消す）
+  const timers = [];
 
   const personality = () => PERSONALITIES[session.game.personality];
   const text = (s) => withName(s, session.game.catName);
@@ -80,7 +82,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
     if (r.feedback === 'stare') countMiss('stare');
     if (r.mistake && day.dayNumber === 1 && !tut.flee) {
       tut.flee = true;
-      setTimeout(() => overlay.toast(TUTORIAL.flee, 3200), 1300);
+      timers.push(setTimeout(() => overlay.toast(TUTORIAL.flee, 3200), 1300));
     }
   }
 
@@ -136,6 +138,11 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
     },
     act,
     skipDay: () => finish(false),
+    // 一時停止メニューから途中でやめたとき：一日を終えず（onEnd を呼ばず）、予約していたトーストも出さない
+    stop() {
+      ended = true;
+      for (const t of timers) clearTimeout(t);
+    },
     trustMax() {
       day = { ...day, trust: MAX_VALUE };
     },
