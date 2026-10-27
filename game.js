@@ -1974,7 +1974,8 @@ __modules['src/data/texts.js'] = (() => {
     saved: '思い出に残しました',
     newTitle: (name) => `称号を手に入れた：${name}`,
     noMemories: 'まだ思い出はありません。猫と7日間を過ごすと、ここに残ります',
-    memoryResult: (m) => (m.endingId === 'visitor' ? '通い猫になった' : `${m.day}日目で和解`),
+    // 思い出の結果：エンディングの名前をそのまま出す（通い猫は名前だけ）
+    memoryResult: (m, endingName) => (m.endingId === 'visitor' ? `「${endingName}」` : `「${endingName}」${m.day}日目で和解`),
     unknownCoat: '？？？',
     bestDay: (day) => (day === null ? 'まだ和解していない' : `いちばん早い和解：${day}日目`),
     locked: '？？？',
@@ -3067,6 +3068,10 @@ __modules['src/ui/music.js'] = (() => {
 // ---- src/scenes/titleScene.js
 __modules['src/scenes/titleScene.js'] = (() => {
   const { TITLE, NOTEBOOK_TEXT } = __modules['src/data/texts.js'];
+  const { drawCatPortrait } = __modules['src/render/renderer.js'];
+
+  // 「ねこ手帳」ボタンの猫の絵の細かさ（Canvas の画素数）。画面上の大きさは style.css の .title-notebook-icon で、文字の大きさに合わせる
+  const ICON_RES = 96;
 
   // onNotebook: 「ねこ手帳」ボタン（画面のほかの場所をタップすると、はじめる）
   function createTitleScene({ screenEl, onStart, onNotebook }) {
@@ -3085,7 +3090,14 @@ __modules['src/scenes/titleScene.js'] = (() => {
     const notebook = document.createElement('button');
     notebook.type = 'button';
     notebook.className = 'title-notebook';
-    notebook.textContent = NOTEBOOK_TEXT.open;
+    const icon = document.createElement('canvas');
+    icon.className = 'title-notebook-icon';
+    icon.width = ICON_RES;
+    icon.height = ICON_RES;
+    drawCatPortrait(icon, 'chatora');
+    const label = document.createElement('span');
+    label.textContent = NOTEBOOK_TEXT.open;
+    notebook.append(icon, label);
     notebook.addEventListener('click', () => {
       screenEl.replaceChildren();
       onNotebook();
@@ -3720,7 +3732,8 @@ __modules['src/scenes/notebookScene.js'] = (() => {
       info.append(
         el('strong', '', m.name),
         el('span', '', `${COAT_LABELS[m.coat] ?? ''}・${PERSONALITIES[m.personality]?.label ?? ''}`),
-        el('span', 'memory-result', `${NOTEBOOK_TEXT.memoryResult(m)}　${String(m.date).replaceAll('-', '/')}`),
+        el('span', 'memory-result', NOTEBOOK_TEXT.memoryResult(m, ENDINGS[m.endingId].name)),
+        el('span', 'memory-date', String(m.date).replaceAll('-', '/')),
       );
       item.append(portrait(m.coat), info);
       return item;

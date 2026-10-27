@@ -331,3 +331,86 @@ test('エンディング画面：新しい称号がなければ、称号の文�
     assert.ok(!texts.some((t) => t.includes(line)), `称号がないのに「${line}」が出ている`);
   }
 });
+
+// ---------------------------------------------------------------- ねこ手帳の仕上げ
+
+// 何を呼んでも何もしない、偽の Canvas の描画コンテキスト
+function nullContext() {
+  return new Proxy({}, {
+    get(target, key) {
+      if (key in target) return target[key];
+      return () => {};
+    },
+    set(target, key, value) {
+      target[key] = value;
+      return true;
+    },
+  });
+}
+
+// タグ名を覚え、canvas なら getContext を持つ偽 DOM 要素。
+// innerHTML は覚えるだけ、querySelector は何もない要素を返す（タイトル画面の作りに合わせる）
+function taggedElement(tag) {
+  const node = notebookElement();
+  node.tagName = String(tag).toUpperCase();
+  node.querySelector = () => notebookElement();
+  if (node.tagName === 'CANVAS') node.getContext = () => nullContext();
+  return node;
+}
+const fakeDocument = () => ({ createElement: (tag) => taggedElement(tag) });
+
+// 子要素までたどって、条件に合う要素を集める
+function findAll(node, pred, out = []) {
+  if (!node || typeof node !== 'object') return out;
+  if (pred(node)) out.push(node);
+  for (const c of node.children ?? []) findAll(c, pred, out);
+  return out;
+}
+// 要素の文章（textContent と子の文字列）を、canvas を除いてつなげる
+function textOf(node) {
+  if (typeof node === 'string') return node;
+  if (!node || node.tagName === 'CANVAS') return '';
+  return [node.textContent ?? '', ...(node.children ?? []).map(textOf)].join('');
+}
+
+test('ねこ手帳の思い出には、エンディングの名前をそのまま出し、日付は別の行に YYYY/MM/DD で出す', async () => {
+  const { createNotebookScene } = await import('../src/scenes/notebookScene.js');
+  const { emptyRecords, addEnding } = await import('../src/game/records.js');
+  const { ENDINGS } = await import('../src/data/texts.js');
+  const lapped = { name: 'みかん', coat: 'chatora', personality: 'amaenbo', endingId: 'fate', day: 3, mistakes: 0, date: '2026-10-01' };
+  const visited = { name: 'よる', coat: 'kuro', personality: 'bibiri', endingId: 'visitor', day: 7, mistakes: 2, date: '2026-10-02' };
+  const records = addEnding(addEnding(emptyRecords(), lapped).records, visited).records;
+  withGlobals({ document: fakeDocument() }, () => {
+    const screenEl = taggedElement('div');
+    createNotebookScene({ screenEl, records, onBack: () => {} });
+    const all = findAll(screenEl, () => true);
+    const texts = all.map(textOf);
+    const lapLine = `「${ENDINGS.fate.name}」3日目で和解`;
+    const visitLine = `「${ENDINGS.visitor.name}」`;
+    assert.ok(texts.some((t) => t.includes(lapLine)), `「${lapLine}」が出ていない: ${texts.join(' / ')}`);
+    assert.ok(texts.some((t) => t.includes(visitLine)), `「${visitLine}」が出ていない: ${texts.join(' / ')}`);
+    assert.ok(!texts.some((t) => t.includes('通い猫になった')), '「通い猫になった」が出ている');
+    // 日付は、結果の文とは別の要素に、日付だけで出る
+    for (const date of ['2026/10/01', '2026/10/02']) {
+      assert.ok(all.some((n) => String(n.textContent ?? '').trim() === date), `日付 ${date} だけの要素がない: ${texts.join(' / ')}`);
+    }
+    const resultEls = all.filter((n) => String(n.textContent ?? '').includes(lapLine) || String(n.textContent ?? '').includes(visitLine));
+    assert.ok(resultEls.length > 0, '結果の文を持つ要素がない');
+    for (const n of resultEls) assert.ok(!/\d{4}\/\d{2}\/\d{2}/.test(n.textContent), `結果の文と日付が同じ要素にある: ${n.textContent}`);
+  });
+});
+
+test('タイトルの「ねこ手帳」ボタンには、猫の小さな絵（canvas）と「ねこ手帳」の文字がある', async () => {
+  const { createTitleScene } = await import('../src/scenes/titleScene.js');
+  const { NOTEBOOK_TEXT } = await import('../src/data/texts.js');
+  withGlobals({ document: fakeDocument() }, () => {
+    const screenEl = taggedElement('div');
+    createTitleScene({ screenEl, onStart: () => {}, onNotebook: () => {} });
+    const buttons = findAll(screenEl, (n) => String(n.className ?? '').split(/\s+/).includes('title-notebook'));
+    assert.equal(buttons.length, 1, 'class title-notebook のボタンが1つない');
+    const button = buttons[0];
+    const canvases = findAll(button, (n) => n.tagName === 'CANVAS');
+    assert.ok(canvases.length >= 1, 'ボタンの中に canvas がない');
+    assert.ok(textOf(button).includes(NOTEBOOK_TEXT.open), `ボタンの文字: ${textOf(button)}`);
+  });
+});

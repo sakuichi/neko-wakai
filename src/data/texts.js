@@ -176,7 +176,8 @@ export const NOTEBOOK_TEXT = {
   saved: '思い出に残しました',
   newTitle: (name) => `称号を手に入れた：${name}`,
   noMemories: 'まだ思い出はありません。猫と7日間を過ごすと、ここに残ります',
-  memoryResult: (m) => (m.endingId === 'visitor' ? '通い猫になった' : `${m.day}日目で和解`),
+  // 思い出の結果：エンディングの名前をそのまま出す（通い猫は名前だけ）
+  memoryResult: (m, endingName) => (m.endingId === 'visitor' ? `「${endingName}」` : `「${endingName}」${m.day}日目で和解`),
   unknownCoat: '？？？',
   bestDay: (day) => (day === null ? 'まだ和解していない' : `いちばん早い和解：${day}日目`),
   locked: '？？？',

@@ -87,6 +87,7 @@ flowchart TD
     STORE -->|"Records（壊れていたら空）"| MAIN
     MAIN -->|"newTitles, saved"| END2["エンディング：「思い出に残しました」「称号を手に入れた」<br/>src/scenes/endingScene.js"]
     TITLE2["タイトル：「ねこ手帳」ボタン<br/>src/scenes/titleScene.js"] -->|"開く"| MAIN
+    TITLE2 -->|"茶トラ（ボタンの猫の絵）"| PORTRAIT
     MAIN -->|"Records"| BOOK["ねこ手帳（思い出・図鑑・称号のタブ）<br/>src/scenes/notebookScene.js"]
     BOOK -->|"毛色（猫の小さな絵を描く）"| PORTRAIT["猫の絵（ゲームと同じ描き方）<br/>src/render/renderer.js（drawCatPortrait）"]
     DATA2["称号の名前・条件の説明（TITLES）・手帳の文章（NOTEBOOK_TEXT）<br/>src/data/texts.js"] --> BOOK

@@ -39,7 +39,8 @@ function memoriesTab(records) {
     info.append(
       el('strong', '', m.name),
       el('span', '', `${COAT_LABELS[m.coat] ?? ''}・${PERSONALITIES[m.personality]?.label ?? ''}`),
-      el('span', 'memory-result', `${NOTEBOOK_TEXT.memoryResult(m)}　${String(m.date).replaceAll('-', '/')}`),
+      el('span', 'memory-result', NOTEBOOK_TEXT.memoryResult(m, ENDINGS[m.endingId].name)),
+      el('span', 'memory-date', String(m.date).replaceAll('-', '/')),
     );
     item.append(portrait(m.coat), info);
     return item;
