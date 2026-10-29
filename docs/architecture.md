@@ -33,7 +33,7 @@ flowchart TD
     DAY -->|"Action, CatState, DayState, Params"| RULES["行動の判定<br/>src/game/rules.js"]
     RULES -->|"ActionResult {CatState, DayState, feedback, mistake}"| DAY
 
-    DAY -->|"CatState, DayState, Personality, dt, rng"| BRAIN["時間経過：様子の切替・移動（くつろぎの間だけ歩く）・警戒と信頼の自然増減・膝の判定<br/>src/game/catBrain.js（tick）"]
+    DAY -->|"CatState, DayState, Personality, dt, rng"| BRAIN["時間経過：様子の切替・移動（くつろぎの間だけ歩く。下限に着いたら座り、下限が walkResumeGap 下がるまで待つ）・警戒と信頼の自然増減・膝の判定<br/>src/game/catBrain.js（tick）"]
     BRAIN -->|"CatState（walking を含む）, DayState, enteredMode"| DAY
 
     DAY -->|"説明カード（止める）/ 吹き出し・ヒント・トースト（止めない）/ 日付"| OVERLAY["チュートリアル・説明カード・吹き出し・トースト<br/>src/ui/overlay.js"]

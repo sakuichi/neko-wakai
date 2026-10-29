@@ -15,6 +15,9 @@ export const RULES = {
 
   // 距離の下限は「100 − 信頼 − この値」。信頼が低くても、ある程度までは近づいてくる
   distanceFloorOffset: 30,
+  // 下限に着いて座った猫が、また歩き出すまでの余裕（下限がこれだけ下がったら歩く）。
+  // 毎フレーム少しずつ寄ると、止まったまま足踏みして見えるので、まとめて歩かせる（信頼 0.35/秒 なら約11秒ごと）
+  walkResumeGap: 4,
 
   // missWariness: 目が合っていないのにゆっくりまばたきしたときの警戒（連打対策）
   blink: { minHoldMs: 500, maxHoldMs: 2000, trust: 6, missWariness: 8 },

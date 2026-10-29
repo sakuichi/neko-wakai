@@ -26,11 +26,14 @@ export function tick(cat, day, personality, dt, rng) {
     if (d.boxLockLeft === 0) c = pickNextMode(c, d, personality, rng);
   } else {
     // 移動はこの tick の信頼増加より先に、tick 開始時点の信頼で下限を決める
+    // 歩き出したら下限に着くまで歩き、着いたら座る。座ったあとは、下限が walkResumeGap 下がるまで待つ（足踏みしない）。
+    // 下限がもう 0（膝の前）なら、それ以上は下がらないので待たずに歩く（膝に乗れなくならないように）
     if (calm && WALK_MODES.includes(c.mode)) {
       const floor = distanceFloor(d.trust, d.floorBonus);
-      if (c.distance > floor) {
+      const gap = c.distance - floor;
+      if (gap > 0 && (cat.walking || gap >= RULES.walkResumeGap || floor === 0)) {
         c.distance = Math.max(floor, c.distance - personality.approachSpeed * d.approachMul * dt);
-        c.walking = true;
+        c.walking = c.distance > floor;
       }
     }
 
