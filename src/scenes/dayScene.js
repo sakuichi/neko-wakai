@@ -11,6 +11,9 @@ const LAP_SHOW_SEC = 6.5;
 const LAP_PURR_AT = 2.6;
 // 同じ様子でこの回数失敗したら、ヒントを出す
 const HINT_AFTER = 2;
+// 説明・ヒントの吹き出しを出しておく時間（秒。説明は src/ui/overlay.js の bubble の決まりの長さ）
+const BUBBLE_SEC = 5;
+const HINT_SEC = 6;
 
 // 猫の反応（feedback）ごとに鳴らす効果音（src/ui/sound.js のメソッド名）
 const SOUNDS = { purr: ['purr'], blinkBack: ['meow'], flee: ['bump'], kick: ['bump'] };
@@ -28,6 +31,8 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   // まばたきボタンを押している間に、一度でも目が合ったか
   let sawLook = false;
   const tut = { wait: false, approach: false, flee: false };
+  // 説明・ヒントの吹き出しが出ている間（昼の経過時間で、この時刻まで）。我慢の説明で消さないように使う
+  let bubbleUntil = 0;
   // あとで出す予定のトースト（途中でやめたら取り消す）
   const timers = [];
 
@@ -35,18 +40,26 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   const text = (s) => withName(s, session.game.catName);
   const textCard = (c) => ({ title: text(c.title), body: text(c.body) });
 
+  // 出したら true
   function showCardOnce(key) {
     const card = CARDS[key];
-    if (!card || session.game.seenCards.includes(key)) return;
+    if (!card || session.game.seenCards.includes(key)) return false;
     session.game = { ...session.game, seenCards: [...session.game.seenCards, key] };
     if (card.pause) overlay.card(textCard(card));
-    else overlay.bubble(textCard(card));
+    else {
+      overlay.bubble(textCard(card));
+      bubbleUntil = elapsed + BUBBLE_SEC;
+    }
+    return true;
   }
 
   // 同じ失敗を繰り返したら、1回だけヒントを出す
   function countMiss(key) {
     session.misses[key] = (session.misses[key] ?? 0) + 1;
-    if (session.misses[key] === HINT_AFTER && HINTS[key]) overlay.bubble(textCard(HINTS[key]), 6000);
+    if (session.misses[key] === HINT_AFTER && HINTS[key]) {
+      overlay.bubble(textCard(HINTS[key]), HINT_SEC * 1000);
+      bubbleUntil = elapsed + HINT_SEC;
+    }
   }
 
   overlay.splash(`${day.dayNumber}日目`, DAY_TITLES[day.dayNumber]);
@@ -106,12 +119,21 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
       cat = r.cat;
       day = r.day;
       if (input.holdMs() > 0 && cat.mode === 'look') sawLook = true;
+      let explained = false;
       if (r.enteredMode === 'lap') {
         hud.show(false);
         input.setBlinkEnabled(false);
         overlay.toast(text(LAP_TEXT), 3200);
       } else if (r.enteredMode) {
-        showCardOnce(`sign:${r.enteredMode}`);
+        explained = showCardOnce(`sign:${r.enteredMode}`);
+      }
+      // 触ると失敗するサインを、触らずにやり過ごせた。膝に乗った瞬間は、膝に乗った文だけを見せる。
+      // 新しいサインの説明が同じときに出たり、説明・ヒントの吹き出しがまだ出ていたりしたら、
+      // 我慢の説明はそれを消さないように次の機会に回す
+      if (r.endured && r.enteredMode !== 'lap') {
+        overlay.toast(FEEDBACK.relief, 1600);
+        renderer.addEffect('relief');
+        if (!explained && elapsed >= bubbleUntil) showCardOnce('tip:patience');
       }
       if (day.dayNumber === 1) {
         if (!tut.wait && elapsed > 3) {

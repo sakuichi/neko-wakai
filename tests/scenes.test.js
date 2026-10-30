@@ -547,3 +547,273 @@ test('昼の画面を stop したら、予約していたトーストを出さ�
   assert.deepEqual(ends, [], 'stop したのに一日が終わった');
   assert.ok(!toasts.includes(TUTORIAL.flee));
 });
+
+// ---------------------------------------------------------------- 我慢のごほうび
+
+test('我慢のごほうびでは、効果音を鳴らさない', async () => {
+  const { soundsFor } = await import('../src/scenes/dayScene.js');
+  assert.deepEqual(soundsFor('relief'), []);
+});
+
+test('昼の画面：しっぽパタパタを我慢できたら、トーストと「ほっ」の効果が出て、初回だけ説明の吹き出しが出る（効果音は鳴らない）', async () => {
+  const { createDayScene } = await import('../src/scenes/dayScene.js');
+  const { createGame } = await import('../src/game/progression.js');
+  const { CARDS, FEEDBACK, withName } = await import('../src/data/texts.js');
+  const noop = () => {};
+  assert.equal(FEEDBACK.relief, '（ほっとしたみたい）');
+  const tip = CARDS['tip:patience'];
+  assert.ok(tip, "CARDS['tip:patience'] がない");
+  assert.ok(!tip.pause, "CARDS['tip:patience'] は止めない吹き出し（pause なし）");
+  const toasts = [];
+  const bubbles = [];
+  const cards = [];
+  const overlay = {
+    busy: false,
+    splash: noop,
+    card: (c) => cards.push(c),
+    bubble: (c) => bubbles.push(c),
+    toast: (text, ms) => toasts.push({ text, ms }),
+    clear: noop,
+  };
+  const hud = { show: noop, update: noop };
+  const effects = [];
+  const renderer = { addEffect: (name) => effects.push(name), hitTestCat: () => false };
+  const input = { setBlinkEnabled: noop, holdMs: () => 0 };
+  const played = [];
+  const sound = {
+    purr: () => played.push('purr'),
+    meow: () => played.push('meow'),
+    bump: () => played.push('bump'),
+  };
+  // 2日目（しっぽパタパタが出て、膝には乗らない日）。我慢の説明以外のカードは見たことにしておく
+  const session = {
+    game: {
+      ...createGame({ personality: 'amaenbo', seed: 1 }),
+      day: 2,
+      catName: 'たま',
+      seenCards: Object.keys(CARDS).filter((k) => k !== 'tip:patience'),
+    },
+    misses: {},
+  };
+  // 次の様子を選ぶとき、しっぽパタパタのあとは「くつろぎ」（候補の先頭）、それ以外のあとは「しっぽパタパタ」（2日目の候補の最後）にする
+  let scene = null;
+  const rng = () => (scene.state().cat.mode === 'tailFlick' ? 0 : 0.999);
+  scene = createDayScene({ session, overlay, hud, renderer, input, sound, rng, onEnd: noop });
+
+  // しっぽパタパタが（触られずに）終わった update で、新しく出たものを記録する
+  const endings = [];
+  for (let i = 0; i < 2000 && endings.length < 2; i++) {
+    const before = scene.state().cat.mode;
+    const n = { toasts: toasts.length, effects: effects.length, bubbles: bubbles.length };
+    scene.update(0.05);
+    if (before === 'tailFlick' && scene.state().cat.mode !== 'tailFlick') {
+      endings.push({ toasts: toasts.slice(n.toasts), effects: effects.slice(n.effects), bubbles: bubbles.slice(n.bubbles) });
+    }
+  }
+  assert.equal(endings.length, 2, 'しっぽパタパタが2回終わる前に上限に達した（このテストの前提）');
+
+  // 1回目：トースト・効果・説明の吹き出し
+  const [first, second] = endings;
+  assert.deepEqual(first.toasts, [{ text: FEEDBACK.relief, ms: 1600 }]);
+  assert.deepEqual(first.effects, ['relief']);
+  assert.deepEqual(first.bubbles, [{ title: withName(tip.title, 'たま'), body: withName(tip.body, 'たま') }]);
+  assert.ok(session.game.seenCards.includes('tip:patience'), 'seenCards に tip:patience が入っていない');
+  // 2回目：トーストと効果は出るが、吹き出しは出ない
+  assert.deepEqual(second.toasts, [{ text: FEEDBACK.relief, ms: 1600 }]);
+  assert.deepEqual(second.effects, ['relief']);
+  assert.deepEqual(second.bubbles, []);
+  // 止めるカードは出さず、効果音も鳴らさない
+  assert.deepEqual(cards, []);
+  assert.deepEqual(played, []);
+});
+
+// ---------------------------------------------------------------- 我慢のごほうびと、ほかの表示が同じ update で重なるとき
+
+// 昼の画面を作り、トースト・吹き出し・止めるカード・効果を記録する。
+// pick(cat) は乱数の値を返す関数。cat はその update を始めたときの猫（次の様子を選ぶときの、終わる様子）
+async function patienceDayScene({ day, trust = 0, seenCards, pick }) {
+  const { createDayScene } = await import('../src/scenes/dayScene.js');
+  const { createGame } = await import('../src/game/progression.js');
+  const noop = () => {};
+  const toasts = [];
+  const bubbles = [];
+  const cards = [];
+  const overlay = {
+    busy: false,
+    splash: noop,
+    card: (c) => cards.push(c),
+    bubble: (c) => bubbles.push(c),
+    toast: (text, ms) => toasts.push({ text, ms }),
+    clear: noop,
+  };
+  const hud = { show: noop, update: noop };
+  const effects = [];
+  const renderer = { addEffect: (name) => effects.push(name), hitTestCat: () => false };
+  const input = { setBlinkEnabled: noop, holdMs: () => 0 };
+  const sound = { purr: noop, meow: noop, bump: noop };
+  const session = {
+    game: { ...createGame({ personality: 'amaenbo', seed: 1 }), day, trust, catName: 'たま', seenCards },
+    misses: {},
+  };
+  let scene = null;
+  const rng = () => pick(scene.state().cat);
+  scene = createDayScene({ session, overlay, hud, renderer, input, sound, rng, onEnd: noop });
+  // 1回 update して、その update で新しく出たものを返す
+  function step(dt = 0.05) {
+    const before = scene.state().cat;
+    const n = { toasts: toasts.length, bubbles: bubbles.length, cards: cards.length, effects: effects.length };
+    scene.update(dt);
+    return {
+      before: before.mode,
+      after: scene.state().cat.mode,
+      toasts: toasts.slice(n.toasts),
+      bubbles: bubbles.slice(n.bubbles),
+      cards: cards.slice(n.cards),
+      effects: effects.slice(n.effects),
+      seenCards: [...session.game.seenCards],
+    };
+  }
+  return { scene, session, toasts, bubbles, cards, effects, step };
+}
+
+test('昼の画面：我慢のごほうびで信頼が100になり、同じ update で膝に乗ったら、膝に乗った文が最後のトーストとして残り、ほっとした表示も我慢の説明も出さない', async () => {
+  const { CARDS, FEEDBACK, LAP_TEXT, withName } = await import('../src/data/texts.js');
+  // 3日目（膝に乗れる日）。信頼94から始め、くつろぎで距離0まで歩いてから、お腹見せにする。
+  // お腹見せが時間切れで終わる update で、我慢のごほうびを足すと信頼が100になる
+  // 距離0のときの3日目の候補（甘えん坊の重み）：relax3, look2, tailUp2, tailFlick1, belly1, backTurn1, rub3（計13）。0.654 → belly
+  const pick = (cat) => {
+    if (cat.mode === 'relax') return cat.distance > 0 ? 0 : 0.654;
+    return 0;
+  };
+  const { scene, session, toasts, step } = await patienceDayScene({
+    day: 3,
+    trust: 94,
+    seenCards: Object.keys(CARDS).filter((k) => k !== 'tip:patience'),
+    pick,
+  });
+  let lapStep = null;
+  for (let i = 0; i < 2000 && !lapStep; i++) {
+    const s = step();
+    if (s.after === 'lap') lapStep = s;
+  }
+  assert.ok(lapStep, '膝に乗る前に上限に達した（このテストの前提）');
+  assert.equal(lapStep.before, 'belly', 'お腹見せが終わる update で膝に乗っていない（このテストの前提）');
+  assert.equal(scene.state().day.trust, 100);
+
+  const lap = { text: withName(LAP_TEXT, 'たま'), ms: 3200 };
+  // 膝に乗った文が最後のトーストとして残る
+  assert.deepEqual(toasts[toasts.length - 1], lap);
+  assert.deepEqual(lapStep.toasts, [lap]);
+  // ほっとしたトースト・効果、我慢の説明の吹き出しは出さない
+  assert.ok(!lapStep.toasts.some((t) => t.text === FEEDBACK.relief), 'ほっとしたトーストが出た');
+  assert.deepEqual(lapStep.effects.filter((e) => e === 'relief'), []);
+  assert.deepEqual(lapStep.bubbles, []);
+  assert.ok(!session.game.seenCards.includes('tip:patience'), 'seenCards に tip:patience が入った');
+});
+
+test('昼の画面：我慢できた update で、初めての様子のサイン説明（吹き出し）が出るときは、我慢の説明を出さずに次に我慢できたときに出す', async () => {
+  const { CARDS, FEEDBACK, withName } = await import('../src/data/texts.js');
+  const card = (key) => ({ title: withName(CARDS[key].title, 'たま'), body: withName(CARDS[key].body, 'たま') });
+  assert.ok(!CARDS['sign:tailUp'].pause, "CARDS['sign:tailUp'] は止めない吹き出し（このテストの前提）");
+  // 2日目の候補（甘えん坊の重み）：relax3, look2, tailUp2, tailFlick1×(1+警戒/50)。
+  // しっぽパタパタのあとは 0.7 → しっぽピン、それ以外のあとは 0.999 → しっぽパタパタ（候補の最後）
+  const pick = (cat) => (cat.mode === 'tailFlick' ? 0.7 : 0.999);
+  const { session, cards, step } = await patienceDayScene({
+    day: 2,
+    seenCards: Object.keys(CARDS).filter((k) => k !== 'tip:patience' && k !== 'sign:tailUp'),
+    pick,
+  });
+  const endings = [];
+  for (let i = 0; i < 2000 && endings.length < 2; i++) {
+    const s = step();
+    if (s.before === 'tailFlick' && s.after !== 'tailFlick') endings.push(s);
+  }
+  assert.equal(endings.length, 2, 'しっぽパタパタが2回終わる前に上限に達した（このテストの前提）');
+  const [first, second] = endings;
+  assert.equal(first.after, 'tailUp', '1回目のあとがしっぽピンでない（このテストの前提）');
+  assert.equal(second.after, 'tailUp', '2回目のあとがしっぽピンでない（このテストの前提）');
+
+  // 1回目：初めてのしっぽピンの説明だけが吹き出しで出る。我慢の説明は出さず、seenCards にも入れない
+  assert.deepEqual(first.bubbles, [card('sign:tailUp')]);
+  assert.ok(first.seenCards.includes('sign:tailUp'), 'seenCards に sign:tailUp が入っていない');
+  assert.ok(!first.seenCards.includes('tip:patience'), '1回目で seenCards に tip:patience が入った');
+  // ほっとしたトーストと効果は出す
+  assert.deepEqual(first.toasts, [{ text: FEEDBACK.relief, ms: 1600 }]);
+  assert.deepEqual(first.effects, ['relief']);
+
+  // 2回目：新しい説明は出ないので、我慢の説明の吹き出しが出る
+  assert.deepEqual(second.bubbles, [card('tip:patience')]);
+  assert.ok(session.game.seenCards.includes('tip:patience'), '2回目で seenCards に tip:patience が入っていない');
+  assert.deepEqual(second.toasts, [{ text: FEEDBACK.relief, ms: 1600 }]);
+  assert.deepEqual(second.effects, ['relief']);
+  assert.deepEqual(cards, []);
+});
+
+test('昼の画面：我慢できた update で、初めての様子の止めるカード（お腹見せ）が出るときも、その update では我慢の説明を出さない', async () => {
+  const { CARDS, withName } = await import('../src/data/texts.js');
+  const card = (key) => ({ title: withName(CARDS[key].title, 'たま'), body: withName(CARDS[key].body, 'たま') });
+  assert.ok(CARDS['sign:belly'].pause, "CARDS['sign:belly'] は止めるカード（このテストの前提）");
+  // 3日目・信頼0（距離の下限70なので、すり寄りは候補に入らない）。候補（甘えん坊の重み）：
+  // relax3, look2, tailUp2, tailFlick1×(1+警戒/50), belly1, backTurn1。
+  // しっぽパタパタのあとは 0.85 → お腹見せ、それ以外のあとは 0.75 → しっぽパタパタ
+  const pick = (cat) => (cat.mode === 'tailFlick' ? 0.85 : 0.75);
+  const { cards, step } = await patienceDayScene({
+    day: 3,
+    seenCards: Object.keys(CARDS).filter((k) => k !== 'tip:patience' && k !== 'sign:belly'),
+    pick,
+  });
+  let ending = null;
+  for (let i = 0; i < 2000 && !ending; i++) {
+    const s = step();
+    if (s.before === 'tailFlick' && s.after !== 'tailFlick') ending = s;
+  }
+  assert.ok(ending, 'しっぽパタパタが終わる前に上限に達した（このテストの前提）');
+  assert.equal(ending.after, 'belly', 'しっぽパタパタのあとがお腹見せでない（このテストの前提）');
+
+  assert.deepEqual(ending.cards, [card('sign:belly')]);
+  assert.deepEqual(cards, [card('sign:belly')]);
+  assert.deepEqual(ending.bubbles, []);
+  assert.ok(!ending.seenCards.includes('tip:patience'), 'seenCards に tip:patience が入った');
+});
+
+test('昼の画面：サイン説明の吹き出しが表示中（5秒未満）に我慢できても我慢の説明は出さず、表示時間が過ぎてから我慢できたときに出す', async () => {
+  const { CARDS, FEEDBACK, withName } = await import('../src/data/texts.js');
+  const card = (key) => ({ title: withName(CARDS[key].title, 'たま'), body: withName(CARDS[key].body, 'たま') });
+  assert.ok(!CARDS['sign:tailFlick'].pause, "CARDS['sign:tailFlick'] は止めない吹き出し（このテストの前提）");
+  // 2日目の候補（甘えん坊の重み）：relax3, look2, tailUp2, tailFlick1×(1+警戒/50)。
+  // しっぽパタパタのあとは 0 → くつろぎ（3秒）、それ以外のあとは 0.999 → しっぽパタパタ（候補の最後・約3秒）
+  const pick = (cat) => (cat.mode === 'tailFlick' ? 0 : 0.999);
+  const { session, cards, step } = await patienceDayScene({
+    day: 2,
+    seenCards: Object.keys(CARDS).filter((k) => k !== 'tip:patience' && k !== 'sign:tailFlick'),
+    pick,
+  });
+  const dt = 0.05;
+  let elapsed = 0;
+  let shownAt = null;
+  const endings = [];
+  for (let i = 0; i < 2000 && endings.length < 2; i++) {
+    const s = step(dt);
+    elapsed += dt;
+    if (s.bubbles.some((b) => b.title === CARDS['sign:tailFlick'].title)) shownAt = elapsed;
+    if (s.before === 'tailFlick' && s.after !== 'tailFlick') endings.push({ ...s, at: elapsed });
+  }
+  assert.ok(shownAt !== null, 'しっぽパタパタの説明が出ていない（このテストの前提）');
+  assert.equal(endings.length, 2, 'しっぽパタパタが2回終わる前に上限に達した（このテストの前提）');
+  const [first, second] = endings;
+  assert.ok(first.at - shownAt < 5, `1回目の我慢が説明から ${(first.at - shownAt).toFixed(2)} 秒後（このテストの前提）`);
+  assert.ok(second.at - shownAt >= 5, `2回目の我慢が説明から ${(second.at - shownAt).toFixed(2)} 秒後（このテストの前提）`);
+
+  // 1回目：説明の吹き出しが表示中なので、我慢の説明は出さず seenCards にも入れない。トーストと効果は出す
+  assert.deepEqual(first.bubbles, []);
+  assert.ok(!first.seenCards.includes('tip:patience'), '1回目で seenCards に tip:patience が入った');
+  assert.deepEqual(first.toasts, [{ text: FEEDBACK.relief, ms: 1600 }]);
+  assert.deepEqual(first.effects, ['relief']);
+
+  // 2回目：説明の表示時間が過ぎたので、我慢の説明の吹き出しが出る
+  assert.deepEqual(second.bubbles, [card('tip:patience')]);
+  assert.ok(session.game.seenCards.includes('tip:patience'), '2回目で seenCards に tip:patience が入っていない');
+  assert.deepEqual(second.toasts, [{ text: FEEDBACK.relief, ms: 1600 }]);
+  assert.deepEqual(second.effects, ['relief']);
+  assert.deepEqual(cards, []);
+});

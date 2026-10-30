@@ -33,10 +33,10 @@ flowchart TD
     DAY -->|"Action, CatState, DayState, Params"| RULES["行動の判定<br/>src/game/rules.js"]
     RULES -->|"ActionResult {CatState, DayState, feedback, mistake}"| DAY
 
-    DAY -->|"CatState, DayState, Personality, dt, rng"| BRAIN["時間経過：様子の切替・移動（くつろぎの間だけ歩く。下限に着いたら座り、下限が walkResumeGap 下がるまで待つ）・警戒と信頼の自然増減・膝の判定<br/>src/game/catBrain.js（tick）"]
-    BRAIN -->|"CatState（walking を含む）, DayState, enteredMode"| DAY
+    DAY -->|"CatState, DayState, Personality, dt, rng"| BRAIN["時間経過：様子の切替・移動（くつろぎの間だけ歩く。下限に着いたら座り、下限が walkResumeGap 下がるまで待つ）・警戒と信頼の自然増減・我慢のごほうび（お腹見せ・しっぽパタパタ・気まぐれすりすりを触らずにやり過ごしたら信頼+4）・膝の判定<br/>src/game/catBrain.js（tick）"]
+    BRAIN -->|"CatState（walking を含む）, DayState, enteredMode, endured（やり過ごせた様子。なければ null）"| DAY
 
-    DAY -->|"説明カード（止める）/ 吹き出し・ヒント・トースト（止めない）/ 日付"| OVERLAY["チュートリアル・説明カード・吹き出し・トースト<br/>src/ui/overlay.js"]
+    DAY -->|"説明カード（止める）/ 吹き出し・ヒント・トースト（止めない。我慢できたら「（ほっとしたみたい）」、初回だけ説明の吹き出し）/ 日付"| OVERLAY["チュートリアル・説明カード・吹き出し・トースト<br/>src/ui/overlay.js"]
     DAY -->|"鳴らす音（soundsFor：purr→ゴロゴロ / blinkBack→にゃーん / flee・kick→ぽふっ）。膝の上では直接ゴロゴロ（長め・大きめ）"| SOUND["効果音（WebAudioで合成・出口にリミッター）・振動・準備に失敗したら一度だけ知らせて効果音なしで続ける<br/>src/ui/sound.js"]
     MAIN -->|"ON/OFF"| SOUND
     MUSIC["BGMの選曲（左下の曲名をタップで次の曲／OFF）・端末に保存・音量（猫の声より約15dB小さく）・準備に失敗したら一度だけ知らせてBGMなしで続ける<br/>src/ui/music.js"] -->|"Song（再生・停止）"| BGMPLAY["BGMの再生<br/>src/ui/bgm.js（下の図）"]
@@ -61,7 +61,7 @@ flowchart TD
     DATA -->|"COAT_LORE（柄の言い伝え）・ENDINGS"| END
     DATA -->|"BGM_TEXT・曲データ（src/data/bgmSongs.js）"| MUSIC
 
-    DAY -->|"View {cat, wariness, blinkHoldMs, lapTime, dayTime（その日の進み具合 0〜1）}"| RENDER["猫・部屋・膝の描画（Canvas。お腹見せの手前の足は胴体に重ねる）・毛色・性格の仕草・見つめる合図（チラッ）・歩く姿と蛇行する道すじ・膝に跳び乗る・タイトルに戻るとき／夜に帰っていくときは猫がその場で消え、タイトルの位置／次の日の昼のスタート位置に現れる（フェード）・ページを開いた直後は猫をはじめからその場面の位置に置く・まばたきゲージ・足あと<br/>src/render/renderer.js"]
+    DAY -->|"View {cat, wariness, blinkHoldMs, lapTime, dayTime（その日の進み具合 0〜1）}"| RENDER["猫・部屋・膝の描画（Canvas。お腹見せの手前の足は胴体に重ねる）・毛色・性格の仕草・見つめる合図（チラッ）・歩く姿と蛇行する道すじ・膝に跳び乗る・タイトルに戻るとき／夜に帰っていくときは猫がその場で消え、タイトルの位置／次の日の昼のスタート位置に現れる（フェード）・ページを開いた直後は猫をはじめからその場面の位置に置く・まばたきゲージ・足あと・我慢できたときの「ほっ」（addEffect('relief')）<br/>src/render/renderer.js"]
     MAIN -->|"coat, personality, face（顔の形：輪郭4種×耳3種。FACE_SHAPES・EAR_SIZES）"| RENDER
     RENDER -->|"dayTime（タイトル・名前付けは朝）, 夜かどうか"| LIGHT["時間帯の景色：朝→昼→夕方→夜の空の色・太陽／月・部屋にかける薄い色（猫は染めない）・床の日だまり・スタンドライトの明るさ<br/>src/render/daylight.js（daylightAt）"]
     LIGHT -->|"Daylight {phase, skyTop, skyBottom, hill, cloud, tint, lamp, sun, patch}"| RENDER

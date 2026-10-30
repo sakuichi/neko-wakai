@@ -6,16 +6,20 @@ const clamp = (v) => Math.min(MAX_VALUE, Math.max(0, v));
 
 // 猫が歩いて近づくのは「くつろぎ」の間だけ。ほかの様子（座っている・寝ころぶ・逃げる）では、その場から動かない
 const WALK_MODES = ['relax'];
+// 触ると失敗するサイン。触らずに時間切れまでやり過ごせたら、我慢のごほうびで信頼が増える
+const PATIENCE_MODES = ['belly', 'tailFlick', 'fakeRub'];
 
 /**
- * @returns {{cat, day, enteredMode: string|null}} cat.walking は、この tick で歩いて近づいたか（描画で歩く姿にする）
+ * @returns {{cat, day, enteredMode: string|null, endured: string|null}} cat.walking は、この tick で歩いて近づいたか（描画で歩く姿にする）。
+ *   endured は、この tick で触らずにやり過ごせたサイン（なければ null）
  */
 export function tick(cat, day, personality, dt, rng) {
-  if (cat.mode === 'lap') return { cat, day, enteredMode: null };
+  if (cat.mode === 'lap') return { cat, day, enteredMode: null, endured: null };
 
   const prevMode = cat.mode;
   let c = { ...cat, walking: false };
   let d = { ...day, timeLeft: Math.max(0, day.timeLeft - dt) };
+  let endured = null;
 
   d.wariness = Math.max(0, d.wariness - RULES.warinessDecayPerSec * dt);
   const calm = d.wariness < RULES.calmThreshold;
@@ -40,20 +44,24 @@ export function tick(cat, day, personality, dt, rng) {
     c.modeTimeLeft -= dt;
     if (c.modeTimeLeft <= 0) {
       if (c.mode === 'rub') c.distance = clamp(c.distance + RULES.rubIgnoredDistance);
+      const ending = c.mode;
       c = pickNextMode(c, d, personality, rng);
+      // 次も同じサインなら、見た目は変わらず続いているので、まだやり過ごせていない
+      if (PATIENCE_MODES.includes(ending) && c.mode !== ending) endured = ending;
     }
   }
 
   let gain = 0;
   if (calm) gain += RULES.calmTrustPerSec * dt;
   if (prevMode === 'backTurn') gain += RULES.backTurnTrustPerSec * dt;
+  if (endured) gain += RULES.patienceTrust;
   d.trust = clamp(d.trust + gain * d.trustRate);
 
   if (d.canLap && d.trust >= MAX_VALUE && c.distance <= 0 && c.mode !== 'inBox') {
     c.mode = 'lap';
   }
 
-  return { cat: c, day: d, enteredMode: c.mode !== prevMode ? c.mode : null };
+  return { cat: c, day: d, enteredMode: c.mode !== prevMode ? c.mode : null, endured };
 }
 
 // 信頼に応じて、猫がそれ以上近づかない距離。bonus はおやつの日などに、いつもより近くまで来る分

@@ -800,3 +800,47 @@ test('タイトルに戻るとき、消える間は前の猫の顔、現れる�
     }
   }
 });
+
+// ---------------------------------------------------------------- 我慢のごほうび（「ほっ」）
+
+// 文字の描画（fillText）を、フレームごとに記録する偽の Canvas
+function textFrameCanvas() {
+  const frame = { texts: [] };
+  const ctx = new Proxy({}, {
+    get(target, key) {
+      if (key in target) return target[key];
+      if (key === 'fillText') return (text) => frame.texts.push(String(text));
+      return () => {};
+    },
+    set(target, key, value) {
+      target[key] = value;
+      return true;
+    },
+  });
+  const canvas = { width: 360, height: 640, getContext: () => ctx, getBoundingClientRect: () => ({ left: 0, top: 0, width: 360, height: 640 }) };
+  return { canvas, frame };
+}
+
+test('我慢のごほうびの効果（relief）を足した直後の昼の描画で「ほっ」が描かれ、2秒後には描かれない', () => {
+  const { canvas, frame } = textFrameCanvas();
+  const r = createRenderer(canvas);
+  const view = { scene: 'day', cat: { mode: 'relax', distance: 50 } };
+  const dt = 0.05;
+  // 何フレームか描いてから、効果を足す
+  for (let t = 1; t < 1.5; t += dt) r.draw(view, t, dt);
+  frame.texts = [];
+  r.draw(view, 1.5, dt);
+  assert.ok(!frame.texts.includes('ほっ'), '効果を足す前から「ほっ」が描かれている（このテストの前提）');
+  r.addEffect('relief');
+  frame.texts = [];
+  r.draw(view, 1.5 + dt, dt);
+  assert.ok(frame.texts.includes('ほっ'), `直後のフレームに「ほっ」がない: ${frame.texts.join(' / ')}`);
+  // 2秒後まで描き進める
+  let t = 1.5 + dt;
+  while (t < 3.5) {
+    t += dt;
+    frame.texts = [];
+    r.draw(view, t, dt);
+  }
+  assert.ok(!frame.texts.includes('ほっ'), `2秒後にも「ほっ」が描かれている: ${frame.texts.join(' / ')}`);
+});

@@ -44,7 +44,7 @@ export const TUTORIAL = {
   flee: '焦りは禁物。猫は追いかけるほど逃げる',
 };
 
-// 説明。キーは 'action:xxx' 'sign:xxx' 'day:xxx'
+// 説明。キーは 'action:xxx' 'sign:xxx' 'day:xxx' 'tip:xxx'
 // pause: true はゲームを一時停止するカード（遊び方が変わるもの・触ると失敗するのに触りたくなるもの）。
 // それ以外は、ゲームを止めない吹き出しで出す
 export const CARDS = {
@@ -97,6 +97,10 @@ export const CARDS = {
     title: '猫のサイン：気まぐれすりすり',
     body: 'すり寄ってきた……けど、しっぽがパタパタしている。\n猫の気は変わりやすい。しっぽをよく見よう。',
   },
+  'tip:patience': {
+    title: 'がまんできた',
+    body: '触らずに見守ったので、{name}は少し安心したみたい。\nイライラやお腹見せは、やり過ごすだけで仲良くなれる。',
+  },
 };
 
 // 同じ様子で2回失敗したときに出すヒント（吹き出し）。キーは失敗したときの猫の様子
@@ -119,6 +123,8 @@ export const FEEDBACK = {
   blinkBack: '（ゆっくりまばたきを返してくれた）',
   purr: 'ゴロゴロ……',
   tooFar: '（手が届かない……）',
+  // 触ると失敗するサインを、触らずにやり過ごせたとき
+  relief: '（ほっとしたみたい）',
 };
 
 export const LAP_TEXT = '{name}が、膝に乗ってきた……！';

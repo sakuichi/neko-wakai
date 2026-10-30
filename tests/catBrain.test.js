@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { tick, distanceFloor } from '../src/game/catBrain.js';
+import { applyAction } from '../src/game/rules.js';
 import { RULES, PERSONALITIES, DAYS } from '../src/data/params.js';
 import { createRng } from '../src/util/rng.js';
 import { makeDay, makeCat, fixedRng } from './helpers.js';
@@ -238,4 +239,105 @@ test('下限から十分遠い猫は、歩いていたかどうかが分から�
   const r = tick(cat, day, tsundere, STEP, rng);
   assert.equal(r.cat.walking, true);
   assert.ok(r.cat.distance < 90);
+});
+
+// ---------------------------------------------------------------- 我慢のごほうび（触ると失敗するサインを、触らずにやり過ごす）
+
+// 小数の足し算の順番で、ごくわずかにずれてもよいように比べる
+function assertTrust(actual, expected, message) {
+  assert.ok(Math.abs(actual - expected) < 1e-9, `${message ?? ''} 信頼 ${actual}（期待 ${expected}）`);
+}
+function patienceTrust() {
+  assert.equal(typeof RULES.patienceTrust, 'number', 'RULES.patienceTrust がない');
+  assert.ok(RULES.patienceTrust > 0, 'RULES.patienceTrust は 0 より大きい数');
+  return RULES.patienceTrust;
+}
+// 落ち着いている（警戒 0）日。膝に乗らないように、信頼は低め・猫は離れたところにいる
+const calmDay = (overrides = {}) => makeDay({ trust: 10, wariness: 0, timeLeft: 30, ...overrides });
+
+test('お腹見せの時間がこの tick で尽きると、信頼が落ち着きの分 + RULES.patienceTrust 増え、endured が belly になる', () => {
+  const P = patienceTrust();
+  const r = tick(makeCat({ mode: 'belly', distance: 50, modeTimeLeft: 0.5 }), calmDay(), tsundere, 1, rng);
+  assert.equal(r.endured, 'belly');
+  assertTrust(r.day.trust, 10 + RULES.calmTrustPerSec * 1 + P);
+});
+
+test('しっぽパタパタ・気まぐれすりすりも、時間切れで終わると我慢のごほうびが出る', () => {
+  const P = patienceTrust();
+  const flick = tick(makeCat({ mode: 'tailFlick', distance: 50, modeTimeLeft: 0.5 }), calmDay(), tsundere, 1, rng);
+  assert.equal(flick.endured, 'tailFlick');
+  assertTrust(flick.day.trust, 10 + RULES.calmTrustPerSec * 1 + P, 'tailFlick:');
+  // 気まぐれすりすりは4日目からのサイン
+  const fake = tick(makeCat({ mode: 'fakeRub', distance: 20, modeTimeLeft: 0.5 }), calmDay({ signs: DAYS[3].signs }), tsundere, 1, rng);
+  assert.equal(fake.endured, 'fakeRub');
+  assertTrust(fake.day.trust, 10 + RULES.calmTrustPerSec * 1 + P, 'fakeRub:');
+});
+
+test('おやつの日（trustRate 0.85）は、我慢のごほうびにも trustRate がかかる', () => {
+  const P = patienceTrust();
+  const r = tick(makeCat({ mode: 'belly', distance: 50, modeTimeLeft: 0.5 }), calmDay({ trustRate: 0.85 }), tsundere, 1, rng);
+  assert.equal(r.endured, 'belly');
+  assertTrust(r.day.trust, 10 + (RULES.calmTrustPerSec * 1 + P) * 0.85);
+});
+
+test('サインの途中（残り時間がまだある）では、我慢のごほうびは出ず endured は null', () => {
+  for (const [mode, signs] of [['belly', undefined], ['tailFlick', undefined], ['fakeRub', DAYS[3].signs]]) {
+    const day = signs ? calmDay({ signs }) : calmDay();
+    const r = tick(makeCat({ mode, distance: 20, modeTimeLeft: 3 }), day, tsundere, 1, rng);
+    assert.equal(r.cat.mode, mode, `${mode}: 様子が変わった（このテストの前提）`);
+    assert.equal(r.endured, null, mode);
+    assertTrust(r.day.trust, 10 + RULES.calmTrustPerSec * 1, `${mode}:`);
+  }
+});
+
+test('触ると失敗するサイン以外の様子が時間切れで終わっても、我慢のごほうびは出ず endured は null', () => {
+  for (const mode of ['relax', 'look', 'tailUp', 'backTurn', 'rub', 'purr', 'flee']) {
+    const r = tick(makeCat({ mode, distance: 20, modeTimeLeft: 0.5 }), calmDay(), tsundere, 1, rng);
+    assert.equal(r.endured, null, mode);
+    // 背中を向けて座っている間は、従来どおり backTurnTrustPerSec の分だけ増える
+    const backTurn = mode === 'backTurn' ? RULES.backTurnTrustPerSec * 1 : 0;
+    assertTrust(r.day.trust, 10 + RULES.calmTrustPerSec * 1 + backTurn, `${mode}:`);
+  }
+});
+
+test('お腹見せ中になでて逃げられたら、逃げ終わるまで待っても我慢のごほうびは出ない', () => {
+  const P = patienceTrust();
+  const pet = applyAction({ type: 'pet' }, makeCat({ mode: 'belly', distance: 50, modeTimeLeft: 2 }), calmDay(), tsundere);
+  assert.equal(pet.cat.mode, 'flee', '逃げていない（このテストの前提）');
+  let { cat, day } = pet;
+  let expected = day.trust;
+  const dt = 0.1;
+  let n = 0;
+  for (; n < 50 && cat.mode === 'flee'; n++) {
+    const r = tick(cat, day, tsundere, dt, rng);
+    assert.equal(r.endured, null, `${n + 1} tick 目`);
+    if (r.day.wariness < RULES.calmThreshold) expected += RULES.calmTrustPerSec * dt;
+    ({ cat, day } = r);
+  }
+  assert.notEqual(cat.mode, 'flee', '逃げ終わる前に上限に達した（このテストの前提）');
+  assertTrust(day.trust, expected);
+  assert.ok(day.trust < pet.day.trust + P, `信頼 ${day.trust} に我慢のごほうびが足されている`);
+});
+
+test('我慢のごほうびでも、信頼は 100 を超えない', () => {
+  patienceTrust();
+  const r = tick(makeCat({ mode: 'belly', distance: 50, modeTimeLeft: 0.5 }), calmDay({ trust: 99 }), tsundere, 1, rng);
+  assert.equal(r.endured, 'belly');
+  assert.equal(r.day.trust, 100);
+});
+
+test('しっぽパタパタが時間切れで終わっても、次の様子もしっぽパタパタなら、まだ我慢のごほうびは出ず、別の様子に変わったときに1回だけ出る', () => {
+  const P = patienceTrust();
+  // 3日目・距離50（すり寄りは候補に入らない）・警戒0。候補（ツンデレの重み）：
+  // relax3, look2, tailUp1, tailFlick1, belly3, backTurn1（計11）。0.59 → tailFlick、0 → relax
+  const first = tick(makeCat({ mode: 'tailFlick', distance: 50, modeTimeLeft: 0.5 }), calmDay(), tsundere, 1, fixedRng(0.59));
+  assert.equal(first.cat.mode, 'tailFlick', '次もしっぽパタパタになっていない（このテストの前提）');
+  assert.equal(first.endured, null);
+  assertTrust(first.day.trust, 10 + RULES.calmTrustPerSec * 1, '1回目:');
+
+  // 続きのしっぽパタパタ（2〜3秒）が終わって、くつろぎに変わる
+  const second = tick(first.cat, first.day, tsundere, 3, fixedRng(0));
+  assert.equal(second.cat.mode, 'relax', 'くつろぎに変わっていない（このテストの前提）');
+  assert.equal(second.endured, 'tailFlick');
+  assertTrust(second.day.trust, 10 + RULES.calmTrustPerSec * 4 + P, '2回目:');
 });

@@ -287,7 +287,7 @@ export function createRenderer(canvas) {
         personality: look.personality,
         wariness: look.wariness,
       });
-      drawEffects(g, t);
+      drawEffects(g, t, p.s);
       g.restore();
     });
     if (!onLap) lap();
@@ -361,7 +361,7 @@ export function createRenderer(canvas) {
     return u >= 0 && u < 1 ? Math.sin(u * Math.PI) : 0;
   }
 
-  function drawEffects(ctx, t) {
+  function drawEffects(ctx, t, scale) {
     for (const e of a.effects) {
       const u = t - e.t0;
       if (e.type === 'purr' || e.type === 'blinkBack') {
@@ -376,6 +376,8 @@ export function createRenderer(canvas) {
         burst(ctx, -45, -70, u / 0.5);
       } else if (e.type === 'stare' && u < 1.2) {
         sweat(ctx, 44, -118, u);
+      } else if (e.type === 'relief' && u < RELIEF_SEC) {
+        reliefCue(ctx, u, scale);
       }
     }
   }
@@ -1272,6 +1274,22 @@ function lookCue(ctx, k) {
   ctx.fillStyle = C.line;
   ctx.font = 'bold 14px sans-serif';
   ctx.fillText('チラッ', (1 - u) * -6, 0);
+  ctx.restore();
+}
+
+// 触ると失敗するサインを、触らずにやり過ごせたときの合図：頭の左上に「ほっ」と出て、ふわっと上がって消える。
+// 右側は「チラッ」・怒りマークの場所なので、反対側に出す
+const RELIEF_SEC = 1.2;
+function reliefCue(ctx, u, scale = 1) {
+  const fit = Math.max(1, 0.85 / scale);
+  const [dx, dy] = cueShift();
+  ctx.save();
+  ctx.translate(-86 - dx, -118 + dy - (u / RELIEF_SEC) * 14);
+  ctx.scale(fit, fit);
+  ctx.globalAlpha = 0.85 * Math.min(1, u / 0.15) * (1 - Math.max(0, (u - 0.7) / (RELIEF_SEC - 0.7)));
+  ctx.fillStyle = C.line;
+  ctx.font = 'bold 14px sans-serif';
+  ctx.fillText('ほっ', 0, 0);
   ctx.restore();
 }
 

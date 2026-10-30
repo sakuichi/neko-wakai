@@ -16,14 +16,17 @@ __modules['src/data/params.js'] = (() => {
     warinessDecayPerSec: 5,
     // 警戒がこれ未満のとき、猫は近づき、落ち着いて一緒にいる分だけ信頼が増える
     calmThreshold: 30,
-    calmTrustPerSec: 0.35,
+    // 我慢のごほうび（patienceTrust）を足したぶん、待つだけで増える量を下げて、和解までの日数を前と同じくらいにしている
+    calmTrustPerSec: 0.25,
     // 背中を向けて座っている間、1秒ごとに増える信頼
     backTurnTrustPerSec: 1.5,
+    // 触ると失敗するサイン（お腹見せ・しっぽパタパタ・気まぐれすりすり）を、触らずにやり過ごせたら増える信頼
+    patienceTrust: 4,
 
     // 距離の下限は「100 − 信頼 − この値」。信頼が低くても、ある程度までは近づいてくる
     distanceFloorOffset: 30,
     // 下限に着いて座った猫が、また歩き出すまでの余裕（下限がこれだけ下がったら歩く）。
-    // 毎フレーム少しずつ寄ると、止まったまま足踏みして見えるので、まとめて歩かせる（信頼 0.35/秒 なら約11秒ごと）
+    // 毎フレーム少しずつ寄ると、止まったまま足踏みして見えるので、まとめて歩かせる（信頼 0.25/秒 なら約16秒ごと。我慢やまばたきで信頼が増えると、すぐ歩く）
     walkResumeGap: 4,
 
     // missWariness: 目が合っていないのにゆっくりまばたきしたときの警戒（連打対策）
@@ -638,7 +641,7 @@ __modules['src/render/renderer.js'] = (() => {
           personality: look.personality,
           wariness: look.wariness,
         });
-        drawEffects(g, t);
+        drawEffects(g, t, p.s);
         g.restore();
       });
       if (!onLap) lap();
@@ -712,7 +715,7 @@ __modules['src/render/renderer.js'] = (() => {
       return u >= 0 && u < 1 ? Math.sin(u * Math.PI) : 0;
     }
 
-    function drawEffects(ctx, t) {
+    function drawEffects(ctx, t, scale) {
       for (const e of a.effects) {
         const u = t - e.t0;
         if (e.type === 'purr' || e.type === 'blinkBack') {
@@ -727,6 +730,8 @@ __modules['src/render/renderer.js'] = (() => {
           burst(ctx, -45, -70, u / 0.5);
         } else if (e.type === 'stare' && u < 1.2) {
           sweat(ctx, 44, -118, u);
+        } else if (e.type === 'relief' && u < RELIEF_SEC) {
+          reliefCue(ctx, u, scale);
         }
       }
     }
@@ -1626,6 +1631,22 @@ __modules['src/render/renderer.js'] = (() => {
     ctx.restore();
   }
 
+  // 触ると失敗するサインを、触らずにやり過ごせたときの合図：頭の左上に「ほっ」と出て、ふわっと上がって消える。
+  // 右側は「チラッ」・怒りマークの場所なので、反対側に出す
+  const RELIEF_SEC = 1.2;
+  function reliefCue(ctx, u, scale = 1) {
+    const fit = Math.max(1, 0.85 / scale);
+    const [dx, dy] = cueShift();
+    ctx.save();
+    ctx.translate(-86 - dx, -118 + dy - (u / RELIEF_SEC) * 14);
+    ctx.scale(fit, fit);
+    ctx.globalAlpha = 0.85 * Math.min(1, u / 0.15) * (1 - Math.max(0, (u - 0.7) / (RELIEF_SEC - 0.7)));
+    ctx.fillStyle = C.line;
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('ほっ', 0, 0);
+    ctx.restore();
+  }
+
   function exclaim(ctx, x, y) {
     ctx.save();
     ctx.fillStyle = C.red;
@@ -1927,7 +1948,7 @@ __modules['src/data/texts.js'] = (() => {
     flee: '焦りは禁物。猫は追いかけるほど逃げる',
   };
 
-  // 説明。キーは 'action:xxx' 'sign:xxx' 'day:xxx'
+  // 説明。キーは 'action:xxx' 'sign:xxx' 'day:xxx' 'tip:xxx'
   // pause: true はゲームを一時停止するカード（遊び方が変わるもの・触ると失敗するのに触りたくなるもの）。
   // それ以外は、ゲームを止めない吹き出しで出す
   const CARDS = {
@@ -1980,6 +2001,10 @@ __modules['src/data/texts.js'] = (() => {
       title: '猫のサイン：気まぐれすりすり',
       body: 'すり寄ってきた……けど、しっぽがパタパタしている。\n猫の気は変わりやすい。しっぽをよく見よう。',
     },
+    'tip:patience': {
+      title: 'がまんできた',
+      body: '触らずに見守ったので、{name}は少し安心したみたい。\nイライラやお腹見せは、やり過ごすだけで仲良くなれる。',
+    },
   };
 
   // 同じ様子で2回失敗したときに出すヒント（吹き出し）。キーは失敗したときの猫の様子
@@ -2002,6 +2027,8 @@ __modules['src/data/texts.js'] = (() => {
     blinkBack: '（ゆっくりまばたきを返してくれた）',
     purr: 'ゴロゴロ……',
     tooFar: '（手が届かない……）',
+    // 触ると失敗するサインを、触らずにやり過ごせたとき
+    relief: '（ほっとしたみたい）',
   };
 
   const LAP_TEXT = '{name}が、膝に乗ってきた……！';
@@ -2113,16 +2140,20 @@ __modules['src/game/catBrain.js'] = (() => {
 
   // 猫が歩いて近づくのは「くつろぎ」の間だけ。ほかの様子（座っている・寝ころぶ・逃げる）では、その場から動かない
   const WALK_MODES = ['relax'];
+  // 触ると失敗するサイン。触らずに時間切れまでやり過ごせたら、我慢のごほうびで信頼が増える
+  const PATIENCE_MODES = ['belly', 'tailFlick', 'fakeRub'];
 
   /**
-   * @returns {{cat, day, enteredMode: string|null}} cat.walking は、この tick で歩いて近づいたか（描画で歩く姿にする）
+   * @returns {{cat, day, enteredMode: string|null, endured: string|null}} cat.walking は、この tick で歩いて近づいたか（描画で歩く姿にする）。
+   *   endured は、この tick で触らずにやり過ごせたサイン（なければ null）
    */
   function tick(cat, day, personality, dt, rng) {
-    if (cat.mode === 'lap') return { cat, day, enteredMode: null };
+    if (cat.mode === 'lap') return { cat, day, enteredMode: null, endured: null };
 
     const prevMode = cat.mode;
     let c = { ...cat, walking: false };
     let d = { ...day, timeLeft: Math.max(0, day.timeLeft - dt) };
+    let endured = null;
 
     d.wariness = Math.max(0, d.wariness - RULES.warinessDecayPerSec * dt);
     const calm = d.wariness < RULES.calmThreshold;
@@ -2147,20 +2178,24 @@ __modules['src/game/catBrain.js'] = (() => {
       c.modeTimeLeft -= dt;
       if (c.modeTimeLeft <= 0) {
         if (c.mode === 'rub') c.distance = clamp(c.distance + RULES.rubIgnoredDistance);
+        const ending = c.mode;
         c = pickNextMode(c, d, personality, rng);
+        // 次も同じサインなら、見た目は変わらず続いているので、まだやり過ごせていない
+        if (PATIENCE_MODES.includes(ending) && c.mode !== ending) endured = ending;
       }
     }
 
     let gain = 0;
     if (calm) gain += RULES.calmTrustPerSec * dt;
     if (prevMode === 'backTurn') gain += RULES.backTurnTrustPerSec * dt;
+    if (endured) gain += RULES.patienceTrust;
     d.trust = clamp(d.trust + gain * d.trustRate);
 
     if (d.canLap && d.trust >= MAX_VALUE && c.distance <= 0 && c.mode !== 'inBox') {
       c.mode = 'lap';
     }
 
-    return { cat: c, day: d, enteredMode: c.mode !== prevMode ? c.mode : null };
+    return { cat: c, day: d, enteredMode: c.mode !== prevMode ? c.mode : null, endured };
   }
 
   // 信頼に応じて、猫がそれ以上近づかない距離。bonus はおやつの日などに、いつもより近くまで来る分
@@ -3524,6 +3559,9 @@ __modules['src/scenes/dayScene.js'] = (() => {
   const LAP_PURR_AT = 2.6;
   // 同じ様子でこの回数失敗したら、ヒントを出す
   const HINT_AFTER = 2;
+  // 説明・ヒントの吹き出しを出しておく時間（秒。説明は src/ui/overlay.js の bubble の決まりの長さ）
+  const BUBBLE_SEC = 5;
+  const HINT_SEC = 6;
 
   // 猫の反応（feedback）ごとに鳴らす効果音（src/ui/sound.js のメソッド名）
   const SOUNDS = { purr: ['purr'], blinkBack: ['meow'], flee: ['bump'], kick: ['bump'] };
@@ -3541,6 +3579,8 @@ __modules['src/scenes/dayScene.js'] = (() => {
     // まばたきボタンを押している間に、一度でも目が合ったか
     let sawLook = false;
     const tut = { wait: false, approach: false, flee: false };
+    // 説明・ヒントの吹き出しが出ている間（昼の経過時間で、この時刻まで）。我慢の説明で消さないように使う
+    let bubbleUntil = 0;
     // あとで出す予定のトースト（途中でやめたら取り消す）
     const timers = [];
 
@@ -3548,18 +3588,26 @@ __modules['src/scenes/dayScene.js'] = (() => {
     const text = (s) => withName(s, session.game.catName);
     const textCard = (c) => ({ title: text(c.title), body: text(c.body) });
 
+    // 出したら true
     function showCardOnce(key) {
       const card = CARDS[key];
-      if (!card || session.game.seenCards.includes(key)) return;
+      if (!card || session.game.seenCards.includes(key)) return false;
       session.game = { ...session.game, seenCards: [...session.game.seenCards, key] };
       if (card.pause) overlay.card(textCard(card));
-      else overlay.bubble(textCard(card));
+      else {
+        overlay.bubble(textCard(card));
+        bubbleUntil = elapsed + BUBBLE_SEC;
+      }
+      return true;
     }
 
     // 同じ失敗を繰り返したら、1回だけヒントを出す
     function countMiss(key) {
       session.misses[key] = (session.misses[key] ?? 0) + 1;
-      if (session.misses[key] === HINT_AFTER && HINTS[key]) overlay.bubble(textCard(HINTS[key]), 6000);
+      if (session.misses[key] === HINT_AFTER && HINTS[key]) {
+        overlay.bubble(textCard(HINTS[key]), HINT_SEC * 1000);
+        bubbleUntil = elapsed + HINT_SEC;
+      }
     }
 
     overlay.splash(`${day.dayNumber}日目`, DAY_TITLES[day.dayNumber]);
@@ -3619,12 +3667,21 @@ __modules['src/scenes/dayScene.js'] = (() => {
         cat = r.cat;
         day = r.day;
         if (input.holdMs() > 0 && cat.mode === 'look') sawLook = true;
+        let explained = false;
         if (r.enteredMode === 'lap') {
           hud.show(false);
           input.setBlinkEnabled(false);
           overlay.toast(text(LAP_TEXT), 3200);
         } else if (r.enteredMode) {
-          showCardOnce(`sign:${r.enteredMode}`);
+          explained = showCardOnce(`sign:${r.enteredMode}`);
+        }
+        // 触ると失敗するサインを、触らずにやり過ごせた。膝に乗った瞬間は、膝に乗った文だけを見せる。
+        // 新しいサインの説明が同じときに出たり、説明・ヒントの吹き出しがまだ出ていたりしたら、
+        // 我慢の説明はそれを消さないように次の機会に回す
+        if (r.endured && r.enteredMode !== 'lap') {
+          overlay.toast(FEEDBACK.relief, 1600);
+          renderer.addEffect('relief');
+          if (!explained && elapsed >= bubbleUntil) showCardOnce('tip:patience');
         }
         if (day.dayNumber === 1) {
           if (!tut.wait && elapsed > 3) {
