@@ -162,14 +162,149 @@ __modules['src/data/params.js'] = (() => {
   return { MAX_VALUE, MAX_DAY, RULES, DAYS, DAYLIGHT, FACES, NIGHT, PERSONALITIES, DEFAULT_PERSONALITY, COAT_PERSONALITY };
 })();
 
+// ---- src/game/rules.js
+__modules['src/game/rules.js'] = (() => {
+  // プレイヤーの行動（なでる・まばたき）を判定する。描画や入力には依存しない。
+  const { RULES, MAX_VALUE } = __modules['src/data/params.js'];
+
+  const clamp = (v) => Math.min(MAX_VALUE, Math.max(0, v));
+
+  // 不正解のなで方 → 上がる警戒
+  const WRONG_PET_WARINESS = {
+    relax: RULES.pet.relaxWariness,
+    look: RULES.pet.relaxWariness,
+    backTurn: RULES.pet.relaxWariness,
+    tailFlick: RULES.pet.tailFlickWariness,
+    belly: RULES.pet.bellyWariness,
+    fakeRub: RULES.pet.fakeRubWariness,
+  };
+
+  // なでると猫キックが返ってくる様子
+  const KICK_MODES = ['belly', 'fakeRub'];
+
+  /**
+   * @returns {{cat, day, feedback: 'flee'|'kick'|'hide'|'stare'|'blinkBack'|'blinkAway'|'purr'|'timid'|'tooFar'|null, mistake: boolean}}
+   */
+  // action: { type: 'pet' } または { type: 'blink', holdMs, sawLook }（sawLook = 押している間に目が合ったか）
+  function applyAction(action, cat, day, personality) {
+    const none = { cat, day, feedback: null, mistake: false };
+    if (!day.actions.includes(action.type)) return none;
+
+    if (action.type === 'blink') {
+      const slow = action.holdMs >= RULES.blink.minHoldMs && action.holdMs <= RULES.blink.maxHoldMs;
+      if (!slow || cat.mode === 'lap') return none;
+      // 押している間に一度でも目が合っていれば成功（離す前に様子が変わっても失敗にしない）
+      const eyeContact = cat.mode === 'look' || action.sawLook;
+      if (!eyeContact) {
+        // 目が合っていないのに見つめてくる人は、ちょっと落ち着かない
+        return {
+          cat,
+          day: { ...day, wariness: clamp(day.wariness + RULES.blink.missWariness * personality.warinessMul) },
+          feedback: 'stare',
+          mistake: false,
+        };
+      }
+      const relaxed = { ...cat, mode: 'relax', modeTimeLeft: RULES.modeSec.relax[0] };
+      if (isShy(day.trust, personality, day.dere)) {
+        // ツンの間は、見つめ合うと照れて目をそらす。焦って手を出したわけではないので、ミスには数えない
+        return { cat: relaxed, day: { ...day, trust: clamp(day.trust - RULES.blink.shyPenalty) }, feedback: 'blinkAway', mistake: false };
+      }
+      return {
+        cat: relaxed,
+        day: gainTrust(day, RULES.blink.trust * personality.likes.blink * blinkReach(cat.distance)),
+        feedback: 'blinkBack',
+        mistake: false,
+      };
+    }
+
+    // 以下は pet
+    if (cat.mode === 'rub') {
+      return petted(cat, day, RULES.pet.rubTrust, personality);
+    }
+    if (cat.mode === 'tailUp') {
+      if (cat.distance > RULES.pet.tailUpReach) return { ...none, feedback: 'tooFar' };
+      return petted(cat, day, RULES.pet.tailUpTrust, personality);
+    }
+    if (cat.mode === 'inBox') {
+      return {
+        cat,
+        day: scare(day, RULES.pet.relaxWariness, personality),
+        feedback: 'hide',
+        mistake: true,
+      };
+    }
+    const wariness = WRONG_PET_WARINESS[cat.mode];
+    if (wariness === undefined) return none; // flee / purr / lap 中は何も起きない
+    return {
+      cat: { ...cat, mode: 'flee', modeTimeLeft: RULES.fleeSec, distance: clamp(cat.distance + RULES.fleeDistance) },
+      day: scare(day, wariness, personality),
+      feedback: KICK_MODES.includes(cat.mode) ? 'kick' : 'flee',
+      mistake: true,
+    };
+  }
+
+  // 手がこわい猫（timidHands）は、信頼が timidUntil 未満の間、なでられるとビクビクする。
+  // handsOk：一度平気になったら、焦って触って信頼が下がっても、もうこわがらない
+  function isTimid(trust, personality, handsOk = false) {
+    return !handsOk && !!personality.timidHands && trust < personality.timidUntil;
+  }
+
+  // 信頼が性格の shyUntil 未満の間は、まばたきに照れる（ツン）
+  // dere：一度デレたら、焦って触って信頼が下がっても、もうツンには戻らない
+  function isShy(trust, personality, dere = false) {
+    return !dere && trust < (personality.shyUntil ?? 0);
+  }
+
+  // 遠くからのまばたきは、近くからより効きにくい
+  function blinkReach(distance) {
+    const { from, min } = RULES.blink.far;
+    if (distance <= from) return 1;
+    return Math.max(min, 1 - ((1 - min) * (distance - from)) / (MAX_VALUE - from));
+  }
+
+  function gainTrust(day, amount) {
+    return { ...day, trust: clamp(day.trust + amount * day.trustRate) };
+  }
+
+  // 焦って触った（ミス）。警戒が上がり、信頼も少し減る
+  function scare(day, amount, personality) {
+    return {
+      ...day,
+      trust: clamp(day.trust - RULES.mistakeTrust),
+      wariness: clamp(day.wariness + amount * personality.warinessMul),
+      mistakes: day.mistakes + 1,
+    };
+  }
+
+  // なでて喜ばれた（すり寄り・しっぽピン）。手がこわい猫（timidHands）は、信頼が timidUntil になるまでは、
+  // なでさせてはくれるが、ゴロゴロではなくビクビクする（効きは likes.pet 倍）。平気になったら、ふつうに効く
+  function petted(cat, day, amount, personality) {
+    const timid = isTimid(day.trust, personality, day.handsOk);
+    const mul = personality.timidHands && !timid ? 1 : personality.likes.pet;
+    return purr(cat, gainTrust(day, amount * mul), timid);
+  }
+
+  function purr(cat, day, timid) {
+    return {
+      cat: { ...cat, mode: 'purr', modeTimeLeft: RULES.purrSec },
+      day,
+      feedback: timid ? 'timid' : 'purr',
+      mistake: false,
+    };
+  }
+  return { applyAction, isTimid, isShy };
+})();
+
 // ---- src/game/progression.js
 __modules['src/game/progression.js'] = (() => {
   // 日の進行・夜の選択の効果・エンディング判定。描画や入力には依存しない。
   const { DAYS, NIGHT, PERSONALITIES, MAX_DAY, MAX_VALUE, DEFAULT_PERSONALITY, COAT_PERSONALITY, FACES } = __modules['src/data/params.js'];
+  const { isShy, isTimid } = __modules['src/game/rules.js'];
 
   // catName は1日目の最初にプレイヤーが付ける。coat は毛色（src/render/renderer.js の COATS のキー）、face は顔の形（chooseFace）
   function createGame({ personality = DEFAULT_PERSONALITY, seed = Date.now(), coat = 'chatora', face = { shape: 'mochi', ears: 'normal' } } = {}) {
-    return { day: 1, trust: 0, personality, coat, face, catName: null, nightChoice: null, mistakes: 0, seed, seenCards: [] };
+    // dere・handsOk：ツンデレがデレた・ビビりの手が平気になったか（一度なったら戻らない。src/game/rules.js の isShy・isTimid）
+    return { day: 1, trust: 0, personality, coat, face, catName: null, nightChoice: null, mistakes: 0, seed, seenCards: [], dere: false, handsOk: false };
   }
 
   /**
@@ -218,6 +353,9 @@ __modules['src/game/progression.js'] = (() => {
       signs: def.signs,
       canLap: def.canLap,
       approachMul: def.approachMul,
+      // 夜のあいだ（おやつなど）に信頼が境目を越えていたら、その日は最初からデレて・平気になっている
+      dere: !!game.dere || !isShy(game.trust, p),
+      handsOk: !!game.handsOk || !isTimid(game.trust, p),
     };
     const cat = { mode: 'relax', distance: MAX_VALUE, modeTimeLeft: 3 };
 
@@ -241,7 +379,13 @@ __modules['src/game/progression.js'] = (() => {
    * @returns {{game, next: 'night'|'ending', endingId: string|null}}
    */
   function finishDay(game, dayResult) {
-    const g = { ...game, trust: dayResult.trust, mistakes: game.mistakes + dayResult.mistakes };
+    const g = {
+      ...game,
+      trust: dayResult.trust,
+      mistakes: game.mistakes + dayResult.mistakes,
+      dere: dayResult.dere ?? game.dere,
+      handsOk: dayResult.handsOk ?? game.handsOk,
+    };
     if (dayResult.lapped || game.day >= MAX_DAY) {
       return { game: g, next: 'ending', endingId: endingFor(game.day, dayResult.lapped) };
     }
@@ -3513,137 +3657,6 @@ __modules['src/scenes/nameScene.js'] = (() => {
   return { namePicks, createNameScene };
 })();
 
-// ---- src/game/rules.js
-__modules['src/game/rules.js'] = (() => {
-  // プレイヤーの行動（なでる・まばたき）を判定する。描画や入力には依存しない。
-  const { RULES, MAX_VALUE } = __modules['src/data/params.js'];
-
-  const clamp = (v) => Math.min(MAX_VALUE, Math.max(0, v));
-
-  // 不正解のなで方 → 上がる警戒
-  const WRONG_PET_WARINESS = {
-    relax: RULES.pet.relaxWariness,
-    look: RULES.pet.relaxWariness,
-    backTurn: RULES.pet.relaxWariness,
-    tailFlick: RULES.pet.tailFlickWariness,
-    belly: RULES.pet.bellyWariness,
-    fakeRub: RULES.pet.fakeRubWariness,
-  };
-
-  // なでると猫キックが返ってくる様子
-  const KICK_MODES = ['belly', 'fakeRub'];
-
-  /**
-   * @returns {{cat, day, feedback: 'flee'|'kick'|'hide'|'stare'|'blinkBack'|'blinkAway'|'purr'|'timid'|'tooFar'|null, mistake: boolean}}
-   */
-  // action: { type: 'pet' } または { type: 'blink', holdMs, sawLook }（sawLook = 押している間に目が合ったか）
-  function applyAction(action, cat, day, personality) {
-    const none = { cat, day, feedback: null, mistake: false };
-    if (!day.actions.includes(action.type)) return none;
-
-    if (action.type === 'blink') {
-      const slow = action.holdMs >= RULES.blink.minHoldMs && action.holdMs <= RULES.blink.maxHoldMs;
-      if (!slow || cat.mode === 'lap') return none;
-      // 押している間に一度でも目が合っていれば成功（離す前に様子が変わっても失敗にしない）
-      const eyeContact = cat.mode === 'look' || action.sawLook;
-      if (!eyeContact) {
-        // 目が合っていないのに見つめてくる人は、ちょっと落ち着かない
-        return {
-          cat,
-          day: { ...day, wariness: clamp(day.wariness + RULES.blink.missWariness * personality.warinessMul) },
-          feedback: 'stare',
-          mistake: false,
-        };
-      }
-      const relaxed = { ...cat, mode: 'relax', modeTimeLeft: RULES.modeSec.relax[0] };
-      if (isShy(day.trust, personality)) {
-        // ツンの間は、見つめ合うと照れて目をそらす。焦って手を出したわけではないので、ミスには数えない
-        return { cat: relaxed, day: { ...day, trust: clamp(day.trust - RULES.blink.shyPenalty) }, feedback: 'blinkAway', mistake: false };
-      }
-      return {
-        cat: relaxed,
-        day: gainTrust(day, RULES.blink.trust * personality.likes.blink * blinkReach(cat.distance)),
-        feedback: 'blinkBack',
-        mistake: false,
-      };
-    }
-
-    // 以下は pet
-    if (cat.mode === 'rub') {
-      return petted(cat, day, RULES.pet.rubTrust, personality);
-    }
-    if (cat.mode === 'tailUp') {
-      if (cat.distance > RULES.pet.tailUpReach) return { ...none, feedback: 'tooFar' };
-      return petted(cat, day, RULES.pet.tailUpTrust, personality);
-    }
-    if (cat.mode === 'inBox') {
-      return {
-        cat,
-        day: scare(day, RULES.pet.relaxWariness, personality),
-        feedback: 'hide',
-        mistake: true,
-      };
-    }
-    const wariness = WRONG_PET_WARINESS[cat.mode];
-    if (wariness === undefined) return none; // flee / purr / lap 中は何も起きない
-    return {
-      cat: { ...cat, mode: 'flee', modeTimeLeft: RULES.fleeSec, distance: clamp(cat.distance + RULES.fleeDistance) },
-      day: scare(day, wariness, personality),
-      feedback: KICK_MODES.includes(cat.mode) ? 'kick' : 'flee',
-      mistake: true,
-    };
-  }
-
-  // 手がこわい猫（timidHands）は、信頼が timidUntil 未満の間、なでられるとビクビクする
-  function isTimid(trust, personality) {
-    return !!personality.timidHands && trust < personality.timidUntil;
-  }
-
-  // 信頼が性格の shyUntil 未満の間は、まばたきに照れる（ツン）
-  function isShy(trust, personality) {
-    return trust < (personality.shyUntil ?? 0);
-  }
-
-  // 遠くからのまばたきは、近くからより効きにくい
-  function blinkReach(distance) {
-    const { from, min } = RULES.blink.far;
-    if (distance <= from) return 1;
-    return Math.max(min, 1 - ((1 - min) * (distance - from)) / (MAX_VALUE - from));
-  }
-
-  function gainTrust(day, amount) {
-    return { ...day, trust: clamp(day.trust + amount * day.trustRate) };
-  }
-
-  // 焦って触った（ミス）。警戒が上がり、信頼も少し減る
-  function scare(day, amount, personality) {
-    return {
-      ...day,
-      trust: clamp(day.trust - RULES.mistakeTrust),
-      wariness: clamp(day.wariness + amount * personality.warinessMul),
-      mistakes: day.mistakes + 1,
-    };
-  }
-
-  // なでて喜ばれた（すり寄り・しっぽピン）。手がこわい猫（timidHands）は、信頼が timidUntil になるまでは、
-  // なでさせてはくれるが、ゴロゴロではなくビクビクする（効きは likes.pet 倍）。平気になったら、ふつうに効く
-  function petted(cat, day, amount, personality) {
-    const timid = isTimid(day.trust, personality);
-    const mul = personality.timidHands && !timid ? 1 : personality.likes.pet;
-    return purr(cat, gainTrust(day, amount * mul), timid);
-  }
-
-  function purr(cat, day, timid) {
-    return {
-      cat: { ...cat, mode: 'purr', modeTimeLeft: RULES.purrSec },
-      day,
-      feedback: timid ? 'timid' : 'purr',
-      mistake: false,
-    };
-  }
-  return { applyAction, isTimid, isShy };
-})();
-
 // ---- src/scenes/dayScene.js
 __modules['src/scenes/dayScene.js'] = (() => {
   // 昼：猫との駆け引き。判定は src/game/ に任せ、ここでは時間・入力・表示をつなぐ。
@@ -3721,13 +3734,22 @@ __modules['src/scenes/dayScene.js'] = (() => {
     function finish(lapped) {
       if (ended) return;
       ended = true;
+      syncPersonality();
       hud.show(false);
       input.setBlinkEnabled(false);
-      onEnd({ lapped, trust: day.trust, mistakes: day.mistakes, cat: { mode: cat.mode, distance: cat.distance, walking: !!cat.walking } });
+      onEnd({
+        lapped,
+        trust: day.trust,
+        mistakes: day.mistakes,
+        dere: day.dere,
+        handsOk: day.handsOk,
+        cat: { mode: cat.mode, distance: cat.distance, walking: !!cat.walking },
+      });
     }
 
     function act(action) {
       if (ended || overlay.busy || cat.mode === 'lap') return;
+      syncPersonality();
       const before = cat.mode;
       const a = action.type === 'blink' ? { ...action, sawLook: sawLook || cat.mode === 'look' } : action;
       sawLook = false;
@@ -3749,16 +3771,23 @@ __modules['src/scenes/dayScene.js'] = (() => {
       }
     }
 
-    // ツンがとれた・手が平気になった瞬間（その日のうちに信頼が shyUntil・timidUntil をまたいだとき）に、それぞれ1回だけ知らせる
-    let shy = isShy(day.trust, personality());
-    let timid = isTimid(day.trust, personality());
+    // ツンがとれた・手が平気になった瞬間（信頼が shyUntil・timidUntil をまたいだとき）に、それぞれ1回だけ知らせる。
+    // 覚えておき（day.dere・day.handsOk）、焦って触って信頼が下がっても戻さない
+    // デバッグで性格を切り替えたら、デレた・手が平気になったかを、新しい性格と今の信頼で決め直す（トーストは出さない）
+    let personalityKey = session.game.personality;
+    function syncPersonality() {
+      if (session.game.personality === personalityKey) return;
+      personalityKey = session.game.personality;
+      day = { ...day, dere: !isShy(day.trust, personality()), handsOk: !isTimid(day.trust, personality()) };
+    }
+
     function checkWarmUp() {
-      if (shy && !isShy(day.trust, personality())) {
-        shy = false;
+      if (!day.dere && !isShy(day.trust, personality())) {
+        day = { ...day, dere: true };
         overlay.toast(text(DERE_TEXT), 3200);
       }
-      if (timid && !isTimid(day.trust, personality())) {
-        timid = false;
+      if (!day.handsOk && !isTimid(day.trust, personality())) {
+        day = { ...day, handsOk: true };
         overlay.toast(text(TIMID_GONE_TEXT), 3200);
       }
     }
@@ -3770,7 +3799,10 @@ __modules['src/scenes/dayScene.js'] = (() => {
     return {
       name: 'day',
       update(dt) {
-        if (ended || overlay.busy) return;
+        if (ended) return;
+        // 説明カードの表示中に性格を切り替えても、すぐ決め直す
+        syncPersonality();
+        if (overlay.busy) return;
         if (cat.mode === 'lap') {
           const prev = lapTime;
           lapTime += dt;
@@ -3841,7 +3873,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
         blinkHoldMs: input.holdMs(),
         wariness: day.wariness,
         // ツンの間か（ツンデレの見た目を変える。src/render/renderer.js の personalize）
-        shy: isShy(day.trust, personality()),
+        shy: isShy(day.trust, personality(), day.dere),
         // その日の進み具合 0〜1（窓の外の景色・部屋の明るさ。src/render/daylight.js）
         dayTime: Math.min(1, Math.max(0, 1 - day.timeLeft / DAYS[day.dayNumber - 1].durationSec)),
       }),
@@ -4440,7 +4472,8 @@ __modules['src/main.js'] = (() => {
     debug = createDebugPanel($('debug'), {
       onPersonality(key) {
         fixedPersonality = key;
-        session.game = { ...session.game, personality: key };
+        // デレた・手が平気になったかは性格ごとのものなので、切り替えたら覚えていたことを消す
+        session.game = { ...session.game, personality: key, dere: false, handsOk: false };
       },
       onFace(face) {
         fixedFace = face;

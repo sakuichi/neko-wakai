@@ -39,7 +39,7 @@ export function applyAction(action, cat, day, personality) {
       };
     }
     const relaxed = { ...cat, mode: 'relax', modeTimeLeft: RULES.modeSec.relax[0] };
-    if (isShy(day.trust, personality)) {
+    if (isShy(day.trust, personality, day.dere)) {
       // ツンの間は、見つめ合うと照れて目をそらす。焦って手を出したわけではないので、ミスには数えない
       return { cat: relaxed, day: { ...day, trust: clamp(day.trust - RULES.blink.shyPenalty) }, feedback: 'blinkAway', mistake: false };
     }
@@ -77,14 +77,16 @@ export function applyAction(action, cat, day, personality) {
   };
 }
 
-// 手がこわい猫（timidHands）は、信頼が timidUntil 未満の間、なでられるとビクビクする
-export function isTimid(trust, personality) {
-  return !!personality.timidHands && trust < personality.timidUntil;
+// 手がこわい猫（timidHands）は、信頼が timidUntil 未満の間、なでられるとビクビクする。
+// handsOk：一度平気になったら、焦って触って信頼が下がっても、もうこわがらない
+export function isTimid(trust, personality, handsOk = false) {
+  return !handsOk && !!personality.timidHands && trust < personality.timidUntil;
 }
 
 // 信頼が性格の shyUntil 未満の間は、まばたきに照れる（ツン）
-export function isShy(trust, personality) {
-  return trust < (personality.shyUntil ?? 0);
+// dere：一度デレたら、焦って触って信頼が下がっても、もうツンには戻らない
+export function isShy(trust, personality, dere = false) {
+  return !dere && trust < (personality.shyUntil ?? 0);
 }
 
 // 遠くからのまばたきは、近くからより効きにくい
@@ -111,7 +113,7 @@ function scare(day, amount, personality) {
 // なでて喜ばれた（すり寄り・しっぽピン）。手がこわい猫（timidHands）は、信頼が timidUntil になるまでは、
 // なでさせてはくれるが、ゴロゴロではなくビクビクする（効きは likes.pet 倍）。平気になったら、ふつうに効く
 function petted(cat, day, amount, personality) {
-  const timid = isTimid(day.trust, personality);
+  const timid = isTimid(day.trust, personality, day.handsOk);
   const mul = personality.timidHands && !timid ? 1 : personality.likes.pet;
   return purr(cat, gainTrust(day, amount * mul), timid);
 }

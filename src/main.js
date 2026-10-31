@@ -167,7 +167,8 @@ if (SHOW_DEBUG) {
   debug = createDebugPanel($('debug'), {
     onPersonality(key) {
       fixedPersonality = key;
-      session.game = { ...session.game, personality: key };
+      // デレた・手が平気になったかは性格ごとのものなので、切り替えたら覚えていたことを消す
+      session.game = { ...session.game, personality: key, dere: false, handsOk: false };
     },
     onFace(face) {
       fixedFace = face;

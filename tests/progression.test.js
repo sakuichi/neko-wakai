@@ -233,3 +233,56 @@ test('新しいゲームに顔を渡すと GameState.face に入り、省略し�
   assert.deepEqual(createGame({ personality: 'bibiri', seed: 1 }).face, { shape: 'mochi', ears: 'normal' });
   assert.deepEqual(createGame().face, { shape: 'mochi', ears: 'normal' });
 });
+
+// ---------------------------------------------------------------- 一度デレた・手が平気になったら、日をまたいでも覚えておく（dere・handsOk）
+
+test('新しいゲームは、まだデレていない（dere: false）・手も平気になっていない（handsOk: false）', () => {
+  for (const key of Object.keys(PERSONALITIES)) {
+    const g = createGame({ personality: key, seed: 1 });
+    assert.equal(g.dere, false, `${key}: dere`);
+    assert.equal(g.handsOk, false, `${key}: handsOk`);
+  }
+});
+
+test('その日の初期状態の dere：ツンデレは、信頼 shyUntil 未満でまだデレていなければ false、前にデレていたら true、信頼 shyUntil 以上なら true', () => {
+  const S = PERSONALITIES.tsundere.shyUntil;
+  assert.ok(S > 0, `ツンデレの shyUntil ${S} は 0 より大きい`);
+  const base = createGame({ personality: 'tsundere', seed: 1 });
+  assert.equal(startDay({ ...base, trust: S - 1, dere: false }).day.dere, false, '信頼 shyUntil−1・まだデレていない');
+  assert.equal(startDay({ ...base, trust: 0, dere: false }).day.dere, false, '信頼 0・まだデレていない');
+  assert.equal(startDay({ ...base, trust: S - 1, dere: true }).day.dere, true, '信頼 shyUntil−1・前にデレた');
+  assert.equal(startDay({ ...base, trust: 0, dere: true }).day.dere, true, '信頼 0・前にデレた');
+  assert.equal(startDay({ ...base, trust: S, dere: false }).day.dere, true, '信頼 shyUntil・まだデレていない');
+});
+
+test('その日の初期状態の handsOk：ビビりは、信頼 timidUntil 未満でまだ平気になっていなければ false、前に平気になっていたら true、信頼 timidUntil 以上なら true', () => {
+  const T = PERSONALITIES.bibiri.timidUntil;
+  assert.ok(T > 0, `ビビりの timidUntil ${T} は 0 より大きい`);
+  const base = createGame({ personality: 'bibiri', seed: 1 });
+  assert.equal(startDay({ ...base, trust: T - 1, handsOk: false }).day.handsOk, false, '信頼 timidUntil−1・まだ平気でない');
+  assert.equal(startDay({ ...base, trust: 0, handsOk: false }).day.handsOk, false, '信頼 0・まだ平気でない');
+  assert.equal(startDay({ ...base, trust: T - 1, handsOk: true }).day.handsOk, true, '信頼 timidUntil−1・前に平気になった');
+  assert.equal(startDay({ ...base, trust: 0, handsOk: true }).day.handsOk, true, '信頼 0・前に平気になった');
+  assert.equal(startDay({ ...base, trust: T, handsOk: false }).day.handsOk, true, '信頼 timidUntil・まだ平気でない');
+});
+
+test('その日の初期状態：甘えん坊（ツンも手のこわさもない）は、信頼 0 でも dere・handsOk とも true', () => {
+  const { day } = startDay(createGame({ personality: 'amaenbo', seed: 1 }));
+  assert.equal(day.dere, true);
+  assert.equal(day.handsOk, true);
+});
+
+test('一日の終わりに、昼の結果の dere・handsOk を引き継ぐ。結果に無ければ、ゲームの値のまま', () => {
+  const g0 = createGame({ personality: 'tsundere', seed: 1 });
+  // その日にデレた・平気になった
+  const { game: g1 } = finishDay({ ...g0, dere: false, handsOk: false }, { lapped: false, trust: 30, mistakes: 0, dere: true, handsOk: true });
+  assert.equal(g1.dere, true, '結果の dere 真を引き継ぐ');
+  assert.equal(g1.handsOk, true, '結果の handsOk 真を引き継ぐ');
+  // 結果に dere・handsOk が無い：ゲームの値のまま
+  const { game: g2 } = finishDay({ ...g0, dere: true, handsOk: true }, { lapped: false, trust: 30, mistakes: 0 });
+  assert.equal(g2.dere, true, '結果に無い：ゲームの dere 真のまま');
+  assert.equal(g2.handsOk, true, '結果に無い：ゲームの handsOk 真のまま');
+  const { game: g3 } = finishDay({ ...g0, dere: false, handsOk: false }, { lapped: false, trust: 30, mistakes: 0 });
+  assert.equal(g3.dere, false, '結果に無い：ゲームの dere 偽のまま');
+  assert.equal(g3.handsOk, false, '結果に無い：ゲームの handsOk 偽のまま');
+});

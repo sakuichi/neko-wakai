@@ -506,3 +506,70 @@ test('ミスでないとき（すり寄り・しっぽピンを正しくなで�
     assert.equal(r.day.trust, c.trust, c.name);
   }
 });
+
+// ---------------------------------------------------------------- 一度デレた・手が平気になったら、ミスで信頼が境目を下回っても戻らない（dere・handsOk）
+
+test('isShy の第3引数（dere）：真ならツンデレの信頼が shyUntil 未満でも false。偽・省略なら今までどおり', async () => {
+  const { isShy } = await import('../src/game/rules.js');
+  const S = shyUntilOf('tsundere');
+  assert.ok(S > 0, `ツンデレの shyUntil ${S} は 0 より大きい`);
+  const tsundere = PERSONALITIES.tsundere;
+  // dere が真：境目未満でも、ツンではない
+  for (const trust of [0, S - 1]) assert.equal(isShy(trust, tsundere, true), false, `dere 真・信頼 ${trust}`);
+  assert.equal(isShy(S, tsundere, true), false, 'dere 真・信頼 shyUntil');
+  // dere が偽・省略：今までどおり、shyUntil 未満だけツン
+  assert.equal(isShy(S - 1, tsundere, false), true, 'dere 偽・信頼 shyUntil−1');
+  assert.equal(isShy(S, tsundere, false), false, 'dere 偽・信頼 shyUntil');
+  assert.equal(isShy(S - 1, tsundere), true, 'dere 省略・信頼 shyUntil−1');
+  assert.equal(isShy(S, tsundere), false, 'dere 省略・信頼 shyUntil');
+});
+
+test('isTimid の第3引数（handsOk）：真ならビビりの信頼が timidUntil 未満でも false。偽・省略なら今までどおり', async () => {
+  const { isTimid } = await import('../src/game/rules.js');
+  const T = timidUntilOf('bibiri');
+  assert.ok(T > 0, `ビビりの timidUntil ${T} は 0 より大きい`);
+  const bibiri = PERSONALITIES.bibiri;
+  // handsOk が真：境目未満でも、手はこわくない
+  for (const trust of [0, T - 1]) assert.equal(isTimid(trust, bibiri, true), false, `handsOk 真・信頼 ${trust}`);
+  assert.equal(isTimid(T, bibiri, true), false, 'handsOk 真・信頼 timidUntil');
+  // handsOk が偽・省略：今までどおり、timidUntil 未満だけビクビク
+  assert.equal(isTimid(T - 1, bibiri, false), true, 'handsOk 偽・信頼 timidUntil−1');
+  assert.equal(isTimid(T, bibiri, false), false, 'handsOk 偽・信頼 timidUntil');
+  assert.equal(isTimid(T - 1, bibiri), true, 'handsOk 省略・信頼 timidUntil−1');
+  assert.equal(isTimid(T, bibiri), false, 'handsOk 省略・信頼 timidUntil');
+});
+
+test('一度デレたツンデレ（day.dere 真）は、信頼 shyUntil−1 でもまばたきが blinkBack・likes.blink 倍', () => {
+  const S = shyUntilOf('tsundere');
+  assert.ok(S > 0, `ツンデレの shyUntil ${S} は 0 より大きい`);
+  const likes = likesOf('tsundere');
+  const trust = S - 1;
+  const r = applyAction(blink(1000), makeCat({ mode: 'look', distance: 50 }), makeDay({ trust, wariness: 10, mistakes: 0, dere: true }), PERSONALITIES.tsundere);
+  assert.equal(r.feedback, 'blinkBack');
+  assertNear(r.day.trust, trust + RULES.blink.trust * likes.blink, 'まばたき:');
+  assert.equal(r.day.wariness, 10);
+  assert.equal(r.mistake, false);
+  assert.equal(r.day.mistakes, 0);
+});
+
+test('一度手が平気になったビビり（day.handsOk 真）は、信頼 timidUntil−1 でもすり寄り・しっぽピンをなでると purr・ふつうの効き', () => {
+  const T = timidUntilOf('bibiri');
+  assert.ok(T >= 1, `ビビりの timidUntil ${T} が 1 以上（このテストの前提）`);
+  const likes = likesOf('bibiri');
+  assert.ok(likes.pet !== 1, `ビビりの likes.pet ${likes.pet} が 1 ではない（このテストの前提）`);
+  const bibiri = PERSONALITIES.bibiri;
+  const cases = [
+    { name: 'すり寄り', cat: makeCat({ mode: 'rub', distance: 20 }), gain: RULES.pet.rubTrust },
+    { name: 'しっぽピン', cat: makeCat({ mode: 'tailUp', distance: RULES.pet.tailUpReach }), gain: RULES.pet.tailUpTrust },
+  ];
+  const trust = T - 1;
+  for (const c of cases) {
+    const r = applyAction(pet, c.cat, makeDay({ trust, wariness: 10, mistakes: 0, handsOk: true }), bibiri);
+    assert.equal(r.feedback, 'purr', c.name);
+    // likes.pet をかけない、ふつうの効き
+    assertNear(r.day.trust, trust + c.gain, `${c.name}:`);
+    assert.equal(r.cat.mode, 'purr', c.name);
+    assert.equal(r.mistake, false, c.name);
+    assert.equal(r.day.mistakes, 0, c.name);
+  }
+});

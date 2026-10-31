@@ -73,13 +73,22 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   function finish(lapped) {
     if (ended) return;
     ended = true;
+    syncPersonality();
     hud.show(false);
     input.setBlinkEnabled(false);
-    onEnd({ lapped, trust: day.trust, mistakes: day.mistakes, cat: { mode: cat.mode, distance: cat.distance, walking: !!cat.walking } });
+    onEnd({
+      lapped,
+      trust: day.trust,
+      mistakes: day.mistakes,
+      dere: day.dere,
+      handsOk: day.handsOk,
+      cat: { mode: cat.mode, distance: cat.distance, walking: !!cat.walking },
+    });
   }
 
   function act(action) {
     if (ended || overlay.busy || cat.mode === 'lap') return;
+    syncPersonality();
     const before = cat.mode;
     const a = action.type === 'blink' ? { ...action, sawLook: sawLook || cat.mode === 'look' } : action;
     sawLook = false;
@@ -101,16 +110,23 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
     }
   }
 
-  // ツンがとれた・手が平気になった瞬間（その日のうちに信頼が shyUntil・timidUntil をまたいだとき）に、それぞれ1回だけ知らせる
-  let shy = isShy(day.trust, personality());
-  let timid = isTimid(day.trust, personality());
+  // ツンがとれた・手が平気になった瞬間（信頼が shyUntil・timidUntil をまたいだとき）に、それぞれ1回だけ知らせる。
+  // 覚えておき（day.dere・day.handsOk）、焦って触って信頼が下がっても戻さない
+  // デバッグで性格を切り替えたら、デレた・手が平気になったかを、新しい性格と今の信頼で決め直す（トーストは出さない）
+  let personalityKey = session.game.personality;
+  function syncPersonality() {
+    if (session.game.personality === personalityKey) return;
+    personalityKey = session.game.personality;
+    day = { ...day, dere: !isShy(day.trust, personality()), handsOk: !isTimid(day.trust, personality()) };
+  }
+
   function checkWarmUp() {
-    if (shy && !isShy(day.trust, personality())) {
-      shy = false;
+    if (!day.dere && !isShy(day.trust, personality())) {
+      day = { ...day, dere: true };
       overlay.toast(text(DERE_TEXT), 3200);
     }
-    if (timid && !isTimid(day.trust, personality())) {
-      timid = false;
+    if (!day.handsOk && !isTimid(day.trust, personality())) {
+      day = { ...day, handsOk: true };
       overlay.toast(text(TIMID_GONE_TEXT), 3200);
     }
   }
@@ -122,7 +138,10 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   return {
     name: 'day',
     update(dt) {
-      if (ended || overlay.busy) return;
+      if (ended) return;
+      // 説明カードの表示中に性格を切り替えても、すぐ決め直す
+      syncPersonality();
+      if (overlay.busy) return;
       if (cat.mode === 'lap') {
         const prev = lapTime;
         lapTime += dt;
@@ -193,7 +212,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
       blinkHoldMs: input.holdMs(),
       wariness: day.wariness,
       // ツンの間か（ツンデレの見た目を変える。src/render/renderer.js の personalize）
-      shy: isShy(day.trust, personality()),
+      shy: isShy(day.trust, personality(), day.dere),
       // その日の進み具合 0〜1（窓の外の景色・部屋の明るさ。src/render/daylight.js）
       dayTime: Math.min(1, Math.max(0, 1 - day.timeLeft / DAYS[day.dayNumber - 1].durationSec)),
     }),

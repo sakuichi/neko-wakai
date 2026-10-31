@@ -1,9 +1,11 @@
 // 日の進行・夜の選択の効果・エンディング判定。描画や入力には依存しない。
 import { DAYS, NIGHT, PERSONALITIES, MAX_DAY, MAX_VALUE, DEFAULT_PERSONALITY, COAT_PERSONALITY, FACES } from '../data/params.js';
+import { isShy, isTimid } from './rules.js';
 
 // catName は1日目の最初にプレイヤーが付ける。coat は毛色（src/render/renderer.js の COATS のキー）、face は顔の形（chooseFace）
 export function createGame({ personality = DEFAULT_PERSONALITY, seed = Date.now(), coat = 'chatora', face = { shape: 'mochi', ears: 'normal' } } = {}) {
-  return { day: 1, trust: 0, personality, coat, face, catName: null, nightChoice: null, mistakes: 0, seed, seenCards: [] };
+  // dere・handsOk：ツンデレがデレた・ビビりの手が平気になったか（一度なったら戻らない。src/game/rules.js の isShy・isTimid）
+  return { day: 1, trust: 0, personality, coat, face, catName: null, nightChoice: null, mistakes: 0, seed, seenCards: [], dere: false, handsOk: false };
 }
 
 /**
@@ -52,6 +54,9 @@ export function startDay(game) {
     signs: def.signs,
     canLap: def.canLap,
     approachMul: def.approachMul,
+    // 夜のあいだ（おやつなど）に信頼が境目を越えていたら、その日は最初からデレて・平気になっている
+    dere: !!game.dere || !isShy(game.trust, p),
+    handsOk: !!game.handsOk || !isTimid(game.trust, p),
   };
   const cat = { mode: 'relax', distance: MAX_VALUE, modeTimeLeft: 3 };
 
@@ -75,7 +80,13 @@ export function startDay(game) {
  * @returns {{game, next: 'night'|'ending', endingId: string|null}}
  */
 export function finishDay(game, dayResult) {
-  const g = { ...game, trust: dayResult.trust, mistakes: game.mistakes + dayResult.mistakes };
+  const g = {
+    ...game,
+    trust: dayResult.trust,
+    mistakes: game.mistakes + dayResult.mistakes,
+    dere: dayResult.dere ?? game.dere,
+    handsOk: dayResult.handsOk ?? game.handsOk,
+  };
   if (dayResult.lapped || game.day >= MAX_DAY) {
     return { game: g, next: 'ending', endingId: endingFor(game.day, dayResult.lapped) };
   }

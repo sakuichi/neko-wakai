@@ -47,7 +47,7 @@ flowchart TD
     PROG["日の進行・解禁・夜の効果・エンディング判定<br/>src/game/progression.js"]
     DAY -->|"GameState"| PROG
     PROG -->|"DayState（その日の初期状態）, unlocks[]"| DAY
-    DAY -->|"DayResult {lapped, trust, mistakes}"| PROG
+    DAY -->|"DayResult {lapped, trust, mistakes, dere, handsOk}"| PROG
     DAY -->|"DayResult.cat（昼の終わりの猫：mode, distance, walking）"| MAIN
     MAIN -->|"lastCat（夜の画面が実際の時間で0.5秒出しきるまで、同じ場所・姿で描く。そのあとは hidden＝帰っていて見えない）"| NIGHT
     NIGHT -->|"NightChoice"| PROG
@@ -136,14 +136,14 @@ stateDiagram-v2
 
 | 名前 | 中身 | 持ち主 |
 |---|---|---|
-| GameState | `day`, `trust`, `personality`, `coat`（毛色）, `face`（顔の形 `{ shape, ears }`）, `catName`（名前）, `nightChoice`, `mistakes`, `seenCards`（表示済みの説明）, `seed` | `src/main.js` の `session.game`（更新は `progression.js` が返す） |
+| GameState | `day`, `trust`, `personality`, `coat`（毛色）, `face`（顔の形 `{ shape, ears }`）, `catName`（名前）, `nightChoice`, `mistakes`, `seenCards`（表示済みの説明）, `seed`, `dere`・`handsOk`（ツンデレがデレた・ビビりの手が平気になったか。一度 true になったら戻らない。ツンのない性格の dere、手がこわくない性格の handsOk は、1日目から true） | `src/main.js` の `session.game`（更新は `progression.js` が返す） |
 | Session | `game`（GameState）, `misses`（猫の様子ごとの失敗回数。ヒント用） | `src/main.js` |
-| DayState | `dayNumber`, `trust`, `wariness`, `timeLeft`, `trustRate`（おやつで ×0.85）, `boxLockLeft`, `floorBonus`（おやつの日に距離の下限を近くする分）, `mistakes`, `actions`, `signs`, `canLap`, `approachMul` | `src/scenes/dayScene.js` |
+| DayState | `dayNumber`, `trust`, `wariness`, `timeLeft`, `trustRate`（おやつで ×0.85）, `boxLockLeft`, `floorBonus`（おやつの日に距離の下限を近くする分）, `mistakes`, `actions`, `signs`, `canLap`, `approachMul`, `dere`・`handsOk`（startDay が GameState と信頼から決め、昼の間に境目を越えたら dayScene が true にする。デバッグで性格を切り替えたら、dayScene が新しい性格と今の信頼で決め直す） | `src/scenes/dayScene.js` |
 | CatState | `mode`（relax／look／tailUp／tailFlick／belly／backTurn／rub／fakeRub／purr／flee／inBox／lap）, `distance`, `modeTimeLeft`, `walking`（くつろぎで歩いて近づいている間 true。描画で歩く姿にする）。夜の画面の猫だけ `hidden`（帰っていて見えない。`nightCatPose` が付け、描画でその場で消す） | `src/scenes/dayScene.js`（更新は `catBrain.js` / `rules.js` が返す） |
 | Action | `{ type: 'pet' }` / `{ type: 'blink', holdMs, sawLook }` | `src/ui/input.js` が作り、`sawLook` は `src/scenes/dayScene.js` が付ける |
 | View | `{ scene, cat, coat, face, personality, wariness, closeup, blinkHoldMs, lapTime, endingId, dayTime, shy }`（dayTime と shy は昼の画面だけ。dayTime はその日の進み具合 0〜1、shy はツンデレのツンの間か） | 各画面の `view()` と `src/main.js` が作り、`src/render/renderer.js` が描く |
 | ActionResult | `{ cat, day, feedback: 'flee' \| 'kick' \| 'hide' \| 'stare' \| 'blinkBack' \| 'blinkAway' \| 'purr' \| 'timid' \| 'tooFar' \| null, mistake }` | `src/game/rules.js` が返す |
-| DayResult | `{ lapped, trust, mistakes, cat }`（cat は昼の終わりの `{mode, distance, walking}`。progression は使わず、main.js が夜の画面に渡す） | `src/scenes/dayScene.js` が作る |
+| DayResult | `{ lapped, trust, mistakes, dere, handsOk, cat }`（cat は昼の終わりの `{mode, distance, walking}`。progression は使わず、main.js が夜の画面に渡す） | `src/scenes/dayScene.js` が作る |
 | NightChoice | `'treat' \| 'box' \| 'nothing'` | `src/scenes/nightScene.js` が作る |
 | Ending | `{ name, coat, face, personality, endingId, day, mistakes, date }`（date は 'YYYY-MM-DD'。visitor の day は 7。face は思い出の絵に使う。古い記録にはない） | `src/main.js` がエンディングのときに作る |
 | Records | `{ v: 1, memories: Ending[]（新しい順・最大50件）, dex: { [coat]: { stamps: endingId[], bestDay } }, titles: 称号id[], metCount }` | `src/main.js`（読み書きは `recordStore.js`、更新は `records.js` が返す） |
