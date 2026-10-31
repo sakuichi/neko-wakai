@@ -1,4 +1,4 @@
-import { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, NOTEBOOK_TEXT, TITLES, withName } from '../data/texts.js';
+import { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, PERSONALITY_TIPS, NOTEBOOK_TEXT, TITLES, withName } from '../data/texts.js';
 import { PERSONALITIES } from '../data/params.js';
 
 // saved: ねこ手帳に思い出を残せたか。newTitles: 今回新しく手に入れた称号の id（src/game/records.js）
@@ -21,6 +21,8 @@ export function createEndingScene({ screenEl, session, endingId, onRetry, saved 
   const ul = document.createElement('ul');
   const lines = [
     ENDING_UI.personality(g.catName, PERSONALITIES[g.personality].label),
+    // 性格の得意・苦手（次の猫で活かせるように）
+    PERSONALITY_TIPS[g.personality],
     ENDING_UI.coat(COAT_LABELS[g.coat]),
     ENDING_UI.mistakes(g.mistakes),
   ];
@@ -33,7 +35,7 @@ export function createEndingScene({ screenEl, session, endingId, onRetry, saved 
   const lore = document.createElement('li');
   lore.className = 'lore';
   lore.textContent = COAT_LORE[g.coat];
-  ul.children[1].after(lore);
+  ul.children[2].after(lore);
   const retry = document.createElement('button');
   retry.type = 'button';
   retry.className = 'retry';

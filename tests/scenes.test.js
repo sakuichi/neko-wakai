@@ -678,8 +678,8 @@ async function patienceDayScene({ day, trust = 0, seenCards, pick }) {
 
 test('昼の画面：我慢のごほうびで信頼が100になり、同じ update で膝に乗ったら、膝に乗った文が最後のトーストとして残り、ほっとした表示も我慢の説明も出さない', async () => {
   const { CARDS, FEEDBACK, LAP_TEXT, withName } = await import('../src/data/texts.js');
-  // 3日目（膝に乗れる日）。信頼94から始め、くつろぎで距離0まで歩いてから、お腹見せにする。
-  // お腹見せが時間切れで終わる update で、我慢のごほうびを足すと信頼が100になる
+  // 3日目（膝に乗れる日）。信頼97から始め、くつろぎで距離0まで歩いてから、お腹見せにする。
+  // お腹見せが時間切れで終わる update で、我慢のごほうびを足すと信頼が100になる（甘えん坊の我慢のごほうびは likes.patience 倍で、ふつうより小さい）
   // 距離0のときの3日目の候補（甘えん坊の重み）：relax3, look2, tailUp2, tailFlick1, belly1, backTurn1, rub3（計13）。0.654 → belly
   const pick = (cat) => {
     if (cat.mode === 'relax') return cat.distance > 0 ? 0 : 0.654;
@@ -687,7 +687,7 @@ test('昼の画面：我慢のごほうびで信頼が100になり、同じ upda
   };
   const { scene, session, toasts, step } = await patienceDayScene({
     day: 3,
-    trust: 94,
+    trust: 97,
     seenCards: Object.keys(CARDS).filter((k) => k !== 'tip:patience'),
     pick,
   });
@@ -816,4 +816,356 @@ test('昼の画面：サイン説明の吹き出しが表示中（5秒未満）�
   assert.deepEqual(second.toasts, [{ text: FEEDBACK.relief, ms: 1600 }]);
   assert.deepEqual(second.effects, ['relief']);
   assert.deepEqual(cards, []);
+});
+
+// ---------------------------------------------------------------- 性格ごとに効く行動（ツンデレのツン・デレ、性格のひとこと）
+
+// 昼の画面を作り、トースト・吹き出し・止めるカード・効果・効果音を記録する。説明カードは見たことにしておく。
+// trust はその日の始まりの信頼。rng(cat) を渡すと、そのとき（update を始めたとき）の猫に応じた乱数を返す。省くと fixedRng(0.5)
+async function personalityDayScene({ personality, day, trust, rng = null }) {
+  const { createDayScene } = await import('../src/scenes/dayScene.js');
+  const { createGame } = await import('../src/game/progression.js');
+  const { CARDS } = await import('../src/data/texts.js');
+  const { fixedRng } = await import('./helpers.js');
+  const noop = () => {};
+  const toasts = [];
+  const bubbles = [];
+  const cards = [];
+  const overlay = {
+    busy: false,
+    splash: noop,
+    card: (c) => cards.push(c),
+    bubble: (c) => bubbles.push(c),
+    toast: (text, ms) => toasts.push({ text, ms }),
+    clear: noop,
+  };
+  const hud = { show: noop, update: noop };
+  const effects = [];
+  const renderer = { addEffect: (name) => effects.push(name), hitTestCat: () => true };
+  const input = { setBlinkEnabled: noop, holdMs: () => 0 };
+  const played = [];
+  const sound = {
+    purr: () => played.push('purr'),
+    meow: () => played.push('meow'),
+    bump: () => played.push('bump'),
+  };
+  const session = {
+    game: { ...createGame({ personality, seed: 1 }), day, trust, catName: 'たま', seenCards: Object.keys(CARDS) },
+    misses: {},
+  };
+  let scene = null;
+  const random = rng ? () => rng(scene.state().cat) : fixedRng(0.5);
+  scene = createDayScene({ session, overlay, hud, renderer, input, sound, rng: random, onEnd: noop });
+  // fn（update や act）を呼び、そのあいだに新しく出たものと、前後の信頼を返す
+  function during(fn) {
+    const n = { toasts: toasts.length, bubbles: bubbles.length, cards: cards.length, effects: effects.length, played: played.length };
+    const trustBefore = scene.state().day.trust;
+    fn();
+    return {
+      trustBefore,
+      trustAfter: scene.state().day.trust,
+      toasts: toasts.slice(n.toasts),
+      bubbles: bubbles.slice(n.bubbles),
+      cards: cards.slice(n.cards),
+      effects: effects.slice(n.effects),
+      played: played.slice(n.played),
+    };
+  }
+  // 猫がこちらを見る（look）まで待つ
+  function waitLook() {
+    for (let i = 0; i < 400 && scene.state().cat.mode !== 'look'; i++) scene.update(0.05);
+    assert.equal(scene.state().cat.mode, 'look', 'こちらを見る前に上限に達した（このテストの前提）');
+  }
+  return { scene, session, toasts, bubbles, cards, effects, played, during, waitLook };
+}
+
+test('ツンの間にまばたきして目をそらされても、効果音は鳴らさない', async () => {
+  const { soundsFor } = await import('../src/scenes/dayScene.js');
+  assert.deepEqual(soundsFor('blinkAway'), []);
+});
+
+test('昼の画面：ツンデレにまばたきすると blinkAway のトーストと効果が出て（効果音なし）、2回目でヒントの吹き出しが1回だけ出る。ミスには数えない', async () => {
+  const { FEEDBACK, HINTS, withName } = await import('../src/data/texts.js');
+  assert.equal(typeof FEEDBACK.blinkAway, 'string', 'FEEDBACK.blinkAway がない');
+  assert.ok(FEEDBACK.blinkAway.length > 0, 'FEEDBACK.blinkAway が空');
+  const hint = HINTS.blinkAway;
+  assert.ok(hint && hint.title && hint.body, 'HINTS.blinkAway がない');
+  // 2日目（まばたきが使える・膝に乗らない日）。信頼 0 のツンデレ
+  const { scene, cards, during, waitLook } = await personalityDayScene({ personality: 'tsundere', day: 2, trust: 0 });
+  const blinks = [];
+  for (let n = 0; n < 3; n++) {
+    waitLook();
+    blinks.push(during(() => scene.act({ type: 'blink', holdMs: 1000 })));
+  }
+  for (const [i, b] of blinks.entries()) {
+    assert.deepEqual(b.toasts, [{ text: FEEDBACK.blinkAway, ms: 1600 }], `${i + 1}回目のトースト`);
+    assert.deepEqual(b.effects, ['blinkAway'], `${i + 1}回目の効果`);
+    assert.deepEqual(b.played, [], `${i + 1}回目の効果音`);
+  }
+  // ヒントは2回目にだけ、名前入りで出る
+  const shown = { title: withName(hint.title, 'たま'), body: withName(hint.body, 'たま') };
+  assert.ok(shown.body.includes('たま'), `ヒントに名前が入っていない: ${shown.body}`);
+  assert.deepEqual(blinks[0].bubbles, [], '1回目の吹き出し');
+  assert.deepEqual(blinks[1].bubbles, [shown], '2回目の吹き出し');
+  assert.deepEqual(blinks[2].bubbles, [], '3回目の吹き出し');
+  assert.deepEqual(cards, []);
+  assert.equal(scene.state().day.mistakes, 0);
+});
+
+test('昼の画面：ツンデレの信頼が時間とともに shyUntil をまたいだ瞬間に、デレたトーストが1回だけ出る', async () => {
+  const { DERE_TEXT, withName } = await import('../src/data/texts.js');
+  const { PERSONALITIES } = await import('../src/data/params.js');
+  assert.equal(typeof DERE_TEXT, 'string', 'texts.js に DERE_TEXT がない');
+  const dere = { text: withName(DERE_TEXT, 'たま'), ms: 3200 };
+  const S = PERSONALITIES.tsundere.shyUntil;
+  assert.ok(S > 0, `ツンデレの shyUntil ${S}`);
+  // 2日目、信頼 shyUntil−1 から、何もせず待つ（落ち着いている間に少しずつ信頼が増える）
+  const { scene, toasts, during } = await personalityDayScene({ personality: 'tsundere', day: 2, trust: S - 1 });
+  let crossing = null;
+  for (let i = 0; i < 400; i++) {
+    const s = during(() => scene.update(0.05));
+    if (s.trustBefore < S && s.trustAfter >= S) crossing = s;
+  }
+  assert.ok(crossing, `信頼が shyUntil をまたがなかった（このテストの前提）。最後の信頼 ${scene.state().day.trust}`);
+  assert.deepEqual(crossing.toasts.filter((t) => t.text === dere.text), [dere], 'またいだ update でデレたトーストが出ていない');
+  assert.equal(toasts.filter((t) => t.text === dere.text).length, 1, 'デレたトーストの回数');
+});
+
+test('昼の画面：ツンデレの信頼が、なでて shyUntil をまたいだ瞬間にも、デレたトーストが1回だけ出る', async () => {
+  const { DERE_TEXT, withName } = await import('../src/data/texts.js');
+  const { PERSONALITIES, RULES } = await import('../src/data/params.js');
+  assert.equal(typeof DERE_TEXT, 'string', 'texts.js に DERE_TEXT がない');
+  const dere = { text: withName(DERE_TEXT, 'たま'), ms: 3200 };
+  const tsundere = PERSONALITIES.tsundere;
+  const S = tsundere.shyUntil;
+  assert.ok(S > 0, `ツンデレの shyUntil ${S}`);
+  assert.ok(tsundere.likes, 'PERSONALITIES.tsundere.likes がない');
+  // 3日目、信頼 shyUntil−5。すり寄りが届く距離まではくつろぎ（候補の先頭）、届いたらすり寄り（候補の最後）にする
+  const pick = (cat) => (cat.mode === 'relax' && cat.distance <= RULES.rubMaxDistance ? 0.999 : 0);
+  const { scene, toasts, during } = await personalityDayScene({ personality: 'tsundere', day: 3, trust: S - 5, rng: pick });
+  for (let i = 0; i < 1000 && scene.state().cat.mode !== 'rub'; i++) scene.update(0.05);
+  assert.equal(scene.state().cat.mode, 'rub', 'すり寄りになる前に上限に達した（このテストの前提）');
+  const before = scene.state().day.trust;
+  assert.ok(before < S, `なでる前に信頼 ${before} が shyUntil 以上になった（このテストの前提）`);
+  assert.ok(before + RULES.pet.rubTrust * tsundere.likes.pet >= S, 'なでても shyUntil に届かない（このテストの前提）');
+  assert.equal(toasts.filter((t) => t.text === dere.text).length, 0, 'なでる前にデレたトーストが出た');
+
+  const petted = during(() => scene.act({ type: 'pet' }));
+  assert.ok(petted.trustAfter >= S, `なでたあとの信頼 ${petted.trustAfter}`);
+  assert.deepEqual(petted.toasts.filter((t) => t.text === dere.text), [dere], 'なでた瞬間にデレたトーストが出ていない');
+  // そのあと時間が進んでも、もう出ない
+  for (let i = 0; i < 100; i++) scene.update(0.05);
+  assert.equal(toasts.filter((t) => t.text === dere.text).length, 1, 'デレたトーストの回数');
+});
+
+test('昼の画面：その日の始まりから信頼が shyUntil 以上のツンデレには、デレたトーストを出さない', async () => {
+  const { DERE_TEXT, withName } = await import('../src/data/texts.js');
+  const { PERSONALITIES } = await import('../src/data/params.js');
+  assert.equal(typeof DERE_TEXT, 'string', 'texts.js に DERE_TEXT がない');
+  const dere = withName(DERE_TEXT, 'たま');
+  const S = PERSONALITIES.tsundere.shyUntil;
+  assert.ok(S > 0, `ツンデレの shyUntil ${S}`);
+  const { scene, toasts } = await personalityDayScene({ personality: 'tsundere', day: 2, trust: S });
+  for (let i = 0; i < 400; i++) scene.update(0.05);
+  assert.ok(scene.state().day.trust > S, '信頼が増えていない（このテストの前提）');
+  assert.deepEqual(toasts.filter((t) => t.text === dere), []);
+});
+
+test('昼の画面の view() の shy：ツンデレは信頼 shyUntil 未満の間だけ true。甘えん坊・ビビりは常に false', async () => {
+  const { PERSONALITIES } = await import('../src/data/params.js');
+  const S = PERSONALITIES.tsundere.shyUntil;
+  assert.ok(S > 0, `ツンデレの shyUntil ${S}`);
+  // ツンデレ：信頼 shyUntil−1 から待って、shyUntil をまたぐ
+  const t = await personalityDayScene({ personality: 'tsundere', day: 2, trust: S - 1 });
+  assert.equal(t.scene.view().shy, true, '始まり（信頼 shyUntil−1）');
+  let crossed = false;
+  for (let i = 0; i < 400; i++) {
+    t.scene.update(0.05);
+    const trust = t.scene.state().day.trust;
+    if (trust >= S) crossed = true;
+    assert.equal(t.scene.view().shy, trust < S, `信頼 ${trust}`);
+  }
+  assert.ok(crossed, '信頼が shyUntil をまたがなかった（このテストの前提）');
+  // ツンデレ：始まりから shyUntil ちょうど
+  const t2 = await personalityDayScene({ personality: 'tsundere', day: 2, trust: S });
+  assert.equal(t2.scene.view().shy, false, '始まり（信頼 shyUntil）');
+  // ほかの性格：信頼 0 から待っても、ずっと false
+  for (const personality of ['amaenbo', 'bibiri']) {
+    const o = await personalityDayScene({ personality, day: 2, trust: 0 });
+    assert.equal(o.scene.view().shy, false, `${personality}: 始まり`);
+    for (let i = 0; i < 400; i++) {
+      o.scene.update(0.05);
+      assert.equal(o.scene.view().shy, false, `${personality}: 信頼 ${o.scene.state().day.trust}`);
+    }
+  }
+});
+
+test('エンディング画面：その性格のひとこと（PERSONALITY_TIPS）の行が出る', async () => {
+  const { PERSONALITY_TIPS } = await import('../src/data/texts.js');
+  const { PERSONALITIES } = await import('../src/data/params.js');
+  assert.ok(PERSONALITY_TIPS, 'texts.js に PERSONALITY_TIPS がない');
+  const coats = { amaenbo: 'chatora', tsundere: 'shiro', bibiri: 'kuro' };
+  for (const personality of Object.keys(PERSONALITIES)) {
+    const tip = PERSONALITY_TIPS[personality];
+    assert.equal(typeof tip, 'string', `PERSONALITY_TIPS.${personality} がない`);
+    assert.ok(tip.length > 0, `PERSONALITY_TIPS.${personality} が空`);
+    const texts = await endingTexts({
+      session: { game: { day: 3, catName: 'たま', personality, coat: coats[personality], mistakes: 0 } },
+    });
+    assert.ok(texts.some((t) => t.includes(tip)), `${personality}: 「${tip}」が出ていない: ${texts.join(' / ')}`);
+    for (const other of Object.keys(PERSONALITIES).filter((p) => p !== personality)) {
+      assert.ok(!texts.some((t) => t.includes(PERSONALITY_TIPS[other])), `${personality} なのに ${other} のひとことが出ている`);
+    }
+  }
+});
+
+test('1日目の説明カード（day:intro）の最後に、猫の性格を観察するよう伝える1行が足されている', async () => {
+  const { CARDS } = await import('../src/data/texts.js');
+  const lines = CARDS['day:intro'].body.split('\n');
+  // 今の本文（2行）の後ろに1行足す
+  assert.ok(lines.length >= 3, `day:intro の行数 ${lines.length}`);
+  const last = lines[lines.length - 1];
+  assert.ok(last.includes('性格'), `最後の行: ${last}`);
+});
+
+// ---------------------------------------------------------------- ビビりの手（なでても「ビクビク」）
+
+test('ビビりをなでてビクビクされても（timid）、効果音は鳴らさない', async () => {
+  const { soundsFor } = await import('../src/scenes/dayScene.js');
+  assert.deepEqual(soundsFor('timid'), []);
+});
+
+test('昼の画面：ビビりのすり寄りをなでると、timid のトーストと効果が出て、効果音（ゴロゴロ・にゃーん・ぽふっ）は鳴らない', async () => {
+  const { FEEDBACK } = await import('../src/data/texts.js');
+  const { RULES } = await import('../src/data/params.js');
+  assert.equal(FEEDBACK.timid, '（ビクビク……手はまだこわいみたい）');
+  // 3日目、信頼 40（すり寄りが届く距離まで近づけて、まだ手がこわい信頼）。届く距離まではくつろぎ（候補の先頭）、届いたらすり寄り（候補の最後）にする
+  const pick = (cat) => (cat.mode === 'relax' && cat.distance <= RULES.rubMaxDistance ? 0.999 : 0);
+  const { scene, during } = await personalityDayScene({ personality: 'bibiri', day: 3, trust: 40, rng: pick });
+  for (let i = 0; i < 1000 && scene.state().cat.mode !== 'rub'; i++) scene.update(0.05);
+  assert.equal(scene.state().cat.mode, 'rub', 'すり寄りになる前に上限に達した（このテストの前提）');
+
+  const petted = during(() => scene.act({ type: 'pet' }));
+  assert.equal(scene.state().cat.mode, 'purr');
+  assert.deepEqual(petted.toasts, [{ text: FEEDBACK.timid, ms: 1600 }]);
+  assert.deepEqual(petted.effects, ['timid']);
+  assert.deepEqual(petted.played, []);
+  // ゴロゴロの様子の間に時間が進んでも、ゴロゴロの音は鳴らさない
+  const after = during(() => {
+    for (let i = 0; i < Math.ceil(RULES.purrSec / 0.05); i++) scene.update(0.05);
+  });
+  assert.ok(!after.played.includes('purr'), `ゴロゴロの音が鳴った: ${after.played.join(' / ')}`);
+  assert.equal(scene.state().day.mistakes, 0);
+});
+
+// ---------------------------------------------------------------- ビビりの手は、仲良くなると平気になる（timidUntil）
+
+test('昼の画面：ビビり・3日目・信頼 timidUntil 以上ですり寄りをなでると、purr のトーストと効果が出る（timid のトーストは出ない）', async () => {
+  const { FEEDBACK } = await import('../src/data/texts.js');
+  const { RULES, PERSONALITIES } = await import('../src/data/params.js');
+  const T = PERSONALITIES.bibiri.timidUntil;
+  assert.equal(typeof T, 'number', 'PERSONALITIES.bibiri.timidUntil がない');
+  assert.equal(typeof FEEDBACK.purr, 'string', 'FEEDBACK.purr がない');
+  // 3日目、信頼 timidUntil。届く距離まではくつろぎ（候補の先頭）、届いたらすり寄り（候補の最後）にする
+  const pick = (cat) => (cat.mode === 'relax' && cat.distance <= RULES.rubMaxDistance ? 0.999 : 0);
+  const { scene, toasts, during } = await personalityDayScene({ personality: 'bibiri', day: 3, trust: T, rng: pick });
+  for (let i = 0; i < 1000 && scene.state().cat.mode !== 'rub'; i++) scene.update(0.05);
+  assert.equal(scene.state().cat.mode, 'rub', 'すり寄りになる前に上限に達した（このテストの前提）');
+  assert.ok(scene.state().day.trust >= T, `なでる前の信頼 ${scene.state().day.trust} が timidUntil ${T} 未満（このテストの前提）`);
+
+  const petted = during(() => scene.act({ type: 'pet' }));
+  assert.equal(scene.state().cat.mode, 'purr');
+  assert.deepEqual(petted.toasts, [{ text: FEEDBACK.purr, ms: 1600 }]);
+  assert.deepEqual(petted.effects, ['purr']);
+  assert.equal(toasts.filter((t) => t.text === FEEDBACK.timid).length, 0, 'timid のトーストが出た');
+  assert.equal(scene.state().day.mistakes, 0);
+});
+
+test('まばたきの説明カード（action:blink）に「Space」「PC」が入っておらず、「ツンデレ」が入っている', async () => {
+  const { CARDS } = await import('../src/data/texts.js');
+  const body = CARDS['action:blink'].body;
+  assert.ok(!body.includes('Space'), `「Space」が入っている: ${body}`);
+  assert.ok(!body.includes('PC'), `「PC」が入っている: ${body}`);
+  assert.ok(body.includes('ツンデレ'), `「ツンデレ」が入っていない: ${body}`);
+});
+
+// ---------------------------------------------------------------- ビビりの手が平気になった瞬間のトースト（TIMID_GONE_TEXT）
+
+test('昼の画面：ビビりの信頼が時間とともに timidUntil をまたいだ瞬間に、手が平気になったトーストが1回だけ出る', async () => {
+  const { TIMID_GONE_TEXT, withName } = await import('../src/data/texts.js');
+  const { PERSONALITIES } = await import('../src/data/params.js');
+  assert.equal(TIMID_GONE_TEXT, '（{name}は、手がこわくなくなったみたい）', 'texts.js の TIMID_GONE_TEXT');
+  const gone = { text: withName(TIMID_GONE_TEXT, 'たま'), ms: 3200 };
+  const T = PERSONALITIES.bibiri.timidUntil;
+  assert.equal(typeof T, 'number', 'PERSONALITIES.bibiri.timidUntil がない');
+  // 2日目、信頼 timidUntil−1 から、何もせず待つ（落ち着いている間に少しずつ信頼が増える）
+  const { scene, toasts, during } = await personalityDayScene({ personality: 'bibiri', day: 2, trust: T - 1 });
+  let crossing = null;
+  for (let i = 0; i < 400; i++) {
+    const s = during(() => scene.update(0.05));
+    if (s.trustBefore < T && s.trustAfter >= T) crossing = s;
+  }
+  assert.ok(crossing, `信頼が timidUntil をまたがなかった（このテストの前提）。最後の信頼 ${scene.state().day.trust}`);
+  assert.deepEqual(crossing.toasts.filter((t) => t.text === gone.text), [gone], 'またいだ update で手が平気になったトーストが出ていない');
+  assert.equal(toasts.filter((t) => t.text === gone.text).length, 1, '手が平気になったトーストの回数');
+});
+
+test('昼の画面：ビビりの信頼が、なでて timidUntil をまたいだ瞬間にも、手が平気になったトーストが1回だけ出る', async () => {
+  const { TIMID_GONE_TEXT, withName } = await import('../src/data/texts.js');
+  const { PERSONALITIES, RULES } = await import('../src/data/params.js');
+  assert.equal(typeof TIMID_GONE_TEXT, 'string', 'texts.js に TIMID_GONE_TEXT がない');
+  const gone = { text: withName(TIMID_GONE_TEXT, 'たま'), ms: 3200 };
+  const bibiri = PERSONALITIES.bibiri;
+  const T = bibiri.timidUntil;
+  assert.equal(typeof T, 'number', 'PERSONALITIES.bibiri.timidUntil がない');
+  // 3日目、信頼 timidUntil−5。すり寄りが届く距離まではくつろぎ（候補の先頭）、届いたらすり寄り（候補の最後）にする
+  const pick = (cat) => (cat.mode === 'relax' && cat.distance <= RULES.rubMaxDistance ? 0.999 : 0);
+  const { scene, toasts, during } = await personalityDayScene({ personality: 'bibiri', day: 3, trust: T - 5, rng: pick });
+  for (let i = 0; i < 1000 && scene.state().cat.mode !== 'rub'; i++) scene.update(0.05);
+  assert.equal(scene.state().cat.mode, 'rub', 'すり寄りになる前に上限に達した（このテストの前提）');
+  const before = scene.state().day.trust;
+  assert.ok(before < T, `なでる前に信頼 ${before} が timidUntil 以上になった（このテストの前提）`);
+  assert.ok(before + RULES.pet.rubTrust * bibiri.likes.pet >= T, 'なでても timidUntil に届かない（このテストの前提）');
+  assert.equal(toasts.filter((t) => t.text === gone.text).length, 0, 'なでる前に手が平気になったトーストが出た');
+
+  const petted = during(() => scene.act({ type: 'pet' }));
+  assert.ok(petted.trustAfter >= T, `なでたあとの信頼 ${petted.trustAfter}`);
+  assert.deepEqual(petted.toasts.filter((t) => t.text === gone.text), [gone], 'なでた瞬間に手が平気になったトーストが出ていない');
+  // そのあと時間が進んでも、もう出ない
+  for (let i = 0; i < 100; i++) scene.update(0.05);
+  assert.equal(toasts.filter((t) => t.text === gone.text).length, 1, '手が平気になったトーストの回数');
+});
+
+test('昼の画面：その日の始まりから信頼が timidUntil 以上のビビりには、手が平気になったトーストを出さない', async () => {
+  const { TIMID_GONE_TEXT, withName } = await import('../src/data/texts.js');
+  const { PERSONALITIES } = await import('../src/data/params.js');
+  assert.equal(typeof TIMID_GONE_TEXT, 'string', 'texts.js に TIMID_GONE_TEXT がない');
+  const gone = withName(TIMID_GONE_TEXT, 'たま');
+  const T = PERSONALITIES.bibiri.timidUntil;
+  assert.equal(typeof T, 'number', 'PERSONALITIES.bibiri.timidUntil がない');
+  const { scene, toasts } = await personalityDayScene({ personality: 'bibiri', day: 2, trust: T });
+  for (let i = 0; i < 400; i++) scene.update(0.05);
+  assert.ok(scene.state().day.trust > T, '信頼が増えていない（このテストの前提）');
+  assert.deepEqual(toasts.filter((t) => t.text === gone), []);
+});
+
+test('昼の画面：甘えん坊・ツンデレは、信頼がビビりの timidUntil をまたいでも、手が平気になったトーストを出さない', async () => {
+  const { TIMID_GONE_TEXT, withName } = await import('../src/data/texts.js');
+  const { PERSONALITIES } = await import('../src/data/params.js');
+  assert.equal(typeof TIMID_GONE_TEXT, 'string', 'texts.js に TIMID_GONE_TEXT がない');
+  const gone = withName(TIMID_GONE_TEXT, 'たま');
+  const T = PERSONALITIES.bibiri.timidUntil;
+  assert.equal(typeof T, 'number', 'PERSONALITIES.bibiri.timidUntil がない');
+  for (const personality of ['amaenbo', 'tsundere']) {
+    const { scene, toasts } = await personalityDayScene({ personality, day: 2, trust: T - 1 });
+    for (let i = 0; i < 400; i++) scene.update(0.05);
+    assert.ok(scene.state().day.trust >= T, `${personality}: 信頼が timidUntil をまたがなかった（このテストの前提）`);
+    assert.deepEqual(toasts.filter((t) => t.text === gone), [], personality);
+  }
+});
+
+test('チラッの説明カード（sign:look）に「ツンデレ」が入っている', async () => {
+  const { CARDS } = await import('../src/data/texts.js');
+  const body = CARDS['sign:look'].body;
+  assert.ok(body.includes('ツンデレ'), `「ツンデレ」が入っていない: ${body}`);
 });

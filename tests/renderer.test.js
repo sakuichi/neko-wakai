@@ -844,3 +844,87 @@ test('我慢のごほうびの効果（relief）を足した直後の昼の描�
   }
   assert.ok(!frame.texts.includes('ほっ'), `2秒後にも「ほっ」が描かれている: ${frame.texts.join(' / ')}`);
 });
+
+// ---------------------------------------------------------------- ビビりの「ビクビク」
+
+// 昼の画面を何フレームか描いてから、最後のフレームに描かれた文字を返す
+function dayTexts(view) {
+  const { canvas, frame } = textFrameCanvas();
+  const r = createRenderer(canvas);
+  const dt = 0.05;
+  for (let t = 1; t < 1.5; t += dt) r.draw(view, t, dt);
+  frame.texts = [];
+  r.draw(view, 1.5, dt);
+  return frame.texts;
+}
+const dayViewOf = (personality, wariness) => ({ scene: 'day', personality, wariness, cat: { mode: 'relax', distance: 50 } });
+
+test('ビビりは、昼の警戒が 20 以上（耳を伏せている間）なら「ビクビク」を描き、19 以下では描かない', () => {
+  for (const wariness of [20, 60, 100]) {
+    const texts = dayTexts(dayViewOf('bibiri', wariness));
+    assert.ok(texts.includes('ビクビク'), `警戒 ${wariness} で「ビクビク」がない: ${texts.join(' / ')}`);
+  }
+  for (const wariness of [19, 0]) {
+    const texts = dayTexts(dayViewOf('bibiri', wariness));
+    assert.ok(!texts.includes('ビクビク'), `警戒 ${wariness} で「ビクビク」が描かれている: ${texts.join(' / ')}`);
+  }
+});
+
+test('甘えん坊・ツンデレは、昼の警戒が高くても「ビクビク」を描かない', () => {
+  for (const personality of ['amaenbo', 'tsundere']) {
+    for (const wariness of [20, 100]) {
+      const texts = dayTexts(dayViewOf(personality, wariness));
+      assert.ok(!texts.includes('ビクビク'), `${personality}・警戒 ${wariness} で「ビクビク」が描かれている: ${texts.join(' / ')}`);
+    }
+  }
+});
+
+test('ビクビクの効果（timid）を足した直後の昼の描画で「ビクビク」が描かれ、2秒後には描かれない（警戒 20 未満）', () => {
+  const { canvas, frame } = textFrameCanvas();
+  const r = createRenderer(canvas);
+  const view = dayViewOf('bibiri', 0);
+  const dt = 0.05;
+  // 何フレームか描いてから、効果を足す
+  for (let t = 1; t < 1.5; t += dt) r.draw(view, t, dt);
+  frame.texts = [];
+  r.draw(view, 1.5, dt);
+  assert.ok(!frame.texts.includes('ビクビク'), '効果を足す前から「ビクビク」が描かれている（このテストの前提）');
+  r.addEffect('timid');
+  frame.texts = [];
+  r.draw(view, 1.5 + dt, dt);
+  assert.ok(frame.texts.includes('ビクビク'), `直後のフレームに「ビクビク」がない: ${frame.texts.join(' / ')}`);
+  // 2秒後まで描き進める
+  let t = 1.5 + dt;
+  while (t < 3.5) {
+    t += dt;
+    frame.texts = [];
+    r.draw(view, t, dt);
+  }
+  assert.ok(!frame.texts.includes('ビクビク'), `2秒後にも「ビクビク」が描かれている: ${frame.texts.join(' / ')}`);
+});
+
+test('ビビりが耳を伏せている間（警戒 25）に我慢のごほうびの効果（relief）を足すと、直後のフレームは「ほっ」だけを描き、2秒後には「ビクビク」に戻る', () => {
+  const { canvas, frame } = textFrameCanvas();
+  const r = createRenderer(canvas);
+  const view = dayViewOf('bibiri', 25);
+  const dt = 0.05;
+  // 何フレームか描いてから、効果を足す
+  for (let t = 1; t < 1.5; t += dt) r.draw(view, t, dt);
+  frame.texts = [];
+  r.draw(view, 1.5, dt);
+  assert.ok(frame.texts.includes('ビクビク'), `効果を足す前に「ビクビク」がない（このテストの前提）: ${frame.texts.join(' / ')}`);
+  r.addEffect('relief');
+  frame.texts = [];
+  r.draw(view, 1.5 + dt, dt);
+  assert.ok(frame.texts.includes('ほっ'), `直後のフレームに「ほっ」がない: ${frame.texts.join(' / ')}`);
+  assert.ok(!frame.texts.includes('ビクビク'), `直後のフレームに「ビクビク」が描かれている: ${frame.texts.join(' / ')}`);
+  // 2秒後まで描き進める
+  let t = 1.5 + dt;
+  while (t < 3.5) {
+    t += dt;
+    frame.texts = [];
+    r.draw(view, t, dt);
+  }
+  assert.ok(frame.texts.includes('ビクビク'), `2秒後に「ビクビク」がない: ${frame.texts.join(' / ')}`);
+  assert.ok(!frame.texts.includes('ほっ'), `2秒後にも「ほっ」が描かれている: ${frame.texts.join(' / ')}`);
+});

@@ -1,9 +1,9 @@
 // 昼：猫との駆け引き。判定は src/game/ に任せ、ここでは時間・入力・表示をつなぐ。
 import { startDay } from '../game/progression.js';
 import { tick } from '../game/catBrain.js';
-import { applyAction } from '../game/rules.js';
+import { applyAction, isShy, isTimid } from '../game/rules.js';
 import { PERSONALITIES, MAX_VALUE, DAYS } from '../data/params.js';
-import { CARDS, TUTORIAL, FEEDBACK, DAY_TITLES, HINTS, LAP_TEXT, withName } from '../data/texts.js';
+import { CARDS, TUTORIAL, FEEDBACK, DAY_TITLES, HINTS, LAP_TEXT, DERE_TEXT, TIMID_GONE_TEXT, withName } from '../data/texts.js';
 
 // 膝に乗ってから結果画面に移るまでの演出時間（ふみふみ → ゴロゴロ → 寝る）
 const LAP_SHOW_SEC = 6.5;
@@ -93,9 +93,25 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
     }
     if (r.mistake) countMiss(before);
     if (r.feedback === 'stare') countMiss('stare');
+    if (r.feedback === 'blinkAway') countMiss('blinkAway');
+    checkWarmUp();
     if (r.mistake && day.dayNumber === 1 && !tut.flee) {
       tut.flee = true;
       timers.push(setTimeout(() => overlay.toast(TUTORIAL.flee, 3200), 1300));
+    }
+  }
+
+  // ツンがとれた・手が平気になった瞬間（その日のうちに信頼が shyUntil・timidUntil をまたいだとき）に、それぞれ1回だけ知らせる
+  let shy = isShy(day.trust, personality());
+  let timid = isTimid(day.trust, personality());
+  function checkWarmUp() {
+    if (shy && !isShy(day.trust, personality())) {
+      shy = false;
+      overlay.toast(text(DERE_TEXT), 3200);
+    }
+    if (timid && !isTimid(day.trust, personality())) {
+      timid = false;
+      overlay.toast(text(TIMID_GONE_TEXT), 3200);
     }
   }
 
@@ -145,6 +161,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
           overlay.toast(text(TUTORIAL.approach), 2600);
         }
       }
+      checkWarmUp();
       hud.update(day);
       if (day.timeLeft <= 0) finish(false);
     },
@@ -175,6 +192,8 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
       lapTime,
       blinkHoldMs: input.holdMs(),
       wariness: day.wariness,
+      // ツンの間か（ツンデレの見た目を変える。src/render/renderer.js の personalize）
+      shy: isShy(day.trust, personality()),
       // その日の進み具合 0〜1（窓の外の景色・部屋の明るさ。src/render/daylight.js）
       dayTime: Math.min(1, Math.max(0, 1 - day.timeLeft / DAYS[day.dayNumber - 1].durationSec)),
     }),

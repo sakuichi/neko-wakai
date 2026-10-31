@@ -17,7 +17,7 @@ const WRONG_PET_WARINESS = {
 const KICK_MODES = ['belly', 'fakeRub'];
 
 /**
- * @returns {{cat, day, feedback: 'flee'|'kick'|'hide'|'stare'|'blinkBack'|'purr'|'tooFar'|null, mistake: boolean}}
+ * @returns {{cat, day, feedback: 'flee'|'kick'|'hide'|'stare'|'blinkBack'|'blinkAway'|'purr'|'timid'|'tooFar'|null, mistake: boolean}}
  */
 // action: { type: 'pet' } または { type: 'blink', holdMs, sawLook }（sawLook = 押している間に目が合ったか）
 export function applyAction(action, cat, day, personality) {
@@ -38,9 +38,14 @@ export function applyAction(action, cat, day, personality) {
         mistake: false,
       };
     }
+    const relaxed = { ...cat, mode: 'relax', modeTimeLeft: RULES.modeSec.relax[0] };
+    if (isShy(day.trust, personality)) {
+      // ツンの間は、見つめ合うと照れて目をそらす。焦って手を出したわけではないので、ミスには数えない
+      return { cat: relaxed, day: { ...day, trust: clamp(day.trust - RULES.blink.shyPenalty) }, feedback: 'blinkAway', mistake: false };
+    }
     return {
-      cat: { ...cat, mode: 'relax', modeTimeLeft: RULES.modeSec.relax[0] },
-      day: gainTrust(day, RULES.blink.trust),
+      cat: relaxed,
+      day: gainTrust(day, RULES.blink.trust * personality.likes.blink * blinkReach(cat.distance)),
       feedback: 'blinkBack',
       mistake: false,
     };
@@ -48,11 +53,11 @@ export function applyAction(action, cat, day, personality) {
 
   // 以下は pet
   if (cat.mode === 'rub') {
-    return purr(cat, gainTrust(day, RULES.pet.rubTrust));
+    return petted(cat, day, RULES.pet.rubTrust, personality);
   }
   if (cat.mode === 'tailUp') {
     if (cat.distance > RULES.pet.tailUpReach) return { ...none, feedback: 'tooFar' };
-    return purr(cat, gainTrust(day, RULES.pet.tailUpTrust));
+    return petted(cat, day, RULES.pet.tailUpTrust, personality);
   }
   if (cat.mode === 'inBox') {
     return {
@@ -72,19 +77,50 @@ export function applyAction(action, cat, day, personality) {
   };
 }
 
+// 手がこわい猫（timidHands）は、信頼が timidUntil 未満の間、なでられるとビクビクする
+export function isTimid(trust, personality) {
+  return !!personality.timidHands && trust < personality.timidUntil;
+}
+
+// 信頼が性格の shyUntil 未満の間は、まばたきに照れる（ツン）
+export function isShy(trust, personality) {
+  return trust < (personality.shyUntil ?? 0);
+}
+
+// 遠くからのまばたきは、近くからより効きにくい
+function blinkReach(distance) {
+  const { from, min } = RULES.blink.far;
+  if (distance <= from) return 1;
+  return Math.max(min, 1 - ((1 - min) * (distance - from)) / (MAX_VALUE - from));
+}
+
 function gainTrust(day, amount) {
   return { ...day, trust: clamp(day.trust + amount * day.trustRate) };
 }
 
+// 焦って触った（ミス）。警戒が上がり、信頼も少し減る
 function scare(day, amount, personality) {
-  return { ...day, wariness: clamp(day.wariness + amount * personality.warinessMul), mistakes: day.mistakes + 1 };
+  return {
+    ...day,
+    trust: clamp(day.trust - RULES.mistakeTrust),
+    wariness: clamp(day.wariness + amount * personality.warinessMul),
+    mistakes: day.mistakes + 1,
+  };
 }
 
-function purr(cat, day) {
+// なでて喜ばれた（すり寄り・しっぽピン）。手がこわい猫（timidHands）は、信頼が timidUntil になるまでは、
+// なでさせてはくれるが、ゴロゴロではなくビクビクする（効きは likes.pet 倍）。平気になったら、ふつうに効く
+function petted(cat, day, amount, personality) {
+  const timid = isTimid(day.trust, personality);
+  const mul = personality.timidHands && !timid ? 1 : personality.likes.pet;
+  return purr(cat, gainTrust(day, amount * mul), timid);
+}
+
+function purr(cat, day, timid) {
   return {
     cat: { ...cat, mode: 'purr', modeTimeLeft: RULES.purrSec },
     day,
-    feedback: 'purr',
+    feedback: timid ? 'timid' : 'purr',
     mistake: false,
   };
 }

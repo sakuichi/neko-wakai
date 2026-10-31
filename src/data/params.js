@@ -23,7 +23,9 @@ export const RULES = {
   walkResumeGap: 4,
 
   // missWariness: 目が合っていないのにゆっくりまばたきしたときの警戒（連打対策）
-  blink: { minHoldMs: 500, maxHoldMs: 2000, trust: 6, missWariness: 8 },
+  // shyPenalty: ツンの間（信頼が性格の shyUntil 未満）にまばたきしたとき、照れて減る信頼
+  // far: 猫までの距離が from より遠いと、まばたきの効きが下がる（距離100で min 倍。そのあいだは直線）
+  blink: { minHoldMs: 500, maxHoldMs: 2000, trust: 6, missWariness: 8, shyPenalty: 3, far: { from: 50, min: 0.5 } },
 
   pet: {
     rubTrust: 10,
@@ -39,6 +41,9 @@ export const RULES = {
   rubMaxDistance: 30,
   // すり寄りを放っておくと、猫はこれだけ離れる
   rubIgnoredDistance: 10,
+
+  // 焦って触った（ミス）ときに減る信頼。焦らない人ほど早く仲良くなれるように（trustRate はかけない）
+  mistakeTrust: 5,
 
   fleeDistance: 25,
   fleeSec: 1,
@@ -95,6 +100,10 @@ export const NIGHT = {
 };
 
 // approachSpeed：くつろぎで歩いている間に、1秒で近づく距離（座っている間は近づかない）
+// likes：行動ごとの信頼の増え方の倍率。pet＝なでる（しっぽピン・すり寄り）、blink＝ゆっくりまばたき、patience＝我慢のごほうびと背中を向けている間
+// shyUntil：信頼がこれ未満の間は、まばたきすると照れて逆効果（ツン）。0 ならツンはない
+// timidHands：なでられても、手がこわくてビクビクする（反応が「ゴロゴロ」ではなく「ビクビク」になる。信頼の増え方は likes.pet）
+// timidUntil：timidHands の猫は、信頼がこれ以上になると手が平気になる（ゴロゴロに戻り、なでる効きもふつう＝×1）
 export const PERSONALITIES = {
   amaenbo: {
     label: '甘えん坊',
@@ -102,6 +111,8 @@ export const PERSONALITIES = {
     warinessMul: 0.7,
     treatDistance: 30,
     boxLockSec: 5,
+    likes: { pet: 1.6, blink: 0.5, patience: 0.3 },
+    shyUntil: 0,
     signWeights: { relax: 3, look: 2, tailUp: 2, tailFlick: 1, belly: 1, backTurn: 1, rub: 3, fakeRub: 1 },
   },
   tsundere: {
@@ -110,6 +121,8 @@ export const PERSONALITIES = {
     warinessMul: 1.0,
     treatDistance: 10,
     boxLockSec: 5,
+    likes: { pet: 1.2, blink: 1.6, patience: 1.5 },
+    shyUntil: 45,
     signWeights: { relax: 3, look: 2, tailUp: 1, tailFlick: 1, belly: 3, backTurn: 1, rub: 1, fakeRub: 2 },
   },
   bibiri: {
@@ -118,7 +131,12 @@ export const PERSONALITIES = {
     warinessMul: 1.3,
     treatDistance: 20,
     boxLockSec: 3,
-    signWeights: { relax: 3, look: 2, tailUp: 1, tailFlick: 2.5, belly: 1, backTurn: 1, rub: 1, fakeRub: 1 },
+    likes: { pet: 0.5, blink: 1.3, patience: 1 },
+    shyUntil: 0,
+    timidHands: true,
+    timidUntil: 50,
+    // 目を合わせるのが苦手なので、こっちを見る（チラッ）が出にくい
+    signWeights: { relax: 3, look: 1, tailUp: 1, tailFlick: 2.5, belly: 1, backTurn: 1, rub: 1, fakeRub: 1 },
   },
 };
 

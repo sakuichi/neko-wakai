@@ -53,8 +53,9 @@ export function tick(cat, day, personality, dt, rng) {
 
   let gain = 0;
   if (calm) gain += RULES.calmTrustPerSec * dt;
-  if (prevMode === 'backTurn') gain += RULES.backTurnTrustPerSec * dt;
-  if (endured) gain += RULES.patienceTrust;
+  // 背中を向けている間と我慢のごほうびは、どちらも「触らずに待てた」分。性格の得意・苦手（likes.patience）がかかる
+  if (prevMode === 'backTurn') gain += RULES.backTurnTrustPerSec * dt * personality.likes.patience;
+  if (endured) gain += RULES.patienceTrust * personality.likes.patience;
   d.trust = clamp(d.trust + gain * d.trustRate);
 
   if (d.canLap && d.trust >= MAX_VALUE && c.distance <= 0 && c.mode !== 'inBox') {

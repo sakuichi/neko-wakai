@@ -230,7 +230,7 @@ export function createRenderer(canvas) {
     // 消えている間は、前の画面の猫の見た目（アップ・寝姿の動き・性格の仕草）のまま描く
     const look = fadingOut
       ? a.fade.look
-      : { closeup: !!view.closeup, lapT: view.lapTime ?? 0, personality: view.personality, wariness: view.wariness ?? 0 };
+      : { closeup: !!view.closeup, lapT: view.lapTime ?? 0, personality: view.personality, wariness: view.wariness ?? 0, shy: !!view.shy };
     a.last = { pose: cat, coat: coatKey, face: faceKey, look };
     a.shown = { alpha, coat: coatKey, face: faceKey, mode: cat.mode };
     if (cat.mode !== a.lastMode) {
@@ -286,8 +286,9 @@ export function createRenderer(canvas) {
         facing: a.facing,
         personality: look.personality,
         wariness: look.wariness,
+        shy: look.shy,
       });
-      drawEffects(g, t, p.s);
+      drawEffects(g, t, p.s, look);
       g.restore();
     });
     if (!onLap) lap();
@@ -361,7 +362,13 @@ export function createRenderer(canvas) {
     return u >= 0 && u < 1 ? Math.sin(u * Math.PI) : 0;
   }
 
-  function drawEffects(ctx, t, scale) {
+  // look：猫の見た目（性格・警戒）。ビビりが耳を伏せている間は「ビクビク」を出し続ける
+  function drawEffects(ctx, t, scale, look = {}) {
+    const timid = a.effects.some((e) => e.type === 'timid' && t - e.t0 < TIMID_SEC);
+    // 耳を伏せている間の「ビクビク」は、同じ場所に出る「ほっ」が出ている間は出さない（文字が重なって読めないので）
+    const relief = a.effects.some((e) => e.type === 'relief' && t - e.t0 < RELIEF_SEC);
+    const earsDown = look.personality === 'bibiri' && look.wariness >= BIBIRI_EARS_WARINESS;
+    if (timid || (earsDown && !relief)) timidCue(ctx, t, scale);
     for (const e of a.effects) {
       const u = t - e.t0;
       if (e.type === 'purr' || e.type === 'blinkBack') {
@@ -773,15 +780,16 @@ function drawShadow(ctx, mode) {
 
 // 性格ごとの仕草。サインの見分けやすさは変えず、雰囲気だけを変える
 // - 甘えん坊：いつも首をかしげて、ゆらゆらしている
-// - ツンデレ：ごきげんなときほど、目をそらす
+// - ツンデレ：ツンの間（k.shy）は、こっちを見るときも、ごきげんなときも、目をそらす。デレたら正面を向く
 // - ビビり：警戒しているあいだは耳を伏せて、小さく震える
 function personalize(mode, k, opts) {
   const o = { ...opts };
   if (k.personality === 'amaenbo') {
     o.tilt = (o.tilt ?? 0) + 0.08 + Math.sin(k.t * 1.8) * 0.06;
-  } else if (k.personality === 'tsundere' && (mode === 'tailUp' || mode === 'purr')) {
-    o.faceDx = -8;
-  } else if (k.personality === 'bibiri' && k.wariness >= 20 && (o.ears ?? 'up') === 'up') {
+  } else if (k.personality === 'tsundere' && k.shy && (mode === 'look' || mode === 'tailUp' || mode === 'purr')) {
+    o.faceDx = -14;
+    o.turnAway = true;
+  } else if (k.personality === 'bibiri' && k.wariness >= BIBIRI_EARS_WARINESS && (o.ears ?? 'up') === 'up') {
     o.ears = 'half';
   }
   return o;
@@ -838,7 +846,7 @@ function drawCat(ctx, mode, k) {
   }
 }
 
-function sitting(ctx, k, breath, { eyes, mouth = 'w', tail, tilt = 0, ears = 'up', faceDx = 0, kneadT = null }) {
+function sitting(ctx, k, breath, { eyes, mouth = 'w', tail, tilt = 0, ears = 'up', faceDx = 0, turnAway = false, kneadT = null }) {
   drawTail(ctx, tail, k.t);
   // 後ろ足
   for (const side of [-1, 1]) ellipse(ctx, side * 25, -7, 13, 8, COAT.fur, C.line);
@@ -854,7 +862,7 @@ function sitting(ctx, k, breath, { eyes, mouth = 'w', tail, tilt = 0, ears = 'up
     if (kneadT !== null) lift = Math.max(0, Math.sin(kneadT * 7 + (side > 0 ? Math.PI : 0))) * 7;
     paw(ctx, side * 11, -5 - lift);
   }
-  head(ctx, 0, -80, { tilt, eyes, mouth, ears, faceDx, blink: k.blink });
+  head(ctx, 0, -80, { tilt, eyes, mouth, ears, faceDx, turnAway, blink: k.blink });
 }
 
 // 歩く：小さく弾みながら前足を交互に出し、進む向きに少し体を傾けて顔を向ける。
@@ -1038,8 +1046,8 @@ function cueShift() {
   return [Math.max(0, tipX - 40), Math.min(0, FACE.shape.top + 40)];
 }
 
-// faceDx: 顔のパーツを横にずらして、そっぽを向かせる
-function head(ctx, x, y, { tilt = 0, eyes = 'dot', mouth = 'w', ears = 'up', faceDx = 0, blink = 0, scale = 1 }) {
+// faceDx: 顔のパーツを横にずらして、そっぽを向かせる。turnAway: 大きくそっぽを向く（向こう側のほっぺはずらさない）
+function head(ctx, x, y, { tilt = 0, eyes = 'dot', mouth = 'w', ears = 'up', faceDx = 0, turnAway = false, blink = 0, scale = 1 }) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(tilt);
@@ -1055,8 +1063,10 @@ function head(ctx, x, y, { tilt = 0, eyes = 'dot', mouth = 'w', ears = 'up', fac
   // 目・ほっぺ・口は、顔のいちばん広いところ（cy）を基準に置く
   ctx.translate(faceDx, cy);
   const cheek = 31 * (w / 50);
-  ellipse(ctx, -cheek, 12, 7.5, 4.5, C.blush);
-  ellipse(ctx, cheek, 12, 7.5, 4.5, C.blush);
+  // 大きくそっぽを向いたとき、向こう側のほっぺは奥に回り込むので、ずらさない（輪郭からはみ出さないように）
+  const far = turnAway ? -faceDx : 0;
+  ellipse(ctx, -cheek + (faceDx < 0 ? far : 0), 12, 7.5, 4.5, C.blush);
+  ellipse(ctx, cheek + (faceDx > 0 ? far : 0), 12, 7.5, 4.5, C.blush);
   for (const side of [-1, 1]) eye(ctx, side * 20, 2, eyes, blink, side);
   drawMouth(ctx, mouth);
   ctx.restore();
@@ -1290,6 +1300,23 @@ function reliefCue(ctx, u, scale = 1) {
   ctx.fillStyle = C.line;
   ctx.font = 'bold 14px sans-serif';
   ctx.fillText('ほっ', 0, 0);
+  ctx.restore();
+}
+
+// ビビりの耳を伏せる警戒（この間は「ビクビク」も出す）
+const BIBIRI_EARS_WARINESS = 20;
+// ビビりの合図：頭の左上に、小刻みに震える「ビクビク」。耳を伏せている間と、なでた直後に出す
+const TIMID_SEC = 1.2;
+function timidCue(ctx, t, scale = 1) {
+  const fit = Math.max(1, 0.85 / scale);
+  const [dx, dy] = cueShift();
+  ctx.save();
+  ctx.translate(-130 - dx + Math.sin(t * 43) * 0.8, -114 + dy);
+  ctx.scale(fit, fit);
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = C.line;
+  ctx.font = 'bold 14px sans-serif';
+  ctx.fillText('ビクビク', 0, 0);
   ctx.restore();
 }
 

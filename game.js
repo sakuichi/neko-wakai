@@ -30,7 +30,9 @@ __modules['src/data/params.js'] = (() => {
     walkResumeGap: 4,
 
     // missWariness: 目が合っていないのにゆっくりまばたきしたときの警戒（連打対策）
-    blink: { minHoldMs: 500, maxHoldMs: 2000, trust: 6, missWariness: 8 },
+    // shyPenalty: ツンの間（信頼が性格の shyUntil 未満）にまばたきしたとき、照れて減る信頼
+    // far: 猫までの距離が from より遠いと、まばたきの効きが下がる（距離100で min 倍。そのあいだは直線）
+    blink: { minHoldMs: 500, maxHoldMs: 2000, trust: 6, missWariness: 8, shyPenalty: 3, far: { from: 50, min: 0.5 } },
 
     pet: {
       rubTrust: 10,
@@ -46,6 +48,9 @@ __modules['src/data/params.js'] = (() => {
     rubMaxDistance: 30,
     // すり寄りを放っておくと、猫はこれだけ離れる
     rubIgnoredDistance: 10,
+
+    // 焦って触った（ミス）ときに減る信頼。焦らない人ほど早く仲良くなれるように（trustRate はかけない）
+    mistakeTrust: 5,
 
     fleeDistance: 25,
     fleeSec: 1,
@@ -102,6 +107,10 @@ __modules['src/data/params.js'] = (() => {
   };
 
   // approachSpeed：くつろぎで歩いている間に、1秒で近づく距離（座っている間は近づかない）
+  // likes：行動ごとの信頼の増え方の倍率。pet＝なでる（しっぽピン・すり寄り）、blink＝ゆっくりまばたき、patience＝我慢のごほうびと背中を向けている間
+  // shyUntil：信頼がこれ未満の間は、まばたきすると照れて逆効果（ツン）。0 ならツンはない
+  // timidHands：なでられても、手がこわくてビクビクする（反応が「ゴロゴロ」ではなく「ビクビク」になる。信頼の増え方は likes.pet）
+  // timidUntil：timidHands の猫は、信頼がこれ以上になると手が平気になる（ゴロゴロに戻り、なでる効きもふつう＝×1）
   const PERSONALITIES = {
     amaenbo: {
       label: '甘えん坊',
@@ -109,6 +118,8 @@ __modules['src/data/params.js'] = (() => {
       warinessMul: 0.7,
       treatDistance: 30,
       boxLockSec: 5,
+      likes: { pet: 1.6, blink: 0.5, patience: 0.3 },
+      shyUntil: 0,
       signWeights: { relax: 3, look: 2, tailUp: 2, tailFlick: 1, belly: 1, backTurn: 1, rub: 3, fakeRub: 1 },
     },
     tsundere: {
@@ -117,6 +128,8 @@ __modules['src/data/params.js'] = (() => {
       warinessMul: 1.0,
       treatDistance: 10,
       boxLockSec: 5,
+      likes: { pet: 1.2, blink: 1.6, patience: 1.5 },
+      shyUntil: 45,
       signWeights: { relax: 3, look: 2, tailUp: 1, tailFlick: 1, belly: 3, backTurn: 1, rub: 1, fakeRub: 2 },
     },
     bibiri: {
@@ -125,7 +138,12 @@ __modules['src/data/params.js'] = (() => {
       warinessMul: 1.3,
       treatDistance: 20,
       boxLockSec: 3,
-      signWeights: { relax: 3, look: 2, tailUp: 1, tailFlick: 2.5, belly: 1, backTurn: 1, rub: 1, fakeRub: 1 },
+      likes: { pet: 0.5, blink: 1.3, patience: 1 },
+      shyUntil: 0,
+      timidHands: true,
+      timidUntil: 50,
+      // 目を合わせるのが苦手なので、こっちを見る（チラッ）が出にくい
+      signWeights: { relax: 3, look: 1, tailUp: 1, tailFlick: 2.5, belly: 1, backTurn: 1, rub: 1, fakeRub: 1 },
     },
   };
 
@@ -584,7 +602,7 @@ __modules['src/render/renderer.js'] = (() => {
       // 消えている間は、前の画面の猫の見た目（アップ・寝姿の動き・性格の仕草）のまま描く
       const look = fadingOut
         ? a.fade.look
-        : { closeup: !!view.closeup, lapT: view.lapTime ?? 0, personality: view.personality, wariness: view.wariness ?? 0 };
+        : { closeup: !!view.closeup, lapT: view.lapTime ?? 0, personality: view.personality, wariness: view.wariness ?? 0, shy: !!view.shy };
       a.last = { pose: cat, coat: coatKey, face: faceKey, look };
       a.shown = { alpha, coat: coatKey, face: faceKey, mode: cat.mode };
       if (cat.mode !== a.lastMode) {
@@ -640,8 +658,9 @@ __modules['src/render/renderer.js'] = (() => {
           facing: a.facing,
           personality: look.personality,
           wariness: look.wariness,
+          shy: look.shy,
         });
-        drawEffects(g, t, p.s);
+        drawEffects(g, t, p.s, look);
         g.restore();
       });
       if (!onLap) lap();
@@ -715,7 +734,13 @@ __modules['src/render/renderer.js'] = (() => {
       return u >= 0 && u < 1 ? Math.sin(u * Math.PI) : 0;
     }
 
-    function drawEffects(ctx, t, scale) {
+    // look：猫の見た目（性格・警戒）。ビビりが耳を伏せている間は「ビクビク」を出し続ける
+    function drawEffects(ctx, t, scale, look = {}) {
+      const timid = a.effects.some((e) => e.type === 'timid' && t - e.t0 < TIMID_SEC);
+      // 耳を伏せている間の「ビクビク」は、同じ場所に出る「ほっ」が出ている間は出さない（文字が重なって読めないので）
+      const relief = a.effects.some((e) => e.type === 'relief' && t - e.t0 < RELIEF_SEC);
+      const earsDown = look.personality === 'bibiri' && look.wariness >= BIBIRI_EARS_WARINESS;
+      if (timid || (earsDown && !relief)) timidCue(ctx, t, scale);
       for (const e of a.effects) {
         const u = t - e.t0;
         if (e.type === 'purr' || e.type === 'blinkBack') {
@@ -1127,15 +1152,16 @@ __modules['src/render/renderer.js'] = (() => {
 
   // 性格ごとの仕草。サインの見分けやすさは変えず、雰囲気だけを変える
   // - 甘えん坊：いつも首をかしげて、ゆらゆらしている
-  // - ツンデレ：ごきげんなときほど、目をそらす
+  // - ツンデレ：ツンの間（k.shy）は、こっちを見るときも、ごきげんなときも、目をそらす。デレたら正面を向く
   // - ビビり：警戒しているあいだは耳を伏せて、小さく震える
   function personalize(mode, k, opts) {
     const o = { ...opts };
     if (k.personality === 'amaenbo') {
       o.tilt = (o.tilt ?? 0) + 0.08 + Math.sin(k.t * 1.8) * 0.06;
-    } else if (k.personality === 'tsundere' && (mode === 'tailUp' || mode === 'purr')) {
-      o.faceDx = -8;
-    } else if (k.personality === 'bibiri' && k.wariness >= 20 && (o.ears ?? 'up') === 'up') {
+    } else if (k.personality === 'tsundere' && k.shy && (mode === 'look' || mode === 'tailUp' || mode === 'purr')) {
+      o.faceDx = -14;
+      o.turnAway = true;
+    } else if (k.personality === 'bibiri' && k.wariness >= BIBIRI_EARS_WARINESS && (o.ears ?? 'up') === 'up') {
       o.ears = 'half';
     }
     return o;
@@ -1192,7 +1218,7 @@ __modules['src/render/renderer.js'] = (() => {
     }
   }
 
-  function sitting(ctx, k, breath, { eyes, mouth = 'w', tail, tilt = 0, ears = 'up', faceDx = 0, kneadT = null }) {
+  function sitting(ctx, k, breath, { eyes, mouth = 'w', tail, tilt = 0, ears = 'up', faceDx = 0, turnAway = false, kneadT = null }) {
     drawTail(ctx, tail, k.t);
     // 後ろ足
     for (const side of [-1, 1]) ellipse(ctx, side * 25, -7, 13, 8, COAT.fur, C.line);
@@ -1208,7 +1234,7 @@ __modules['src/render/renderer.js'] = (() => {
       if (kneadT !== null) lift = Math.max(0, Math.sin(kneadT * 7 + (side > 0 ? Math.PI : 0))) * 7;
       paw(ctx, side * 11, -5 - lift);
     }
-    head(ctx, 0, -80, { tilt, eyes, mouth, ears, faceDx, blink: k.blink });
+    head(ctx, 0, -80, { tilt, eyes, mouth, ears, faceDx, turnAway, blink: k.blink });
   }
 
   // 歩く：小さく弾みながら前足を交互に出し、進む向きに少し体を傾けて顔を向ける。
@@ -1392,8 +1418,8 @@ __modules['src/render/renderer.js'] = (() => {
     return [Math.max(0, tipX - 40), Math.min(0, FACE.shape.top + 40)];
   }
 
-  // faceDx: 顔のパーツを横にずらして、そっぽを向かせる
-  function head(ctx, x, y, { tilt = 0, eyes = 'dot', mouth = 'w', ears = 'up', faceDx = 0, blink = 0, scale = 1 }) {
+  // faceDx: 顔のパーツを横にずらして、そっぽを向かせる。turnAway: 大きくそっぽを向く（向こう側のほっぺはずらさない）
+  function head(ctx, x, y, { tilt = 0, eyes = 'dot', mouth = 'w', ears = 'up', faceDx = 0, turnAway = false, blink = 0, scale = 1 }) {
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(tilt);
@@ -1409,8 +1435,10 @@ __modules['src/render/renderer.js'] = (() => {
     // 目・ほっぺ・口は、顔のいちばん広いところ（cy）を基準に置く
     ctx.translate(faceDx, cy);
     const cheek = 31 * (w / 50);
-    ellipse(ctx, -cheek, 12, 7.5, 4.5, C.blush);
-    ellipse(ctx, cheek, 12, 7.5, 4.5, C.blush);
+    // 大きくそっぽを向いたとき、向こう側のほっぺは奥に回り込むので、ずらさない（輪郭からはみ出さないように）
+    const far = turnAway ? -faceDx : 0;
+    ellipse(ctx, -cheek + (faceDx < 0 ? far : 0), 12, 7.5, 4.5, C.blush);
+    ellipse(ctx, cheek + (faceDx > 0 ? far : 0), 12, 7.5, 4.5, C.blush);
     for (const side of [-1, 1]) eye(ctx, side * 20, 2, eyes, blink, side);
     drawMouth(ctx, mouth);
     ctx.restore();
@@ -1644,6 +1672,23 @@ __modules['src/render/renderer.js'] = (() => {
     ctx.fillStyle = C.line;
     ctx.font = 'bold 14px sans-serif';
     ctx.fillText('ほっ', 0, 0);
+    ctx.restore();
+  }
+
+  // ビビりの耳を伏せる警戒（この間は「ビクビク」も出す）
+  const BIBIRI_EARS_WARINESS = 20;
+  // ビビりの合図：頭の左上に、小刻みに震える「ビクビク」。耳を伏せている間と、なでた直後に出す
+  const TIMID_SEC = 1.2;
+  function timidCue(ctx, t, scale = 1) {
+    const fit = Math.max(1, 0.85 / scale);
+    const [dx, dy] = cueShift();
+    ctx.save();
+    ctx.translate(-130 - dx + Math.sin(t * 43) * 0.8, -114 + dy);
+    ctx.scale(fit, fit);
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = C.line;
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('ビクビク', 0, 0);
     ctx.restore();
   }
 
@@ -1955,7 +2000,7 @@ __modules['src/data/texts.js'] = (() => {
     'day:intro': {
       pause: true,
       title: '{name}は、まだ警戒している',
-      body: '近づきたい気持ちを、ぐっとこらえて……。\n{name}のほうから膝に乗ってくれたら「和解」です。',
+      body: '近づきたい気持ちを、ぐっとこらえて……。\n{name}のほうから膝に乗ってくれたら「和解」です。\n猫にも性格があります。{name}がどんな子か、よく観察してみましょう。',
     },
     'action:pet': {
       pause: true,
@@ -1965,11 +2010,11 @@ __modules['src/data/texts.js'] = (() => {
     'action:blink': {
       pause: true,
       title: '新しくできること：ゆっくりまばたき',
-      body: '猫と目が合ったら（「チラッ」とこっちを見たら）、まばたきボタン（PCはSpaceキー）を長押しして、離そう。\n猫の世界では「好きだよ」の合図。\n※目が合っていないときにやると、ちょっと不審がられる。',
+      body: '「チラッ」とこっちを見たら、まばたきボタンを長押しして、離そう。\n猫の世界では「好きだよ」の合図。\n※目が合っていないと、ちょっと不審がられる。\n※ツンデレの猫は、仲良くなるまで照れて目をそらすことも。',
     },
     'sign:look': {
       title: '猫のサイン：じっと見つめる',
-      body: '「チラッ」とこっちを見ている。いまが、ゆっくりまばたきのチャンス。',
+      body: '「チラッ」とこっちを見ている。いまが、ゆっくりまばたきのチャンス。\n※ツンデレの猫は、仲良くなるまで照れて逆効果。',
     },
     'sign:tailUp': {
       title: '猫のサイン：しっぽピン',
@@ -2017,6 +2062,8 @@ __modules['src/data/texts.js'] = (() => {
     fakeRub: { title: 'ヒント', body: 'すり寄ってきても、しっぽがパタパタしていたら気まぐれ。\nしっぽがピンと立っているときだけなでよう。' },
     inBox: { title: 'ヒント', body: '箱の中では、そっとしておこう。\n自分から出てくるまで待とう。' },
     stare: { title: 'ヒント', body: 'まばたきは、{name}がじっとこっちを見ているときに。' },
+    // ツンの間にまばたきして、目をそらされたとき（キーは猫の様子ではなく、反応）
+    blinkAway: { title: 'ヒント', body: '{name}は、見つめ合うのが照れくさいみたい。\nもう少し仲良くなるまで、まばたきは待ってみよう。' },
   };
 
   const FEEDBACK = {
@@ -2029,7 +2076,16 @@ __modules['src/data/texts.js'] = (() => {
     tooFar: '（手が届かない……）',
     // 触ると失敗するサインを、触らずにやり過ごせたとき
     relief: '（ほっとしたみたい）',
+    // ツンの間にまばたきしたとき
+    blinkAway: '（ぷいっ。照れて目をそらされた）',
+    // 手がこわい猫（ビビり）をなでたとき
+    timid: '（ビクビク……手はまだこわいみたい）',
   };
+
+  // ツンがとれて、まばたきを喜ぶようになった瞬間に出す
+  const DERE_TEXT = '（{name}の目つきが、少しやわらかくなった）';
+  // 手がこわい猫（ビビり）が、なでられても平気になった瞬間に出す
+  const TIMID_GONE_TEXT = '（{name}は、手がこわくなくなったみたい）';
 
   const LAP_TEXT = '{name}が、膝に乗ってきた……！';
 
@@ -2067,6 +2123,13 @@ __modules['src/data/texts.js'] = (() => {
     cream: 'クリーム',
     shiro: 'シロ',
     kuro: 'クロ',
+  };
+
+  // 性格の得意・苦手のひとこと（エンディングの種明かしで、性格の行のすぐ後ろに出す。倍率は src/data/params.js の likes）
+  const PERSONALITY_TIPS = {
+    amaenbo: 'なでられるのが大好き。待たされるのは、ちょっと苦手',
+    tsundere: 'はじめは見つめられると照れる。仲良くなると、まばたきが大好きに',
+    bibiri: '手はこわいけど、ゆっくりまばたきには安心する',
   };
 
   // 毛色ごとの性格の言い伝え（エンディングで表示。性格との対応は src/data/params.js の COAT_PERSONALITY）
@@ -2127,7 +2190,7 @@ __modules['src/data/texts.js'] = (() => {
     off: 'BGM OFF',
     aria: (label) => `BGM：${label}（タップで次の曲）`,
   };
-  return { withName, TITLE, DAY_TITLES, NAME_TEXT, TUTORIAL, CARDS, HINTS, FEEDBACK, LAP_TEXT, NIGHT_TEXT, ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, NOTEBOOK_TEXT, TITLES, PAUSE_TEXT, SOUND_LABEL, BGM_TEXT };
+  return { withName, TITLE, DAY_TITLES, NAME_TEXT, TUTORIAL, CARDS, HINTS, FEEDBACK, DERE_TEXT, TIMID_GONE_TEXT, LAP_TEXT, NIGHT_TEXT, ENDINGS, ENDING_UI, COAT_LABELS, PERSONALITY_TIPS, COAT_LORE, NOTEBOOK_TEXT, TITLES, PAUSE_TEXT, SOUND_LABEL, BGM_TEXT };
 })();
 
 // ---- src/game/catBrain.js
@@ -2187,8 +2250,9 @@ __modules['src/game/catBrain.js'] = (() => {
 
     let gain = 0;
     if (calm) gain += RULES.calmTrustPerSec * dt;
-    if (prevMode === 'backTurn') gain += RULES.backTurnTrustPerSec * dt;
-    if (endured) gain += RULES.patienceTrust;
+    // 背中を向けている間と我慢のごほうびは、どちらも「触らずに待てた」分。性格の得意・苦手（likes.patience）がかかる
+    if (prevMode === 'backTurn') gain += RULES.backTurnTrustPerSec * dt * personality.likes.patience;
+    if (endured) gain += RULES.patienceTrust * personality.likes.patience;
     d.trust = clamp(d.trust + gain * d.trustRate);
 
     if (d.canLap && d.trust >= MAX_VALUE && c.distance <= 0 && c.mode !== 'inBox') {
@@ -3470,7 +3534,7 @@ __modules['src/game/rules.js'] = (() => {
   const KICK_MODES = ['belly', 'fakeRub'];
 
   /**
-   * @returns {{cat, day, feedback: 'flee'|'kick'|'hide'|'stare'|'blinkBack'|'purr'|'tooFar'|null, mistake: boolean}}
+   * @returns {{cat, day, feedback: 'flee'|'kick'|'hide'|'stare'|'blinkBack'|'blinkAway'|'purr'|'timid'|'tooFar'|null, mistake: boolean}}
    */
   // action: { type: 'pet' } または { type: 'blink', holdMs, sawLook }（sawLook = 押している間に目が合ったか）
   function applyAction(action, cat, day, personality) {
@@ -3491,9 +3555,14 @@ __modules['src/game/rules.js'] = (() => {
           mistake: false,
         };
       }
+      const relaxed = { ...cat, mode: 'relax', modeTimeLeft: RULES.modeSec.relax[0] };
+      if (isShy(day.trust, personality)) {
+        // ツンの間は、見つめ合うと照れて目をそらす。焦って手を出したわけではないので、ミスには数えない
+        return { cat: relaxed, day: { ...day, trust: clamp(day.trust - RULES.blink.shyPenalty) }, feedback: 'blinkAway', mistake: false };
+      }
       return {
-        cat: { ...cat, mode: 'relax', modeTimeLeft: RULES.modeSec.relax[0] },
-        day: gainTrust(day, RULES.blink.trust),
+        cat: relaxed,
+        day: gainTrust(day, RULES.blink.trust * personality.likes.blink * blinkReach(cat.distance)),
         feedback: 'blinkBack',
         mistake: false,
       };
@@ -3501,11 +3570,11 @@ __modules['src/game/rules.js'] = (() => {
 
     // 以下は pet
     if (cat.mode === 'rub') {
-      return purr(cat, gainTrust(day, RULES.pet.rubTrust));
+      return petted(cat, day, RULES.pet.rubTrust, personality);
     }
     if (cat.mode === 'tailUp') {
       if (cat.distance > RULES.pet.tailUpReach) return { ...none, feedback: 'tooFar' };
-      return purr(cat, gainTrust(day, RULES.pet.tailUpTrust));
+      return petted(cat, day, RULES.pet.tailUpTrust, personality);
     }
     if (cat.mode === 'inBox') {
       return {
@@ -3525,23 +3594,54 @@ __modules['src/game/rules.js'] = (() => {
     };
   }
 
+  // 手がこわい猫（timidHands）は、信頼が timidUntil 未満の間、なでられるとビクビクする
+  function isTimid(trust, personality) {
+    return !!personality.timidHands && trust < personality.timidUntil;
+  }
+
+  // 信頼が性格の shyUntil 未満の間は、まばたきに照れる（ツン）
+  function isShy(trust, personality) {
+    return trust < (personality.shyUntil ?? 0);
+  }
+
+  // 遠くからのまばたきは、近くからより効きにくい
+  function blinkReach(distance) {
+    const { from, min } = RULES.blink.far;
+    if (distance <= from) return 1;
+    return Math.max(min, 1 - ((1 - min) * (distance - from)) / (MAX_VALUE - from));
+  }
+
   function gainTrust(day, amount) {
     return { ...day, trust: clamp(day.trust + amount * day.trustRate) };
   }
 
+  // 焦って触った（ミス）。警戒が上がり、信頼も少し減る
   function scare(day, amount, personality) {
-    return { ...day, wariness: clamp(day.wariness + amount * personality.warinessMul), mistakes: day.mistakes + 1 };
+    return {
+      ...day,
+      trust: clamp(day.trust - RULES.mistakeTrust),
+      wariness: clamp(day.wariness + amount * personality.warinessMul),
+      mistakes: day.mistakes + 1,
+    };
   }
 
-  function purr(cat, day) {
+  // なでて喜ばれた（すり寄り・しっぽピン）。手がこわい猫（timidHands）は、信頼が timidUntil になるまでは、
+  // なでさせてはくれるが、ゴロゴロではなくビクビクする（効きは likes.pet 倍）。平気になったら、ふつうに効く
+  function petted(cat, day, amount, personality) {
+    const timid = isTimid(day.trust, personality);
+    const mul = personality.timidHands && !timid ? 1 : personality.likes.pet;
+    return purr(cat, gainTrust(day, amount * mul), timid);
+  }
+
+  function purr(cat, day, timid) {
     return {
       cat: { ...cat, mode: 'purr', modeTimeLeft: RULES.purrSec },
       day,
-      feedback: 'purr',
+      feedback: timid ? 'timid' : 'purr',
       mistake: false,
     };
   }
-  return { applyAction };
+  return { applyAction, isTimid, isShy };
 })();
 
 // ---- src/scenes/dayScene.js
@@ -3549,9 +3649,9 @@ __modules['src/scenes/dayScene.js'] = (() => {
   // 昼：猫との駆け引き。判定は src/game/ に任せ、ここでは時間・入力・表示をつなぐ。
   const { startDay } = __modules['src/game/progression.js'];
   const { tick } = __modules['src/game/catBrain.js'];
-  const { applyAction } = __modules['src/game/rules.js'];
+  const { applyAction, isShy, isTimid } = __modules['src/game/rules.js'];
   const { PERSONALITIES, MAX_VALUE, DAYS } = __modules['src/data/params.js'];
-  const { CARDS, TUTORIAL, FEEDBACK, DAY_TITLES, HINTS, LAP_TEXT, withName } = __modules['src/data/texts.js'];
+  const { CARDS, TUTORIAL, FEEDBACK, DAY_TITLES, HINTS, LAP_TEXT, DERE_TEXT, TIMID_GONE_TEXT, withName } = __modules['src/data/texts.js'];
 
   // 膝に乗ってから結果画面に移るまでの演出時間（ふみふみ → ゴロゴロ → 寝る）
   const LAP_SHOW_SEC = 6.5;
@@ -3641,9 +3741,25 @@ __modules['src/scenes/dayScene.js'] = (() => {
       }
       if (r.mistake) countMiss(before);
       if (r.feedback === 'stare') countMiss('stare');
+      if (r.feedback === 'blinkAway') countMiss('blinkAway');
+      checkWarmUp();
       if (r.mistake && day.dayNumber === 1 && !tut.flee) {
         tut.flee = true;
         timers.push(setTimeout(() => overlay.toast(TUTORIAL.flee, 3200), 1300));
+      }
+    }
+
+    // ツンがとれた・手が平気になった瞬間（その日のうちに信頼が shyUntil・timidUntil をまたいだとき）に、それぞれ1回だけ知らせる
+    let shy = isShy(day.trust, personality());
+    let timid = isTimid(day.trust, personality());
+    function checkWarmUp() {
+      if (shy && !isShy(day.trust, personality())) {
+        shy = false;
+        overlay.toast(text(DERE_TEXT), 3200);
+      }
+      if (timid && !isTimid(day.trust, personality())) {
+        timid = false;
+        overlay.toast(text(TIMID_GONE_TEXT), 3200);
       }
     }
 
@@ -3693,6 +3809,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
             overlay.toast(text(TUTORIAL.approach), 2600);
           }
         }
+        checkWarmUp();
         hud.update(day);
         if (day.timeLeft <= 0) finish(false);
       },
@@ -3723,6 +3840,8 @@ __modules['src/scenes/dayScene.js'] = (() => {
         lapTime,
         blinkHoldMs: input.holdMs(),
         wariness: day.wariness,
+        // ツンの間か（ツンデレの見た目を変える。src/render/renderer.js の personalize）
+        shy: isShy(day.trust, personality()),
         // その日の進み具合 0〜1（窓の外の景色・部屋の明るさ。src/render/daylight.js）
         dayTime: Math.min(1, Math.max(0, 1 - day.timeLeft / DAYS[day.dayNumber - 1].durationSec)),
       }),
@@ -3784,7 +3903,7 @@ __modules['src/scenes/nightScene.js'] = (() => {
 
 // ---- src/scenes/endingScene.js
 __modules['src/scenes/endingScene.js'] = (() => {
-  const { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, NOTEBOOK_TEXT, TITLES, withName } = __modules['src/data/texts.js'];
+  const { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, PERSONALITY_TIPS, NOTEBOOK_TEXT, TITLES, withName } = __modules['src/data/texts.js'];
   const { PERSONALITIES } = __modules['src/data/params.js'];
 
   // saved: ねこ手帳に思い出を残せたか。newTitles: 今回新しく手に入れた称号の id（src/game/records.js）
@@ -3807,6 +3926,8 @@ __modules['src/scenes/endingScene.js'] = (() => {
     const ul = document.createElement('ul');
     const lines = [
       ENDING_UI.personality(g.catName, PERSONALITIES[g.personality].label),
+      // 性格の得意・苦手（次の猫で活かせるように）
+      PERSONALITY_TIPS[g.personality],
       ENDING_UI.coat(COAT_LABELS[g.coat]),
       ENDING_UI.mistakes(g.mistakes),
     ];
@@ -3819,7 +3940,7 @@ __modules['src/scenes/endingScene.js'] = (() => {
     const lore = document.createElement('li');
     lore.className = 'lore';
     lore.textContent = COAT_LORE[g.coat];
-    ul.children[1].after(lore);
+    ul.children[2].after(lore);
     const retry = document.createElement('button');
     retry.type = 'button';
     retry.className = 'retry';
