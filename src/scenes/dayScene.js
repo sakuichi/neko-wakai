@@ -15,6 +15,9 @@ const HINT_AFTER = 2;
 // 説明・ヒントの吹き出しを出しておく時間（秒。説明は src/ui/overlay.js の bubble の決まりの長さ）
 const BUBBLE_SEC = 5;
 const HINT_SEC = 6;
+// トーストを出しておく時間（ミリ秒）：イベントで起きたこと／ツンが取れた・手が平気になった
+const EVENT_TOAST_MS = 1800;
+const WARM_UP_TOAST_MS = 3200;
 
 // 猫の反応（feedback）ごとに鳴らす効果音（src/ui/sound.js のメソッド名）
 const SOUNDS = { purr: ['purr'], blinkBack: ['meow'], flee: ['bump'], kick: ['bump'] };
@@ -38,6 +41,10 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   let ev = day.event ? createEventState(day.event) : null;
   // あとで出す予定のトースト（途中でやめたら取り消す）
   const timers = [];
+  // イベントのトーストを出したら、その表示が終わる（eventToastUntil）まで、ツンが取れた・手が平気になったトーストを待たせる
+  // （トーストは1つしか出せないので、同じ瞬間に出すとイベントのほうが消えてしまう）。時間はゲームの経過（elapsed）で数える
+  let eventToastUntil = 0;
+  const laterToasts = [];
 
   const personality = () => PERSONALITIES[session.game.personality];
   const text = (s) => withName(s, session.game.catName);
@@ -94,7 +101,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
     if (ended || overlay.busy || cat.mode === 'lap') return;
     syncPersonality();
     // ヒントは、失敗したときの猫の様子で選ぶ（イベントで箱の中にいるときは、箱の中のヒント）
-    const before = ev && !ev.done && ['hide', 'peek', 'happy'].includes(ev.phase) ? 'inBox' : cat.mode;
+    const before = ev && !ev.done && ev.id === 'box' && ['hide', 'peek', 'happy'].includes(ev.phase) ? 'inBox' : cat.mode;
     const a = action.type === 'blink' ? { ...action, sawLook: sawLook || cat.mode === 'look' } : action;
     sawLook = false;
     const r = (ev && eventAct(a, ev, cat, day, personality())) || applyAction(a, cat, day, personality());
@@ -129,12 +136,21 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   function checkWarmUp() {
     if (!day.dere && !isShy(day.trust, personality())) {
       day = { ...day, dere: true };
-      overlay.toast(text(DERE_TEXT), 3200);
+      warmUpToast(text(DERE_TEXT));
     }
     if (!day.handsOk && !isTimid(day.trust, personality())) {
       day = { ...day, handsOk: true };
-      overlay.toast(text(TIMID_GONE_TEXT), 3200);
+      warmUpToast(text(TIMID_GONE_TEXT));
     }
+  }
+
+  function warmUpToast(t) {
+    if (elapsed < eventToastUntil) laterToasts.push({ at: eventToastUntil, text: t });
+    else overlay.toast(t, WARM_UP_TOAST_MS);
+  }
+
+  function flushLaterToasts() {
+    while (laterToasts.length > 0 && laterToasts[0].at <= elapsed + 1e-9) overlay.toast(laterToasts.shift().text, WARM_UP_TOAST_MS);
   }
 
   // いつもの日：様子の切り替え・移動（src/game/catBrain.js）。イベントが終わったあとも、これに戻る
@@ -168,7 +184,12 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
     day = r.day;
     for (const cue of r.cues) {
       const t = EVENT_TEXT[ev.id]?.[cue];
-      if (t) overlay.toast(text(t), 1800);
+      if (t) {
+        overlay.toast(text(t), EVENT_TOAST_MS);
+        eventToastUntil = elapsed + EVENT_TOAST_MS / 1000;
+      }
+      // 鳥が去って、ほっとした（いつもの「やり過ごせた」と同じ演出）
+      if (cue === 'left' || cue === 'understood') renderer.addEffect('relief');
     }
   }
 
@@ -205,6 +226,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
         }
       }
       checkWarmUp();
+      flushLaterToasts();
       hud.update(day);
       if (day.timeLeft <= 0) finish(false);
     },

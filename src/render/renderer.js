@@ -8,7 +8,7 @@
 // - 線は均一な太さのこげ茶。角は丸く
 import { MAX_VALUE, RULES, EVENTS } from '../data/params.js';
 import { daylightAt, mixColor, rgba } from './daylight.js';
-import { drawParcel, drawPaperBits, drawPropText } from './props.js';
+import { drawParcel, drawPaperBits, drawPropText, drawBranch, drawBird } from './props.js';
 
 export const W = 360;
 export const H = 640;
@@ -258,7 +258,9 @@ export function createRenderer(canvas) {
     if (t < a.shakeUntil) ctx.translate(Math.sin(t * 90) * 4, Math.cos(t * 70) * 2);
     if (view.dayTime !== undefined) a.dayTime = view.dayTime;
     else if (view.scene === 'title' || view.scene === 'name') a.dayTime = 0;
-    drawRoom(ctx, daylightAt(a.dayTime, view.scene === 'night'));
+    // イベントの小道具の状態を先に進める（窓の外の鳥は、部屋といっしょに描く）
+    const prop = updateProp(view, t);
+    drawRoom(ctx, daylightAt(a.dayTime, view.scene === 'night'), prop?.kind === 'bird' ? (g) => drawWindowBird(g, prop, t) : null);
     // なでようと手を伸ばしている間は、左手を膝から離す（腕が3本に見えないように）
     const reaching = a.effects.some((e) => e.type === 'reach' && t - e.t0 < REACH_SEC);
     const lap = () => {
@@ -274,7 +276,6 @@ export function createRenderer(canvas) {
     const onLap = cat.mode === 'lap' && a.lapBlend > 0.6;
     if (onLap) lap();
     // イベントの小道具：猫より奥に置くもの（猫が箱から出たあとの空の箱）を先に描く
-    const prop = updateProp(view, t, p);
     if (prop && propBehind(prop, cat)) drawProp(ctx, prop, t, p);
     withAlpha(alpha, (g) => {
       g.save();
@@ -398,16 +399,17 @@ export function createRenderer(canvas) {
   }
 
   // イベントの小道具の状態を進める。箱は、猫が箱の前に着いたとき（approach が終わったとき）の場所に置き、その日のあいだ動かさない
-  function updateProp(view, t, p) {
+  function updateProp(view, t) {
     if (view.scene !== 'day' || !view.prop) {
       a.prop = null;
       return null;
     }
     const { kind, phase } = view.prop;
     if (!a.prop || a.prop.kind !== kind) a.prop = { kind, phase, start: t, prev: null, anchor: null };
-    if (a.prop.phase !== phase) a.prop = { ...a.prop, prev: a.prop.phase, phase, start: t };
+    // from：phase が変わったときの鳥の位置（飛び去るときは、そこから飛ぶ）
+    if (a.prop.phase !== phase) a.prop = { ...a.prop, prev: a.prop.phase, phase, start: t, from: a.prop.birdAt };
     // 表示上の猫は少し遅れて追いかけてくるので、いまの表示の位置ではなく、猫が止まる位置（実際の距離）に置く
-    if (!a.prop.anchor && phase !== 'approach') {
+    if (kind === 'parcel' && !a.prop.anchor && phase !== 'approach') {
       const q = placement(view.cat.distance);
       a.prop.anchor = { x: q.x, y: q.y + PARCEL_SINK * q.s, s: q.s };
     }
@@ -536,8 +538,8 @@ export function drawCatPortrait(canvas, coat, { silhouette = false, face = DEFAU
   }
 }
 
-// light: 時間帯の景色（src/render/daylight.js の daylightAt）
-function drawRoom(ctx, light) {
+// light: 時間帯の景色（src/render/daylight.js の daylightAt）。outside：窓の外に描き足すもの（窓の形で切り抜いた中に、景色のあとで描く）
+function drawRoom(ctx, light, outside = null) {
   const night = light.phase === 'night';
   ctx.fillStyle = night ? '#454160' : '#f7ead8';
   ctx.fillRect(0, 0, W, 345);
@@ -548,6 +550,7 @@ function drawRoom(ctx, light) {
   ctx.save();
   ctx.clip();
   drawWindowView(ctx, light);
+  outside?.(ctx);
   ctx.restore();
   // 景色を描いたので、窓の形をもう一度なぞって枠を描く
   roundRect(ctx, 36, 76, 132, 118, 10);
@@ -1357,10 +1360,14 @@ const PAPER_BITS_SEC = 0.8;
 
 // 猫より奥に描く：猫が箱から出て、箱より手前（近く）に来たとき。箱より遠くにいる間は、箱を手前に描く
 function propBehind(prop, cat) {
-  return prop.phase === 'left' && cat.distance < EVENTS.box.boxDistance;
+  return prop.kind === 'parcel' && prop.phase === 'left' && cat.distance < EVENTS.box.boxDistance;
 }
 
 function drawProp(ctx, prop, t, p) {
+  if (prop.kind === 'bird') {
+    drawHuntCue(ctx, prop, t, p);
+    return;
+  }
   const A = prop.anchor;
   if (!A) return;
   const u = t - prop.start;
@@ -1402,6 +1409,71 @@ function drawProp(ctx, prop, t, p) {
     default:
       parcelAt(A.x, A.y, A.s);
   }
+}
+
+// 窓の外の鳥：枝にとまる位置。鳥は窓の外にいるので、ガラス越しに小さめに描く
+const BIRD_PERCH = { x: 122, y: 156 };
+const BIRD_SCALE = 0.8;
+// 鳥が窓のほうへ飛び去る向き（leaveSec でこれだけ動く）
+const BIRD_AWAY = { x: 70, y: -60 };
+// 鳥がいる phase（ここから別の phase に変わったら、飛び去る）
+const BIRD_THERE = ['arrive', 'hunt', 'leave'];
+// 「カカカ」は、KAKA_SEC ごとに KAKA_ON 秒だけ出す（小刻みに鳴いては止む）
+const KAKA_SEC = 1.4;
+const KAKA_ON = 0.9;
+
+// 窓の外（drawRoom の outside）：枝はその日のあいだずっと。鳥は、飛んできて、とまって、飛び去る。最後にガラスのつやを重ねる
+function drawWindowBird(ctx, prop, t) {
+  drawBranch(ctx);
+  const B = EVENTS.bird;
+  const u = t - prop.start;
+  let at = null;
+  let flying = false;
+  const flyAway = (k) => {
+    const from = prop.from ?? BIRD_PERCH;
+    return { x: from.x + BIRD_AWAY.x * k, y: from.y + BIRD_AWAY.y * k };
+  };
+  if (prop.phase === 'arrive') {
+    // 左から弧を描いて飛んできて、枝にとまる
+    const k = clamp01(u / B.arriveSec);
+    at = { x: 10 + (BIRD_PERCH.x - 10) * k, y: BIRD_PERCH.y - 6 - Math.sin(k * Math.PI) * 36 + k * 6 };
+    flying = k < 1;
+  } else if (prop.phase === 'hunt') {
+    // 枝の上で、ちょんちょんと動く
+    at = { x: BIRD_PERCH.x + Math.sin(u * 1.3) * 12, y: BIRD_PERCH.y + (Math.sin(u * 5) > 0.7 ? -4 : 0) };
+  } else if (prop.phase === 'leave' || (BIRD_THERE.includes(prop.prev) && prop.from && u < B.leaveSec)) {
+    // 見守れて去るとき（leave）も、触って驚いて逃げるときも、同じように飛び去る。
+    // phase が変わったときにもう飛び去り終えていた（from がない）なら、続きは描かない
+    const k = clamp01(u / B.leaveSec);
+    if (k < 1) at = flyAway(k);
+    flying = true;
+  }
+  prop.birdAt = at;
+  if (at) {
+    ctx.save();
+    ctx.translate(at.x, at.y);
+    ctx.scale(BIRD_SCALE, BIRD_SCALE);
+    drawBird(ctx, t, flying);
+    ctx.restore();
+  }
+  // ガラスのつや（鳥と枝がガラスの向こうにあるように見せる）
+  ctx.save();
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+  ctx.fillRect(36, 76, 132, 118);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+  ctx.lineWidth = 3;
+  line(ctx, 48, 120, 66, 96);
+  line(ctx, 112, 184, 128, 160);
+  ctx.restore();
+}
+
+// 狩りの間、猫の頭の横に「カカカ」（小刻みに震わせる）
+function drawHuntCue(ctx, prop, t, p) {
+  if (prop.phase !== 'hunt') return;
+  const u = t - prop.start;
+  if (u % KAKA_SEC >= KAKA_ON) return;
+  const fit = Math.max(1, 0.85 / p.s);
+  drawPropText(ctx, 'カカカ', p.x + 40 * p.s + Math.sin(t * 40), p.y - 110 * p.s, 14, fit);
 }
 
 function exclaim(ctx, x, y) {

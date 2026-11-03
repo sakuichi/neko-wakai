@@ -11,45 +11,64 @@ const BOX_POSE = { approach: 'relax', arrive: 'tailUp', hop: 'tailUp', hide: 're
 // 箱の中にいる phase（なでると「箱の奥に引っ込んだ」になる）
 const IN_BOX = ['hide', 'peek', 'happy'];
 
+// 窓の外に鳥：鳥が来ている間は窓のほうを向いて背中を見せ、鳥が去ったら振り向いてこっちを見る。shy はツンで目をそらしたとき
+const BIRD_POSE = { approach: 'relax', arrive: 'backTurn', hunt: 'backTurn', leave: 'backTurn', turn: 'look', happy: 'purr', shy: 'relax' };
+
 export function createEventState(id) {
-  return { id, phase: 'approach', phaseT: 0, blinks: 0, done: false, hideFor: 0 };
+  const base = { id, phase: 'approach', phaseT: 0, blinks: 0, done: false };
+  // round：鳥が来て去った回数（触って邪魔した回も数える）。watched：狩りを最後まで見守れた回数。huntFor：今回の狩りの長さ
+  if (id === 'bird') return { ...base, round: 0, watched: 0, huntFor: 0 };
+  return { ...base, hideFor: 0 };
 }
 
 /**
- * @returns {{ev, cat, day, cues: string[]}} cues：この tick で起きたこと（'drop' 箱が置かれた / 'hid' もぐった / 'peek' 顔を出した / 'out' 出てきた）
+ * @returns {{ev, cat, day, cues: string[]}} cues：この tick で起きたこと
+ *   箱：'drop' 箱が置かれた / 'hid' もぐった / 'peek' 顔を出した / 'out' 出てきた
+ *   鳥：'hunt' 狩りを始めた / 'understood' 初めて見守れて、鳥が去った（わかってくれた） / 'left' 2回目以降に見守れて、鳥が去った
  */
 export function eventTick(ev, cat, day, personality, dt, rng) {
-  const P = EVENTS.box;
   const a = ambient(day, dt);
   let d = a.day;
   if (a.calm) d = { ...d, trust: clamp(d.trust + RULES.calmTrustPerSec * dt * d.trustRate) };
-  let e = { ...ev, phaseT: ev.phaseT + dt };
-  let c = { ...cat, walking: false };
+  const e = { ...ev, phaseT: ev.phaseT + dt };
+  const c = { ...cat, walking: false };
+
+  if (d.boxLockLeft > 0) {
+    // 前の晩に置いた段ボールから、まだ出てこない（いつもの日と同じ）。出てきてから、イベントが始まる
+    d = { ...d, boxLockLeft: Math.max(0, d.boxLockLeft - dt) };
+    c.mode = 'inBox';
+    return { ev: e, cat: c, day: d, cues: [] };
+  }
+
+  if (c.mode === 'flee') {
+    // 逃げている間は、いつもの決まりの長さだけ待ってから、もう一度歩く
+    c.modeTimeLeft = (c.modeTimeLeft ?? 0) - dt;
+    if (c.modeTimeLeft > 0) return { ev: e, cat: c, day: d, cues: [] };
+    c.mode = 'relax';
+  }
+
+  const step = e.id === 'bird' ? birdTick : boxTick;
+  return step(e, c, d, personality, dt, rng, a.calm);
+}
+
+// 落ち着いていれば、くつろいで target まで歩く
+function walkTo(c, d, personality, dt, calm, target) {
+  if (c.distance > target && calm) {
+    c.distance = Math.max(target, c.distance - personality.approachSpeed * d.approachMul * dt);
+    c.walking = c.distance > target;
+  }
+  return c.distance <= target;
+}
+
+function boxTick(e, c, d, personality, dt, rng, calm) {
+  const P = EVENTS.box;
   const cues = [];
   const go = (phase) => {
     e = { ...e, phase, phaseT: 0 };
   };
 
-  if (d.boxLockLeft > 0) {
-    // 前の晩に置いた段ボールから、まだ出てこない（いつもの日と同じ）。出てきてから、箱へ歩き始める
-    d = { ...d, boxLockLeft: Math.max(0, d.boxLockLeft - dt) };
-    c.mode = 'inBox';
-    return { ev: e, cat: c, day: d, cues };
-  }
-
-  if (c.mode === 'flee') {
-    // 逃げている間は、いつもの決まりの長さだけ待ってから、もう一度箱へ歩く
-    c.modeTimeLeft = (c.modeTimeLeft ?? 0) - dt;
-    if (c.modeTimeLeft > 0) return { ev: e, cat: c, day: d, cues };
-    c.mode = 'relax';
-  }
-
   if (e.phase === 'approach') {
-    if (c.distance > P.boxDistance && a.calm) {
-      c.distance = Math.max(P.boxDistance, c.distance - personality.approachSpeed * d.approachMul * dt);
-      c.walking = c.distance > P.boxDistance;
-    }
-    if (c.distance <= P.boxDistance) {
+    if (walkTo(c, d, personality, dt, calm, P.boxDistance)) {
       go('arrive');
       cues.push('drop');
     }
@@ -94,49 +113,138 @@ function hideLength(rng) {
   return min + (max - min) * rng();
 }
 
+function birdTick(e, c, d, personality, dt, rng, calm) {
+  const P = EVENTS.bird;
+  const cues = [];
+  const go = (phase, extra = {}) => {
+    e = { ...e, ...extra, phase, phaseT: 0 };
+  };
+  const gain = (amount) => {
+    d = { ...d, trust: clamp(d.trust + amount * d.trustRate) };
+  };
+  // 終わり。ごほうびとトーストは、最初に見守れた回に済ませているので、ここでは何も足さない
+  const finish = () => {
+    go('out', { done: true });
+    c.mode = 'relax';
+    return { ev: e, cat: c, day: d, cues };
+  };
+
+  // 背中を向けている間は、いつもの日と同じく「触らずに待てた」分だけ信頼が増える（性格の得意・苦手 likes.patience がかかる）
+  if (c.mode === 'backTurn') gain(RULES.backTurnTrustPerSec * dt * personality.likes.patience);
+
+  if (e.phase === 'approach') {
+    if (walkTo(c, d, personality, dt, calm, P.birdDistance)) {
+      if (e.round >= P.rounds) return finish();
+      go('arrive');
+    }
+  } else if (e.phase === 'arrive') {
+    if (e.phaseT >= P.arriveSec) {
+      const [min, max] = P.huntSec;
+      go('hunt', { huntFor: min + (max - min) * rng() });
+      cues.push('hunt');
+    }
+  } else if (e.phase === 'hunt') {
+    if (e.phaseT >= e.huntFor) {
+      // 狩りの邪魔をしなかった：いつもの「我慢のごほうび」と同じ量。最初に見守れた回だけ、わかってくれた（doneTrust）
+      const first = e.watched === 0;
+      go('leave', { watched: e.watched + 1 });
+      gain(RULES.patienceTrust * personality.likes.patience);
+      if (first) gain(P.doneTrust);
+      cues.push(first ? 'understood' : 'left');
+    }
+  } else if (e.phase === 'leave') {
+    if (e.phaseT >= P.leaveSec) go('turn');
+  } else if (e.phase === 'turn') {
+    if (e.phaseT >= P.turnSec && endRound()) return finish();
+  } else if (e.phase === 'happy' || e.phase === 'shy') {
+    if (e.phaseT >= P.happySec && endRound()) return finish();
+  }
+  c.mode = BIRD_POSE[e.phase] ?? c.mode;
+  return { ev: e, cat: c, day: d, cues };
+
+  // その回が終わる。まだ回が残っていれば、鳥がまた来る。最後の回なら true
+  function endRound() {
+    const round = e.round + 1;
+    e = { ...e, round };
+    if (round >= P.rounds) return true;
+    go('arrive');
+    return false;
+  }
+}
+
 /**
  * イベントの間のなでる・まばたき。いつもの決まり（applyAction）に、猫の様子を読み替えて渡す。
  * @returns {{ev, cat, day, feedback, mistake}|null} イベントが終わったあとは null（いつもの applyAction に任せる）
  */
 export function eventAct(action, ev, cat, day, personality) {
   if (ev.done) return null;
-  const P = EVENTS.box;
-  const as = (mode) => applyAction(action, { ...cat, mode }, day, personality);
 
   // 逃げている間・前の晩の段ボールの中では、いつもの日と同じ（逃げている猫には何も起きない。段ボールの中を触ると引っ込む）
   if (cat.mode === 'flee' || cat.mode === 'inBox') {
     const r = applyAction(action, cat, day, personality);
     return { ev, cat: r.cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
   }
+  return ev.id === 'bird' ? birdAct(action, ev, cat, day, personality) : boxAct(action, ev, cat, day, personality);
+}
+
+function boxAct(action, ev, cat, day, personality) {
+  const P = EVENTS.box;
+  const as = (mode) => applyAction(action, { ...cat, mode }, day, personality);
 
   if (action.type === 'blink') {
     // 押している間に顔を出していれば（sawLook）、離す前にもぐっても、いつもどおり目が合ったことにする
     if (ev.phase === 'peek' || (ev.phase === 'hide' && action.sawLook)) {
       const r = as('look');
-      if (r.feedback === 'blinkBack') return result({ ...ev, blinks: ev.blinks + 1, phase: 'happy', phaseT: 0 }, cat, r);
-      if (r.feedback === 'blinkAway') return result({ ...ev, phase: 'hide', phaseT: 0, hideFor: P.hideSec[0] }, cat, r);
-      return result(ev, cat, r);
+      if (r.feedback === 'blinkBack') return result(BOX_POSE, { ...ev, blinks: ev.blinks + 1, phase: 'happy', phaseT: 0 }, cat, r);
+      if (r.feedback === 'blinkAway') return result(BOX_POSE, { ...ev, phase: 'hide', phaseT: 0, hideFor: P.hideSec[0] }, cat, r);
+      return result(BOX_POSE, ev, cat, r);
     }
-    return result(ev, cat, as('relax'));
+    return result(BOX_POSE, ev, cat, as('relax'));
   }
 
   // なでる
   if (IN_BOX.includes(ev.phase)) {
     const r = as('inBox');
-    return result({ ...ev, phase: 'hide', phaseT: 0, hideFor: P.afterPetHideSec }, cat, r);
+    return result(BOX_POSE, { ...ev, phase: 'hide', phaseT: 0, hideFor: P.afterPetHideSec }, cat, r);
   }
   // 箱の外では、見えている様子（くつろぎ・しっぽピン）のとおりに判定する（サインの意味を、イベントの日でも変えない）
   const r = as(BOX_POSE[ev.phase] ?? 'relax');
   if (r.cat.mode === 'flee') return { ev: { ...ev, phase: 'approach', phaseT: 0 }, cat: r.cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
-  return result(ev, cat, r);
+  return result(BOX_POSE, ev, cat, r);
+}
+
+function birdAct(action, ev, cat, day, personality) {
+  const as = (mode) => applyAction(action, { ...cat, mode }, day, personality);
+  const pose = BIRD_POSE[ev.phase] ?? 'relax';
+
+  if (action.type === 'blink') {
+    // 振り向いたとき（turn）か、押している間に目が合っていれば（sawLook）、いつもの「チラッ」へのまばたき
+    if (ev.phase === 'turn' || action.sawLook) {
+      const r = as('look');
+      if (ev.phase === 'turn' && r.feedback === 'blinkBack') return result(BIRD_POSE, { ...ev, blinks: ev.blinks + 1, phase: 'happy', phaseT: 0 }, cat, r);
+      if (ev.phase === 'turn' && r.feedback === 'blinkAway') return result(BIRD_POSE, { ...ev, phase: 'shy', phaseT: 0 }, cat, r);
+      return result(BIRD_POSE, ev, cat, r);
+    }
+    return result(BIRD_POSE, ev, cat, as(pose));
+  }
+
+  // なでる：見えている様子（背中・チラッ・ゴロゴロ）のとおりに判定する。逃げたら、鳥も去って、その回は終わり（ごほうびなし）。
+  // 窓の前まで歩き直してから、次の回の鳥が来る。歩いている途中（approach）に逃げたときは、回は数えない
+  const r = as(pose);
+  if (r.cat.mode === 'flee') {
+    const round = ev.phase === 'approach' ? ev.round : ev.round + 1;
+    return { ev: { ...ev, phase: 'approach', phaseT: 0, round }, cat: r.cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
+  }
+  return result(BIRD_POSE, ev, cat, r);
 }
 
 // 判定の結果（信頼・警戒・反応）だけを使い、猫の様子は phase に合わせる
-function result(ev, cat, r) {
-  return { ev, cat: { ...cat, mode: BOX_POSE[ev.phase] ?? cat.mode }, day: r.day, feedback: r.feedback, mistake: r.mistake };
+function result(pose, ev, cat, r) {
+  return { ev, cat: { ...cat, mode: pose[ev.phase] ?? cat.mode }, day: r.day, feedback: r.feedback, mistake: r.mistake };
 }
 
-// 描画用（src/render/renderer.js）。done のあとは、空になった箱がその場に残る
+// 描画用（src/render/renderer.js）。箱は done のあと、空になった箱がその場に残る（left）。鳥は done のあとも窓の外に枝が残る
 export function eventProp(ev) {
+  if (ev.id === 'bird') return { kind: 'bird', phase: ev.done ? 'done' : ev.phase, phaseT: ev.phaseT };
   return { kind: 'parcel', phase: ev.done ? 'left' : ev.phase, phaseT: ev.phaseT };
 }

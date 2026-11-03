@@ -9,7 +9,7 @@ const SHAPE_LABELS = { mochi: 'おもち', maru: 'まんまる', shimobukure: '�
 const EAR_LABELS = { small: '小', normal: '中', big: '大' };
 
 // イベントの日の固定（値は 'イベント:日'。空ならランダム）
-const EVENT_OPTIONS = [['', 'ランダム'], ['box:4', '箱が届いた（4日目）']];
+const EVENT_OPTIONS = [['', 'ランダム'], ['box:4', '箱が届いた（4日目）'], ['bird:4', '窓の外に鳥（4日目）']];
 
 export function createDebugPanel(el, { onPersonality, onCoat, onFace, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords, onEvent }) {
   const details = document.createElement('details');

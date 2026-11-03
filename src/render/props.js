@@ -1,4 +1,5 @@
-// イベントの小道具（4〜6日目）。描く位置・大きさは src/render/renderer.js が決め、ここでは箱の座標（底の真ん中が原点）で描く。
+// イベントの小道具（4〜6日目）。描く位置・大きさは src/render/renderer.js が決め、ここではそれぞれの座標で描く
+// （箱は底の真ん中、小鳥は胴の真ん中が原点。枝は窓の座標のまま）。
 // 線の色・太さは renderer の猫と同じ
 
 const LINE = '#4e3d36';
@@ -111,5 +112,70 @@ export function drawPropText(ctx, text, x, y, size, fit = 1) {
   ctx.fillStyle = LINE;
   ctx.font = `bold ${size}px sans-serif`;
   ctx.fillText(text, 0, 0);
+  ctx.restore();
+}
+
+/**
+ * 窓の外の木の枝と葉（窓の外に鳥の日）。窓（renderer の drawRoom。x 36〜168, y 76〜194）の座標でそのまま描く。
+ * 窓の形で切り抜いた中に描くので、はみ出した分は見えない
+ */
+export function drawBranch(ctx) {
+  ctx.save();
+  ctx.strokeStyle = '#8a6748';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 6;
+  ctx.beginPath();
+  ctx.moveTo(20, 176);
+  ctx.quadraticCurveTo(80, 166, 150, 172);
+  ctx.stroke();
+  ctx.lineWidth = 3;
+  line(ctx, 70, 170, 84, 154);
+  ctx.fillStyle = '#9cc58a';
+  for (const [x, y] of [[86, 151], [52, 168], [128, 166], [100, 175]]) {
+    ctx.beginPath();
+    ctx.ellipse(x, y, 7, 4, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// 小鳥（右向き。原点は胴の真ん中）。flying：飛んでいる間は羽ばたき、足をたたむ
+export function drawBird(ctx, t, flying) {
+  ctx.save();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = LINE;
+  ctx.fillStyle = '#8fb7d9';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 11, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(9, -5, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#f0b44c';
+  ctx.beginPath();
+  ctx.moveTo(15, -5);
+  ctx.lineTo(20, -3);
+  ctx.lineTo(15, -1);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = LINE;
+  ctx.beginPath();
+  ctx.arc(10, -6, 1.3, 0, Math.PI * 2);
+  ctx.fill();
+  const flap = flying ? Math.sin(t * 30) * 8 : Math.sin(t * 3) * 1.5;
+  ctx.fillStyle = '#6f9ac2';
+  ctx.beginPath();
+  ctx.moveTo(-4, -2);
+  ctx.lineTo(-10, -10 - flap);
+  ctx.lineTo(4, -4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  if (!flying) {
+    line(ctx, -2, 7, -3, 12);
+    line(ctx, 3, 7, 3, 12);
+  }
   ctx.restore();
 }
