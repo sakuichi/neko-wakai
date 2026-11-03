@@ -1,0 +1,115 @@
+// イベントの小道具（4〜6日目）。描く位置・大きさは src/render/renderer.js が決め、ここでは箱の座標（底の真ん中が原点）で描く。
+// 線の色・太さは renderer の猫と同じ
+
+const LINE = '#4e3d36';
+const LW = 3.5;
+
+function line(ctx, x0, y0, x1, y1) {
+  ctx.beginPath();
+  ctx.moveTo(x0, y0);
+  ctx.lineTo(x1, y1);
+  ctx.stroke();
+}
+
+/**
+ * 通販の箱。夜に置く無地の段ボール（renderer の inBox）と見分けがつくよう、明るい色・ガムテープ・宛名ラベル・
+ * 「ワレモノ」シール・詰め物の紙を付ける。前面とフタは、伏せた猫の体をすっかり隠す大きさ
+ * inside：箱の内側（奥）を描く。猫が顔を出している間は、首の前に奥の壁が来ないよう描かない
+ * pile：詰め物の紙を山盛りにする（もぐっている間。猫の頭を隠し、耳の先だけ出る）
+ */
+export function drawParcel(ctx, { inside = true, paper = true, pile = false } = {}) {
+  ctx.save();
+  ctx.lineWidth = LW;
+  ctx.strokeStyle = LINE;
+  if (inside) {
+    ctx.fillStyle = '#b98a56';
+    ctx.beginPath();
+    ctx.moveTo(-64, -66);
+    ctx.lineTo(64, -66);
+    ctx.lineTo(52, -78);
+    ctx.lineTo(-52, -78);
+    ctx.closePath();
+    ctx.fill();
+  }
+  if (paper) {
+    ctx.fillStyle = '#fffaf2';
+    const balls = pile
+      ? [[-46, -70, 13], [-24, -76, 15], [2, -80, 17], [28, -76, 15], [48, -70, 12], [-34, -88, 12], [-10, -94, 13], [18, -92, 12], [40, -86, 10]]
+      : [[-44, -68, 8], [-24, -70, 7], [26, -70, 7], [46, -68, 8]];
+    for (const [x, y, r] of balls) {
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+  // フタ（外に開いている）
+  ctx.fillStyle = '#d9a86c';
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(side * 64, -66);
+    ctx.lineTo(side * 98, -86);
+    ctx.lineTo(side * 92, -44);
+    ctx.lineTo(side * 64, -38);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  // 前面
+  ctx.fillStyle = '#ebc48e';
+  ctx.beginPath();
+  ctx.rect(-64, -66, 128, 66);
+  ctx.fill();
+  ctx.stroke();
+  // ガムテープ（真ん中を縦に）
+  ctx.fillStyle = 'rgba(196, 150, 92, 0.85)';
+  ctx.fillRect(-11, -66, 22, 66);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+  ctx.fillRect(-11, -66, 5, 66);
+  // 宛名ラベル
+  ctx.fillStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.rect(20, -52, 36, 26);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(78, 61, 54, 0.5)';
+  for (let i = 0; i < 3; i++) line(ctx, 25, -45 + i * 7, 51 - i * 6, -45 + i * 7);
+  // 「ワレモノ」シール
+  ctx.fillStyle = '#e46d5c';
+  ctx.fillRect(-58, -54, 42, 16);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 9px sans-serif';
+  ctx.fillText('ワレモノ', -55, -43);
+  ctx.restore();
+}
+
+// もぐった瞬間に舞う紙くず。u は 0〜1（舞い上がって、消えていく）
+export function drawPaperBits(ctx, u) {
+  ctx.save();
+  ctx.globalAlpha = 1 - u;
+  ctx.fillStyle = '#fffaf2';
+  ctx.strokeStyle = LINE;
+  ctx.lineWidth = 2;
+  for (const [dx, h] of [[-50, 1], [-20, 1.3], [16, 1.2], [46, 0.9]]) {
+    const x = dx * (1 + u * 0.6);
+    const y = -80 - Math.sin(u * Math.PI) * 50 * h;
+    ctx.beginPath();
+    ctx.rect(x - 5, y - 4, 10, 8);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// 小道具に添える短い文字（「ドサッ」「？」「カサカサ」）。遠くて小さく描かれるときも読めるよう、fit で大きさを補う
+export function drawPropText(ctx, text, x, y, size, fit = 1) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(fit, fit);
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = LINE;
+  ctx.font = `bold ${size}px sans-serif`;
+  ctx.fillText(text, 0, 0);
+  ctx.restore();
+}

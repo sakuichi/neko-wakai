@@ -68,6 +68,17 @@ const DAY3_SIGNS = ['relax', 'look', 'tailUp', 'tailFlick', 'belly', 'backTurn',
 // 4日目からは、すり寄りに見せかけたフェイントが加わる
 const LATE_SIGNS = [...DAY3_SIGNS, 'fakeRub'];
 
+// イベントの日（7章）。ゲームの始めに、イベントをこの日のどれかに1つずつ割り当てる（src/game/progression.js の chooseEvents）
+export const EVENT_DAYS = [4, 5, 6];
+
+// イベントごとの数値（進め方は src/game/events.js）
+export const EVENTS = {
+  // 箱が届いた：猫が箱の位置（boxDistance）まで来ると箱が置かれ、もぐる。もぐる長さは hideSec の範囲、顔を出すのは peekSec。
+  // 顔を出したときに blinksToFinish 回まばたきが通じると、箱から出てくる（ごほうび doneTrust）。箱の中で触られたら afterPetHideSec は顔を出さない
+  // 箱から出てくるのが遅いと、その日のうちに膝まで来られず、和解が1日遅れやすい。出てくるまでを20秒台に収めている（docs/spec.md 7章）
+  box: { boxDistance: 45, arriveSec: 1.6, hopSec: 0.6, hideSec: [2, 3.5], peekSec: 2.8, happySec: 2, afterPetHideSec: 5, blinksToFinish: 2, doneTrust: 15 },
+};
+
 export const DAYS = [
   { day: 1, durationSec: 40, startWariness: 35, actions: ['pet'], signs: ['relax'], canLap: false, approachMul: 1 },
   { day: 2, durationSec: 40, startWariness: 45, actions: ['pet', 'blink'], signs: ['relax', 'look', 'tailUp', 'tailFlick'], canLap: false, approachMul: 1 },

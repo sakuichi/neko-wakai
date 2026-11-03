@@ -75,6 +75,17 @@ __modules['src/data/params.js'] = (() => {
   // 4日目からは、すり寄りに見せかけたフェイントが加わる
   const LATE_SIGNS = [...DAY3_SIGNS, 'fakeRub'];
 
+  // イベントの日（7章）。ゲームの始めに、イベントをこの日のどれかに1つずつ割り当てる（src/game/progression.js の chooseEvents）
+  const EVENT_DAYS = [4, 5, 6];
+
+  // イベントごとの数値（進め方は src/game/events.js）
+  const EVENTS = {
+    // 箱が届いた：猫が箱の位置（boxDistance）まで来ると箱が置かれ、もぐる。もぐる長さは hideSec の範囲、顔を出すのは peekSec。
+    // 顔を出したときに blinksToFinish 回まばたきが通じると、箱から出てくる（ごほうび doneTrust）。箱の中で触られたら afterPetHideSec は顔を出さない
+    // 箱から出てくるのが遅いと、その日のうちに膝まで来られず、和解が1日遅れやすい。出てくるまでを20秒台に収めている（docs/spec.md 7章）
+    box: { boxDistance: 45, arriveSec: 1.6, hopSec: 0.6, hideSec: [2, 3.5], peekSec: 2.8, happySec: 2, afterPetHideSec: 5, blinksToFinish: 2, doneTrust: 15 },
+  };
+
   const DAYS = [
     { day: 1, durationSec: 40, startWariness: 35, actions: ['pet'], signs: ['relax'], canLap: false, approachMul: 1 },
     { day: 2, durationSec: 40, startWariness: 45, actions: ['pet', 'blink'], signs: ['relax', 'look', 'tailUp', 'tailFlick'], canLap: false, approachMul: 1 },
@@ -159,7 +170,7 @@ __modules['src/data/params.js'] = (() => {
     kijitora: 'bibiri',
     kuro: 'bibiri',
   };
-  return { MAX_VALUE, MAX_DAY, RULES, DAYS, DAYLIGHT, FACES, NIGHT, PERSONALITIES, DEFAULT_PERSONALITY, COAT_PERSONALITY };
+  return { MAX_VALUE, MAX_DAY, RULES, EVENT_DAYS, EVENTS, DAYS, DAYLIGHT, FACES, NIGHT, PERSONALITIES, DEFAULT_PERSONALITY, COAT_PERSONALITY };
 })();
 
 // ---- src/game/rules.js
@@ -298,13 +309,14 @@ __modules['src/game/rules.js'] = (() => {
 // ---- src/game/progression.js
 __modules['src/game/progression.js'] = (() => {
   // 日の進行・夜の選択の効果・エンディング判定。描画や入力には依存しない。
-  const { DAYS, NIGHT, PERSONALITIES, MAX_DAY, MAX_VALUE, DEFAULT_PERSONALITY, COAT_PERSONALITY, FACES } = __modules['src/data/params.js'];
+  const { DAYS, NIGHT, PERSONALITIES, MAX_DAY, MAX_VALUE, DEFAULT_PERSONALITY, COAT_PERSONALITY, FACES, EVENTS, EVENT_DAYS } = __modules['src/data/params.js'];
   const { isShy, isTimid } = __modules['src/game/rules.js'];
 
   // catName は1日目の最初にプレイヤーが付ける。coat は毛色（src/render/renderer.js の COATS のキー）、face は顔の形（chooseFace）
-  function createGame({ personality = DEFAULT_PERSONALITY, seed = Date.now(), coat = 'chatora', face = { shape: 'mochi', ears: 'normal' } } = {}) {
+  // events：日ごとのイベント（添字は日−1。なければ null。chooseEvents）
+  function createGame({ personality = DEFAULT_PERSONALITY, seed = Date.now(), coat = 'chatora', face = { shape: 'mochi', ears: 'normal' }, events = Array(MAX_DAY).fill(null) } = {}) {
     // dere・handsOk：ツンデレがデレた・ビビりの手が平気になったか（一度なったら戻らない。src/game/rules.js の isShy・isTimid）
-    return { day: 1, trust: 0, personality, coat, face, catName: null, nightChoice: null, mistakes: 0, seed, seenCards: [], dere: false, handsOk: false };
+    return { day: 1, trust: 0, personality, coat, face, catName: null, nightChoice: null, mistakes: 0, seed, seenCards: [], dere: false, handsOk: false, events };
   }
 
   /**
@@ -316,6 +328,23 @@ __modules['src/game/progression.js'] = (() => {
       shape: shape ?? FACES.shapes[Math.floor(random() * FACES.shapes.length)],
       ears: ears ?? FACES.ears[Math.floor(random() * FACES.ears.length)],
     };
+  }
+
+  /**
+   * イベントを、イベントの日（EVENT_DAYS）のどれかに1つずつ、重ならないように割り当てる。
+   * @returns {(string|null)[]} 長さ MAX_DAY。添字は日−1、イベントのない日は null
+   */
+  function chooseEvents(random = Math.random) {
+    const days = [...EVENT_DAYS];
+    for (let i = days.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1));
+      [days[i], days[j]] = [days[j], days[i]];
+    }
+    const events = Array(MAX_DAY).fill(null);
+    Object.keys(EVENTS).forEach((id, i) => {
+      if (i < days.length) events[days[i] - 1] = id;
+    });
+    return events;
   }
 
   /**
@@ -353,6 +382,8 @@ __modules['src/game/progression.js'] = (() => {
       signs: def.signs,
       canLap: def.canLap,
       approachMul: def.approachMul,
+      // その日のイベント（なければ null。src/game/events.js）
+      event: game.events?.[game.day - 1] ?? null,
       // 夜のあいだ（おやつなど）に信頼が境目を越えていたら、その日は最初からデレて・平気になっている
       dere: !!game.dere || !isShy(game.trust, p),
       handsOk: !!game.handsOk || !isTimid(game.trust, p),
@@ -404,7 +435,7 @@ __modules['src/game/progression.js'] = (() => {
     if (dayNumber <= 5) return 'patient';
     return 'persistent';
   }
-  return { createGame, chooseFace, chooseCat, startDay, finishDay, chooseNight, endingFor };
+  return { createGame, chooseFace, chooseEvents, chooseCat, startDay, finishDay, chooseNight, endingFor };
 })();
 
 // ---- src/util/rng.js
@@ -512,6 +543,126 @@ __modules['src/render/daylight.js'] = (() => {
   return { mixColor, rgba, daylightAt };
 })();
 
+// ---- src/render/props.js
+__modules['src/render/props.js'] = (() => {
+  // イベントの小道具（4〜6日目）。描く位置・大きさは src/render/renderer.js が決め、ここでは箱の座標（底の真ん中が原点）で描く。
+  // 線の色・太さは renderer の猫と同じ
+
+  const LINE = '#4e3d36';
+  const LW = 3.5;
+
+  function line(ctx, x0, y0, x1, y1) {
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+  }
+
+  /**
+   * 通販の箱。夜に置く無地の段ボール（renderer の inBox）と見分けがつくよう、明るい色・ガムテープ・宛名ラベル・
+   * 「ワレモノ」シール・詰め物の紙を付ける。前面とフタは、伏せた猫の体をすっかり隠す大きさ
+   * inside：箱の内側（奥）を描く。猫が顔を出している間は、首の前に奥の壁が来ないよう描かない
+   * pile：詰め物の紙を山盛りにする（もぐっている間。猫の頭を隠し、耳の先だけ出る）
+   */
+  function drawParcel(ctx, { inside = true, paper = true, pile = false } = {}) {
+    ctx.save();
+    ctx.lineWidth = LW;
+    ctx.strokeStyle = LINE;
+    if (inside) {
+      ctx.fillStyle = '#b98a56';
+      ctx.beginPath();
+      ctx.moveTo(-64, -66);
+      ctx.lineTo(64, -66);
+      ctx.lineTo(52, -78);
+      ctx.lineTo(-52, -78);
+      ctx.closePath();
+      ctx.fill();
+    }
+    if (paper) {
+      ctx.fillStyle = '#fffaf2';
+      const balls = pile
+        ? [[-46, -70, 13], [-24, -76, 15], [2, -80, 17], [28, -76, 15], [48, -70, 12], [-34, -88, 12], [-10, -94, 13], [18, -92, 12], [40, -86, 10]]
+        : [[-44, -68, 8], [-24, -70, 7], [26, -70, 7], [46, -68, 8]];
+      for (const [x, y, r] of balls) {
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+    // フタ（外に開いている）
+    ctx.fillStyle = '#d9a86c';
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(side * 64, -66);
+      ctx.lineTo(side * 98, -86);
+      ctx.lineTo(side * 92, -44);
+      ctx.lineTo(side * 64, -38);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    // 前面
+    ctx.fillStyle = '#ebc48e';
+    ctx.beginPath();
+    ctx.rect(-64, -66, 128, 66);
+    ctx.fill();
+    ctx.stroke();
+    // ガムテープ（真ん中を縦に）
+    ctx.fillStyle = 'rgba(196, 150, 92, 0.85)';
+    ctx.fillRect(-11, -66, 22, 66);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.fillRect(-11, -66, 5, 66);
+    // 宛名ラベル
+    ctx.fillStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.rect(20, -52, 36, 26);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(78, 61, 54, 0.5)';
+    for (let i = 0; i < 3; i++) line(ctx, 25, -45 + i * 7, 51 - i * 6, -45 + i * 7);
+    // 「ワレモノ」シール
+    ctx.fillStyle = '#e46d5c';
+    ctx.fillRect(-58, -54, 42, 16);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillText('ワレモノ', -55, -43);
+    ctx.restore();
+  }
+
+  // もぐった瞬間に舞う紙くず。u は 0〜1（舞い上がって、消えていく）
+  function drawPaperBits(ctx, u) {
+    ctx.save();
+    ctx.globalAlpha = 1 - u;
+    ctx.fillStyle = '#fffaf2';
+    ctx.strokeStyle = LINE;
+    ctx.lineWidth = 2;
+    for (const [dx, h] of [[-50, 1], [-20, 1.3], [16, 1.2], [46, 0.9]]) {
+      const x = dx * (1 + u * 0.6);
+      const y = -80 - Math.sin(u * Math.PI) * 50 * h;
+      ctx.beginPath();
+      ctx.rect(x - 5, y - 4, 10, 8);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 小道具に添える短い文字（「ドサッ」「？」「カサカサ」）。遠くて小さく描かれるときも読めるよう、fit で大きさを補う
+  function drawPropText(ctx, text, x, y, size, fit = 1) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(fit, fit);
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = LINE;
+    ctx.font = `bold ${size}px sans-serif`;
+    ctx.fillText(text, 0, 0);
+    ctx.restore();
+  }
+  return { drawParcel, drawPaperBits, drawPropText };
+})();
+
 // ---- src/render/renderer.js
 __modules['src/render/renderer.js'] = (() => {
   // 猫・部屋の描画（Canvas）。ゲームの判定には関わらず、渡された状態を描くだけ。
@@ -522,8 +673,9 @@ __modules['src/render/renderer.js'] = (() => {
   // - 目は小さな縦長の点。口は「ω」だけ。ひげ・鼻は描かない
   // - ほっぺに薄いピンク。色はベタ塗りでグラデーションを使わない
   // - 線は均一な太さのこげ茶。角は丸く
-  const { MAX_VALUE, RULES } = __modules['src/data/params.js'];
+  const { MAX_VALUE, RULES, EVENTS } = __modules['src/data/params.js'];
   const { daylightAt, mixColor, rgba } = __modules['src/render/daylight.js'];
+  const { drawParcel, drawPaperBits, drawPropText } = __modules['src/render/props.js'];
 
   const W = 360;
   const H = 640;
@@ -637,6 +789,8 @@ __modules['src/render/renderer.js'] = (() => {
       shown: { alpha: 1, coat: null, mode: null },
       // 昼の進み具合（窓の外の景色・部屋の明るさ）。タイトル・名前付けは朝、エンディングは膝に乗ったときのまま
       dayTime: 0,
+      // イベントの小道具 { kind, phase, start（いまの phase になった時刻）, prev（ひとつ前の phase）, anchor（箱を置いた場所） }
+      prop: null,
     };
 
     function resize() {
@@ -786,6 +940,9 @@ __modules['src/render/renderer.js'] = (() => {
       // 膝に乗るまでは、猫は膝の奥（膝を手前に描く）。跳び乗ったら膝の上（猫を手前に描く）
       const onLap = cat.mode === 'lap' && a.lapBlend > 0.6;
       if (onLap) lap();
+      // イベントの小道具：猫より奥に置くもの（猫が箱から出たあとの空の箱）を先に描く
+      const prop = updateProp(view, t, p);
+      if (prop && propBehind(prop, cat)) drawProp(ctx, prop, t, p);
       withAlpha(alpha, (g) => {
         g.save();
         g.translate(p.x, p.y);
@@ -807,6 +964,8 @@ __modules['src/render/renderer.js'] = (() => {
         drawEffects(g, t, p.s, look);
         g.restore();
       });
+      // 猫の手前に置くもの（猫が入っている箱）
+      if (prop && !propBehind(prop, cat)) drawProp(ctx, prop, t, p);
       if (!onLap) lap();
 
       drawReach(ctx, t, p);
@@ -903,6 +1062,23 @@ __modules['src/render/renderer.js'] = (() => {
           reliefCue(ctx, u, scale);
         }
       }
+    }
+
+    // イベントの小道具の状態を進める。箱は、猫が箱の前に着いたとき（approach が終わったとき）の場所に置き、その日のあいだ動かさない
+    function updateProp(view, t, p) {
+      if (view.scene !== 'day' || !view.prop) {
+        a.prop = null;
+        return null;
+      }
+      const { kind, phase } = view.prop;
+      if (!a.prop || a.prop.kind !== kind) a.prop = { kind, phase, start: t, prev: null, anchor: null };
+      if (a.prop.phase !== phase) a.prop = { ...a.prop, prev: a.prop.phase, phase, start: t };
+      // 表示上の猫は少し遅れて追いかけてくるので、いまの表示の位置ではなく、猫が止まる位置（実際の距離）に置く
+      if (!a.prop.anchor && phase !== 'approach') {
+        const q = placement(view.cat.distance);
+        a.prop.anchor = { x: q.x, y: q.y + PARCEL_SINK * q.s, s: q.s };
+      }
+      return a.prop;
     }
 
     // なでようとしたとき、膝に置いていた左手が猫のほうへ伸びる
@@ -1836,6 +2012,65 @@ __modules['src/render/renderer.js'] = (() => {
     ctx.restore();
   }
 
+  // ---------------------------------------------------------------- イベントの小道具（形は src/render/props.js）
+
+  // 箱は、猫の足もとより少し下に置く（伏せた猫の体が、箱の下からはみ出さないように）
+  const PARCEL_SINK = 14;
+  // 箱が置かれるときは、猫の右どなりに落ちてきて、もぐるときに猫の前へすべり込む
+  const PARCEL_SIDE = 80;
+  const PARCEL_FALL_SEC = 0.35;
+  // もぐった瞬間に紙くずが舞う長さ
+  const PAPER_BITS_SEC = 0.8;
+
+  // 猫より奥に描く：猫が箱から出て、箱より手前（近く）に来たとき。箱より遠くにいる間は、箱を手前に描く
+  function propBehind(prop, cat) {
+    return prop.phase === 'left' && cat.distance < EVENTS.box.boxDistance;
+  }
+
+  function drawProp(ctx, prop, t, p) {
+    const A = prop.anchor;
+    if (!A) return;
+    const u = t - prop.start;
+    const fit = Math.max(1, 0.85 / A.s);
+    const parcelAt = (x, y, s, opts) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(s, s);
+      drawParcel(ctx, opts);
+      ctx.restore();
+    };
+    switch (prop.phase) {
+      case 'arrive': {
+        // 「ドサッ」と置かれて、猫が「？」と見る
+        const fall = clamp01(u / PARCEL_FALL_SEC);
+        parcelAt(A.x + PARCEL_SIDE * A.s, A.y - (1 - fall) * 120, A.s * 0.9);
+        if (fall >= 1 && u < 0.8) drawPropText(ctx, 'ドサッ', A.x + 40 * A.s, A.y - 80 * A.s, 15, fit);
+        if (u > 0.8) drawPropText(ctx, '？', p.x + 34 * p.s, p.y - 120 * p.s, 20, fit);
+        return;
+      }
+      case 'hop':
+        parcelAt(A.x + PARCEL_SIDE * A.s * (1 - clamp01(u / EVENTS.box.hopSec)), A.y, A.s * 0.9);
+        return;
+      case 'hide':
+        parcelAt(A.x, A.y, A.s, { pile: true });
+        if (prop.prev === 'hop' && u < PAPER_BITS_SEC) {
+          ctx.save();
+          ctx.translate(A.x, A.y);
+          ctx.scale(A.s, A.s);
+          drawPaperBits(ctx, u / PAPER_BITS_SEC);
+          ctx.restore();
+          drawPropText(ctx, 'カサカサ', A.x - 90 * A.s, A.y - 100 * A.s, 13, fit);
+        }
+        return;
+      case 'peek':
+      case 'happy':
+        parcelAt(A.x, A.y, A.s, { inside: false });
+        return;
+      default:
+        parcelAt(A.x, A.y, A.s);
+    }
+  }
+
   function exclaim(ctx, x, y) {
     ctx.save();
     ctx.fillStyle = C.red;
@@ -2137,7 +2372,7 @@ __modules['src/data/texts.js'] = (() => {
     flee: '焦りは禁物。猫は追いかけるほど逃げる',
   };
 
-  // 説明。キーは 'action:xxx' 'sign:xxx' 'day:xxx' 'tip:xxx'
+  // 説明。キーは 'action:xxx' 'sign:xxx' 'day:xxx' 'tip:xxx' 'event:xxx'
   // pause: true はゲームを一時停止するカード（遊び方が変わるもの・触ると失敗するのに触りたくなるもの）。
   // それ以外は、ゲームを止めない吹き出しで出す
   const CARDS = {
@@ -2190,6 +2425,11 @@ __modules['src/data/texts.js'] = (() => {
       title: '猫のサイン：気まぐれすりすり',
       body: 'すり寄ってきた……けど、しっぽがパタパタしている。\n猫の気は変わりやすい。しっぽをよく見よう。',
     },
+    'event:box': {
+      pause: true,
+      title: 'イベント：箱が届いた',
+      body: '通販の箱が届いた。\n中身より、箱のほうが気になるみたい……？\n顔を出したら、ゆっくりまばたき。箱の中では、触らずに見守ろう。',
+    },
     'tip:patience': {
       title: 'がまんできた',
       body: '触らずに見守ったので、{name}は少し安心したみたい。\nイライラやお腹見せは、やり過ごすだけで仲良くなれる。',
@@ -2230,6 +2470,11 @@ __modules['src/data/texts.js'] = (() => {
   const DERE_TEXT = '（{name}の目つきが、少しやわらかくなった）';
   // 手がこわい猫（ビビり）が、なでられても平気になった瞬間に出す
   const TIMID_GONE_TEXT = '（{name}は、手がこわくなくなったみたい）';
+
+  // イベントの日のトースト（キーは src/game/events.js の cue）
+  const EVENT_TEXT = {
+    box: { hid: '（箱にもぐった）', out: '（箱から出てきた！）' },
+  };
 
   const LAP_TEXT = '{name}が、膝に乗ってきた……！';
 
@@ -2334,7 +2579,7 @@ __modules['src/data/texts.js'] = (() => {
     off: 'BGM OFF',
     aria: (label) => `BGM：${label}（タップで次の曲）`,
   };
-  return { withName, TITLE, DAY_TITLES, NAME_TEXT, TUTORIAL, CARDS, HINTS, FEEDBACK, DERE_TEXT, TIMID_GONE_TEXT, LAP_TEXT, NIGHT_TEXT, ENDINGS, ENDING_UI, COAT_LABELS, PERSONALITY_TIPS, COAT_LORE, NOTEBOOK_TEXT, TITLES, PAUSE_TEXT, SOUND_LABEL, BGM_TEXT };
+  return { withName, TITLE, DAY_TITLES, NAME_TEXT, TUTORIAL, CARDS, HINTS, FEEDBACK, DERE_TEXT, TIMID_GONE_TEXT, EVENT_TEXT, LAP_TEXT, NIGHT_TEXT, ENDINGS, ENDING_UI, COAT_LABELS, PERSONALITY_TIPS, COAT_LORE, NOTEBOOK_TEXT, TITLES, PAUSE_TEXT, SOUND_LABEL, BGM_TEXT };
 })();
 
 // ---- src/game/catBrain.js
@@ -2359,11 +2604,10 @@ __modules['src/game/catBrain.js'] = (() => {
 
     const prevMode = cat.mode;
     let c = { ...cat, walking: false };
-    let d = { ...day, timeLeft: Math.max(0, day.timeLeft - dt) };
+    const a = ambient(day, dt);
+    let d = a.day;
+    const calm = a.calm;
     let endured = null;
-
-    d.wariness = Math.max(0, d.wariness - RULES.warinessDecayPerSec * dt);
-    const calm = d.wariness < RULES.calmThreshold;
 
     if (d.boxLockLeft > 0) {
       d.boxLockLeft = Math.max(0, d.boxLockLeft - dt);
@@ -2406,6 +2650,14 @@ __modules['src/game/catBrain.js'] = (() => {
     return { cat: c, day: d, enteredMode: c.mode !== prevMode ? c.mode : null, endured };
   }
 
+  // 時間が進むと、残り時間が減り、待っている分だけ警戒が下がる。calm：落ち着いている（猫が近づき、信頼が増える）。
+  // いつもの日（tick）とイベントの日（src/game/events.js）で共通
+  function ambient(day, dt) {
+    const d = { ...day, timeLeft: Math.max(0, day.timeLeft - dt) };
+    d.wariness = Math.max(0, d.wariness - RULES.warinessDecayPerSec * dt);
+    return { day: d, calm: d.wariness < RULES.calmThreshold };
+  }
+
   // 信頼に応じて、猫がそれ以上近づかない距離。bonus はおやつの日などに、いつもより近くまで来る分
   function distanceFloor(trust, bonus = 0) {
     return Math.max(0, MAX_VALUE - trust - RULES.distanceFloorOffset - bonus);
@@ -2432,7 +2684,7 @@ __modules['src/game/catBrain.js'] = (() => {
     const [min, max] = RULES.modeSec[mode];
     return { ...cat, mode, modeTimeLeft: min + (max - min) * rng() };
   }
-  return { tick, distanceFloor };
+  return { tick, ambient, distanceFloor };
 })();
 
 // ---- src/ui/debugPanel.js
@@ -2447,7 +2699,10 @@ __modules['src/ui/debugPanel.js'] = (() => {
   const SHAPE_LABELS = { mochi: 'おもち', maru: 'まんまる', shimobukure: '下ぶくれ', hoppe: 'ほっぺもち' };
   const EAR_LABELS = { small: '小', normal: '中', big: '大' };
 
-  function createDebugPanel(el, { onPersonality, onCoat, onFace, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords }) {
+  // イベントの日の固定（値は 'イベント:日'。空ならランダム）
+  const EVENT_OPTIONS = [['', 'ランダム'], ['box:4', '箱が届いた（4日目）']];
+
+  function createDebugPanel(el, { onPersonality, onCoat, onFace, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords, onEvent }) {
     const details = document.createElement('details');
     // スマホ幅ではゲーム画面に重なるので、折りたたんだ状態で始める
     details.open = window.innerWidth >= 800;
@@ -2486,6 +2741,13 @@ __modules['src/ui/debugPanel.js'] = (() => {
     const faceRow = document.createElement('div');
     faceRow.append('顔: ', shapeSelect, ' 耳: ', earSelect);
     details.append(faceRow);
+
+    const eventSelect = document.createElement('select');
+    for (const [value, label] of EVENT_OPTIONS) eventSelect.append(new Option(label, value));
+    eventSelect.addEventListener('change', () => onEvent?.(eventSelect.value));
+    const eventRow = document.createElement('div');
+    eventRow.append('イベント: ', eventSelect);
+    details.append(eventRow);
 
     const buttons = document.createElement('div');
     for (const [text, fn] of [['次の日へ', onSkipDay], ['信頼MAX', onTrustMax], ['最初から', onReset], ['記録を消す', onClearRecords]]) {
@@ -3657,14 +3919,162 @@ __modules['src/scenes/nameScene.js'] = (() => {
   return { namePicks, createNameScene };
 })();
 
+// ---- src/game/events.js
+__modules['src/game/events.js'] = (() => {
+  // イベント（4〜6日目）の進行。イベントの日は、いつもの様子の切り替え（src/game/catBrain.js の tick）の代わりにこれを使う。
+  // 描画や入力には依存しない。なでる・まばたきの判定は、いつもの決まり（src/game/rules.js）に、猫の様子を読み替えて任せる。
+  const { RULES, MAX_VALUE, EVENTS } = __modules['src/data/params.js'];
+  const { ambient } = __modules['src/game/catBrain.js'];
+  const { applyAction } = __modules['src/game/rules.js'];
+
+  const clamp = (v) => Math.min(MAX_VALUE, Math.max(0, v));
+
+  // 箱が届いた：phase ごとの猫の様子（もぐっている間は伏せて箱に隠れ、顔を出すときは座ってふちから頭を出す）
+  const BOX_POSE = { approach: 'relax', arrive: 'tailUp', hop: 'tailUp', hide: 'relax', peek: 'look', happy: 'purr' };
+  // 箱の中にいる phase（なでると「箱の奥に引っ込んだ」になる）
+  const IN_BOX = ['hide', 'peek', 'happy'];
+
+  function createEventState(id) {
+    return { id, phase: 'approach', phaseT: 0, blinks: 0, done: false, hideFor: 0 };
+  }
+
+  /**
+   * @returns {{ev, cat, day, cues: string[]}} cues：この tick で起きたこと（'drop' 箱が置かれた / 'hid' もぐった / 'peek' 顔を出した / 'out' 出てきた）
+   */
+  function eventTick(ev, cat, day, personality, dt, rng) {
+    const P = EVENTS.box;
+    const a = ambient(day, dt);
+    let d = a.day;
+    if (a.calm) d = { ...d, trust: clamp(d.trust + RULES.calmTrustPerSec * dt * d.trustRate) };
+    let e = { ...ev, phaseT: ev.phaseT + dt };
+    let c = { ...cat, walking: false };
+    const cues = [];
+    const go = (phase) => {
+      e = { ...e, phase, phaseT: 0 };
+    };
+
+    if (d.boxLockLeft > 0) {
+      // 前の晩に置いた段ボールから、まだ出てこない（いつもの日と同じ）。出てきてから、箱へ歩き始める
+      d = { ...d, boxLockLeft: Math.max(0, d.boxLockLeft - dt) };
+      c.mode = 'inBox';
+      return { ev: e, cat: c, day: d, cues };
+    }
+
+    if (c.mode === 'flee') {
+      // 逃げている間は、いつもの決まりの長さだけ待ってから、もう一度箱へ歩く
+      c.modeTimeLeft = (c.modeTimeLeft ?? 0) - dt;
+      if (c.modeTimeLeft > 0) return { ev: e, cat: c, day: d, cues };
+      c.mode = 'relax';
+    }
+
+    if (e.phase === 'approach') {
+      if (c.distance > P.boxDistance && a.calm) {
+        c.distance = Math.max(P.boxDistance, c.distance - personality.approachSpeed * d.approachMul * dt);
+        c.walking = c.distance > P.boxDistance;
+      }
+      if (c.distance <= P.boxDistance) {
+        go('arrive');
+        cues.push('drop');
+      }
+    } else if (e.phase === 'arrive') {
+      if (e.phaseT >= P.arriveSec) go('hop');
+    } else if (e.phase === 'hop') {
+      if (e.phaseT >= P.hopSec) {
+        go('hide');
+        e.hideFor = hideLength(rng);
+        cues.push('hid');
+      }
+    } else if (e.phase === 'hide') {
+      if (e.phaseT >= e.hideFor) {
+        go('peek');
+        cues.push('peek');
+      }
+    } else if (e.phase === 'peek') {
+      if (e.phaseT >= P.peekSec) {
+        go('hide');
+        e.hideFor = hideLength(rng);
+      }
+    } else if (e.phase === 'happy') {
+      if (e.phaseT >= P.happySec) {
+        if (e.blinks >= P.blinksToFinish) {
+          go('out');
+          e.done = true;
+          d = { ...d, trust: clamp(d.trust + P.doneTrust * d.trustRate) };
+          c.mode = 'relax';
+          cues.push('out');
+          return { ev: e, cat: c, day: d, cues };
+        }
+        go('hide');
+        e.hideFor = hideLength(rng);
+      }
+    }
+    c.mode = BOX_POSE[e.phase] ?? c.mode;
+    return { ev: e, cat: c, day: d, cues };
+  }
+
+  function hideLength(rng) {
+    const [min, max] = EVENTS.box.hideSec;
+    return min + (max - min) * rng();
+  }
+
+  /**
+   * イベントの間のなでる・まばたき。いつもの決まり（applyAction）に、猫の様子を読み替えて渡す。
+   * @returns {{ev, cat, day, feedback, mistake}|null} イベントが終わったあとは null（いつもの applyAction に任せる）
+   */
+  function eventAct(action, ev, cat, day, personality) {
+    if (ev.done) return null;
+    const P = EVENTS.box;
+    const as = (mode) => applyAction(action, { ...cat, mode }, day, personality);
+
+    // 逃げている間・前の晩の段ボールの中では、いつもの日と同じ（逃げている猫には何も起きない。段ボールの中を触ると引っ込む）
+    if (cat.mode === 'flee' || cat.mode === 'inBox') {
+      const r = applyAction(action, cat, day, personality);
+      return { ev, cat: r.cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
+    }
+
+    if (action.type === 'blink') {
+      // 押している間に顔を出していれば（sawLook）、離す前にもぐっても、いつもどおり目が合ったことにする
+      if (ev.phase === 'peek' || (ev.phase === 'hide' && action.sawLook)) {
+        const r = as('look');
+        if (r.feedback === 'blinkBack') return result({ ...ev, blinks: ev.blinks + 1, phase: 'happy', phaseT: 0 }, cat, r);
+        if (r.feedback === 'blinkAway') return result({ ...ev, phase: 'hide', phaseT: 0, hideFor: P.hideSec[0] }, cat, r);
+        return result(ev, cat, r);
+      }
+      return result(ev, cat, as('relax'));
+    }
+
+    // なでる
+    if (IN_BOX.includes(ev.phase)) {
+      const r = as('inBox');
+      return result({ ...ev, phase: 'hide', phaseT: 0, hideFor: P.afterPetHideSec }, cat, r);
+    }
+    // 箱の外では、見えている様子（くつろぎ・しっぽピン）のとおりに判定する（サインの意味を、イベントの日でも変えない）
+    const r = as(BOX_POSE[ev.phase] ?? 'relax');
+    if (r.cat.mode === 'flee') return { ev: { ...ev, phase: 'approach', phaseT: 0 }, cat: r.cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
+    return result(ev, cat, r);
+  }
+
+  // 判定の結果（信頼・警戒・反応）だけを使い、猫の様子は phase に合わせる
+  function result(ev, cat, r) {
+    return { ev, cat: { ...cat, mode: BOX_POSE[ev.phase] ?? cat.mode }, day: r.day, feedback: r.feedback, mistake: r.mistake };
+  }
+
+  // 描画用（src/render/renderer.js）。done のあとは、空になった箱がその場に残る
+  function eventProp(ev) {
+    return { kind: 'parcel', phase: ev.done ? 'left' : ev.phase, phaseT: ev.phaseT };
+  }
+  return { createEventState, eventTick, eventAct, eventProp };
+})();
+
 // ---- src/scenes/dayScene.js
 __modules['src/scenes/dayScene.js'] = (() => {
   // 昼：猫との駆け引き。判定は src/game/ に任せ、ここでは時間・入力・表示をつなぐ。
   const { startDay } = __modules['src/game/progression.js'];
   const { tick } = __modules['src/game/catBrain.js'];
   const { applyAction, isShy, isTimid } = __modules['src/game/rules.js'];
+  const { createEventState, eventTick, eventAct, eventProp } = __modules['src/game/events.js'];
   const { PERSONALITIES, MAX_VALUE, DAYS } = __modules['src/data/params.js'];
-  const { CARDS, TUTORIAL, FEEDBACK, DAY_TITLES, HINTS, LAP_TEXT, DERE_TEXT, TIMID_GONE_TEXT, withName } = __modules['src/data/texts.js'];
+  const { CARDS, TUTORIAL, FEEDBACK, DAY_TITLES, HINTS, LAP_TEXT, DERE_TEXT, TIMID_GONE_TEXT, EVENT_TEXT, withName } = __modules['src/data/texts.js'];
 
   // 膝に乗ってから結果画面に移るまでの演出時間（ふみふみ → ゴロゴロ → 寝る）
   const LAP_SHOW_SEC = 6.5;
@@ -3694,6 +4104,8 @@ __modules['src/scenes/dayScene.js'] = (() => {
     const tut = { wait: false, approach: false, flee: false };
     // 説明・ヒントの吹き出しが出ている間（昼の経過時間で、この時刻まで）。我慢の説明で消さないように使う
     let bubbleUntil = 0;
+    // その日のイベントの進み具合（イベントのない日は null。終わったら done になり、いつもの日の動きに戻る）
+    let ev = day.event ? createEventState(day.event) : null;
     // あとで出す予定のトースト（途中でやめたら取り消す）
     const timers = [];
 
@@ -3727,6 +4139,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
     if (day.dayNumber === 1) showCardOnce('day:intro');
     for (const a of start.newActions) showCardOnce(`action:${a}`);
     if (day.canLap) showCardOnce('day:lap');
+    if (day.event) showCardOnce(`event:${day.event}`);
     hud.show(true);
     hud.update(day);
     input.setBlinkEnabled(day.actions.includes('blink'));
@@ -3750,10 +4163,12 @@ __modules['src/scenes/dayScene.js'] = (() => {
     function act(action) {
       if (ended || overlay.busy || cat.mode === 'lap') return;
       syncPersonality();
-      const before = cat.mode;
+      // ヒントは、失敗したときの猫の様子で選ぶ（イベントで箱の中にいるときは、箱の中のヒント）
+      const before = ev && !ev.done && ['hide', 'peek', 'happy'].includes(ev.phase) ? 'inBox' : cat.mode;
       const a = action.type === 'blink' ? { ...action, sawLook: sawLook || cat.mode === 'look' } : action;
       sawLook = false;
-      const r = applyAction(a, cat, day, personality());
+      const r = (ev && eventAct(a, ev, cat, day, personality())) || applyAction(a, cat, day, personality());
+      if (r.ev) ev = r.ev;
       cat = r.cat;
       day = r.day;
       if (r.feedback) {
@@ -3792,6 +4207,41 @@ __modules['src/scenes/dayScene.js'] = (() => {
       }
     }
 
+    // いつもの日：様子の切り替え・移動（src/game/catBrain.js）。イベントが終わったあとも、これに戻る
+    function updateCat(dt) {
+      const r = tick(cat, day, personality(), dt, rng);
+      cat = r.cat;
+      day = r.day;
+      let explained = false;
+      if (r.enteredMode === 'lap') {
+        hud.show(false);
+        input.setBlinkEnabled(false);
+        overlay.toast(text(LAP_TEXT), 3200);
+      } else if (r.enteredMode) {
+        explained = showCardOnce(`sign:${r.enteredMode}`);
+      }
+      // 触ると失敗するサインを、触らずにやり過ごせた。膝に乗った瞬間は、膝に乗った文だけを見せる。
+      // 新しいサインの説明が同じときに出たり、説明・ヒントの吹き出しがまだ出ていたりしたら、
+      // 我慢の説明はそれを消さないように次の機会に回す
+      if (r.endured && r.enteredMode !== 'lap') {
+        overlay.toast(FEEDBACK.relief, 1600);
+        renderer.addEffect('relief');
+        if (!explained && elapsed >= bubbleUntil) showCardOnce('tip:patience');
+      }
+    }
+
+    // イベントの日：イベントの進行（src/game/events.js）。起きたことをトーストで知らせる
+    function updateEvent(dt) {
+      const r = eventTick(ev, cat, day, personality(), dt, rng);
+      ev = r.ev;
+      cat = r.cat;
+      day = r.day;
+      for (const cue of r.cues) {
+        const t = EVENT_TEXT[ev.id]?.[cue];
+        if (t) overlay.toast(text(t), 1800);
+      }
+    }
+
     function playSound(feedback) {
       for (const name of soundsFor(feedback)) sound[name]();
     }
@@ -3811,26 +4261,9 @@ __modules['src/scenes/dayScene.js'] = (() => {
           return;
         }
         elapsed += dt;
-        const r = tick(cat, day, personality(), dt, rng);
-        cat = r.cat;
-        day = r.day;
+        if (ev && !ev.done) updateEvent(dt);
+        else updateCat(dt);
         if (input.holdMs() > 0 && cat.mode === 'look') sawLook = true;
-        let explained = false;
-        if (r.enteredMode === 'lap') {
-          hud.show(false);
-          input.setBlinkEnabled(false);
-          overlay.toast(text(LAP_TEXT), 3200);
-        } else if (r.enteredMode) {
-          explained = showCardOnce(`sign:${r.enteredMode}`);
-        }
-        // 触ると失敗するサインを、触らずにやり過ごせた。膝に乗った瞬間は、膝に乗った文だけを見せる。
-        // 新しいサインの説明が同じときに出たり、説明・ヒントの吹き出しがまだ出ていたりしたら、
-        // 我慢の説明はそれを消さないように次の機会に回す
-        if (r.endured && r.enteredMode !== 'lap') {
-          overlay.toast(FEEDBACK.relief, 1600);
-          renderer.addEffect('relief');
-          if (!explained && elapsed >= bubbleUntil) showCardOnce('tip:patience');
-        }
         if (day.dayNumber === 1) {
           if (!tut.wait && elapsed > 3) {
             tut.wait = true;
@@ -3874,6 +4307,8 @@ __modules['src/scenes/dayScene.js'] = (() => {
         wariness: day.wariness,
         // ツンの間か（ツンデレの見た目を変える。src/render/renderer.js の personalize）
         shy: isShy(day.trust, personality(), day.dere),
+        // イベントの小道具（イベントのない日は null。src/render/props.js）
+        prop: ev ? eventProp(ev) : null,
         // その日の進み具合 0〜1（窓の外の景色・部屋の明るさ。src/render/daylight.js）
         dayTime: Math.min(1, Math.max(0, 1 - day.timeLeft / DAYS[day.dayNumber - 1].durationSec)),
       }),
@@ -4304,7 +4739,8 @@ __modules['src/ui/recordStore.js'] = (() => {
 // ---- src/main.js
 __modules['src/main.js'] = (() => {
   // 起動・ゲームループ・画面切替。
-  const { createGame, finishDay, chooseNight, chooseCat, chooseFace } = __modules['src/game/progression.js'];
+  const { createGame, finishDay, chooseNight, chooseCat, chooseFace, chooseEvents } = __modules['src/game/progression.js'];
+  const { MAX_DAY } = __modules['src/data/params.js'];
   const { createRng } = __modules['src/util/rng.js'];
   const { createRenderer } = __modules['src/render/renderer.js'];
   const { createInput } = __modules['src/ui/input.js'];
@@ -4372,7 +4808,15 @@ __modules['src/main.js'] = (() => {
   });
 
   // misses: 猫の様子ごとの失敗回数（ヒントを出すため。1回のプレイの間だけ覚える）
-  const session = { game: createGame(), misses: {} };
+  // デバッグでイベントの日を固定したとき（{ id, day }。なければ毎回ランダム）
+  let fixedEvent = null;
+  function newEvents() {
+    if (!fixedEvent) return chooseEvents();
+    const events = Array(MAX_DAY).fill(null);
+    events[fixedEvent.day - 1] = fixedEvent.id;
+    return events;
+  }
+  const session = { game: createGame({ events: newEvents() }), misses: {} };
   let rng = createRng(session.game.seed);
   let scene;
   // 試作中はデバッグパネルで性格・毛色を固定できる（null ならランダム。性格は毛色で決まる）
@@ -4391,7 +4835,7 @@ __modules['src/main.js'] = (() => {
     pauseMenu.close();
     // BGM の切り替えは、はじめてから表示する
     bgmBtn.hidden = true;
-    session.game = createGame({ ...chooseCat({ personality: fixedPersonality, coat: fixedCoat }), face: chooseFace(fixedFace ?? {}) });
+    session.game = createGame({ ...chooseCat({ personality: fixedPersonality, coat: fixedCoat }), face: chooseFace(fixedFace ?? {}), events: newEvents() });
     session.misses = {};
     rng = createRng(session.game.seed);
     showTitle();
@@ -4485,6 +4929,12 @@ __modules['src/main.js'] = (() => {
       },
       onSkipDay: () => scene.skipDay?.(),
       onTrustMax: () => scene.trustMax?.(),
+      onEvent(value) {
+        // 'box:4' なら箱を4日目に固定。'' ならランダムに戻す。次の日から反映する
+        const [id, day] = value.split(':');
+        fixedEvent = id ? { id, day: Number(day) } : null;
+        session.game = { ...session.game, events: newEvents() };
+      },
       onReset() {
         screenEl.replaceChildren();
         goTitle();

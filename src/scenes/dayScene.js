@@ -2,8 +2,9 @@
 import { startDay } from '../game/progression.js';
 import { tick } from '../game/catBrain.js';
 import { applyAction, isShy, isTimid } from '../game/rules.js';
+import { createEventState, eventTick, eventAct, eventProp } from '../game/events.js';
 import { PERSONALITIES, MAX_VALUE, DAYS } from '../data/params.js';
-import { CARDS, TUTORIAL, FEEDBACK, DAY_TITLES, HINTS, LAP_TEXT, DERE_TEXT, TIMID_GONE_TEXT, withName } from '../data/texts.js';
+import { CARDS, TUTORIAL, FEEDBACK, DAY_TITLES, HINTS, LAP_TEXT, DERE_TEXT, TIMID_GONE_TEXT, EVENT_TEXT, withName } from '../data/texts.js';
 
 // 膝に乗ってから結果画面に移るまでの演出時間（ふみふみ → ゴロゴロ → 寝る）
 const LAP_SHOW_SEC = 6.5;
@@ -33,6 +34,8 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   const tut = { wait: false, approach: false, flee: false };
   // 説明・ヒントの吹き出しが出ている間（昼の経過時間で、この時刻まで）。我慢の説明で消さないように使う
   let bubbleUntil = 0;
+  // その日のイベントの進み具合（イベントのない日は null。終わったら done になり、いつもの日の動きに戻る）
+  let ev = day.event ? createEventState(day.event) : null;
   // あとで出す予定のトースト（途中でやめたら取り消す）
   const timers = [];
 
@@ -66,6 +69,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   if (day.dayNumber === 1) showCardOnce('day:intro');
   for (const a of start.newActions) showCardOnce(`action:${a}`);
   if (day.canLap) showCardOnce('day:lap');
+  if (day.event) showCardOnce(`event:${day.event}`);
   hud.show(true);
   hud.update(day);
   input.setBlinkEnabled(day.actions.includes('blink'));
@@ -89,10 +93,12 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   function act(action) {
     if (ended || overlay.busy || cat.mode === 'lap') return;
     syncPersonality();
-    const before = cat.mode;
+    // ヒントは、失敗したときの猫の様子で選ぶ（イベントで箱の中にいるときは、箱の中のヒント）
+    const before = ev && !ev.done && ['hide', 'peek', 'happy'].includes(ev.phase) ? 'inBox' : cat.mode;
     const a = action.type === 'blink' ? { ...action, sawLook: sawLook || cat.mode === 'look' } : action;
     sawLook = false;
-    const r = applyAction(a, cat, day, personality());
+    const r = (ev && eventAct(a, ev, cat, day, personality())) || applyAction(a, cat, day, personality());
+    if (r.ev) ev = r.ev;
     cat = r.cat;
     day = r.day;
     if (r.feedback) {
@@ -131,6 +137,41 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
     }
   }
 
+  // いつもの日：様子の切り替え・移動（src/game/catBrain.js）。イベントが終わったあとも、これに戻る
+  function updateCat(dt) {
+    const r = tick(cat, day, personality(), dt, rng);
+    cat = r.cat;
+    day = r.day;
+    let explained = false;
+    if (r.enteredMode === 'lap') {
+      hud.show(false);
+      input.setBlinkEnabled(false);
+      overlay.toast(text(LAP_TEXT), 3200);
+    } else if (r.enteredMode) {
+      explained = showCardOnce(`sign:${r.enteredMode}`);
+    }
+    // 触ると失敗するサインを、触らずにやり過ごせた。膝に乗った瞬間は、膝に乗った文だけを見せる。
+    // 新しいサインの説明が同じときに出たり、説明・ヒントの吹き出しがまだ出ていたりしたら、
+    // 我慢の説明はそれを消さないように次の機会に回す
+    if (r.endured && r.enteredMode !== 'lap') {
+      overlay.toast(FEEDBACK.relief, 1600);
+      renderer.addEffect('relief');
+      if (!explained && elapsed >= bubbleUntil) showCardOnce('tip:patience');
+    }
+  }
+
+  // イベントの日：イベントの進行（src/game/events.js）。起きたことをトーストで知らせる
+  function updateEvent(dt) {
+    const r = eventTick(ev, cat, day, personality(), dt, rng);
+    ev = r.ev;
+    cat = r.cat;
+    day = r.day;
+    for (const cue of r.cues) {
+      const t = EVENT_TEXT[ev.id]?.[cue];
+      if (t) overlay.toast(text(t), 1800);
+    }
+  }
+
   function playSound(feedback) {
     for (const name of soundsFor(feedback)) sound[name]();
   }
@@ -150,26 +191,9 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
         return;
       }
       elapsed += dt;
-      const r = tick(cat, day, personality(), dt, rng);
-      cat = r.cat;
-      day = r.day;
+      if (ev && !ev.done) updateEvent(dt);
+      else updateCat(dt);
       if (input.holdMs() > 0 && cat.mode === 'look') sawLook = true;
-      let explained = false;
-      if (r.enteredMode === 'lap') {
-        hud.show(false);
-        input.setBlinkEnabled(false);
-        overlay.toast(text(LAP_TEXT), 3200);
-      } else if (r.enteredMode) {
-        explained = showCardOnce(`sign:${r.enteredMode}`);
-      }
-      // 触ると失敗するサインを、触らずにやり過ごせた。膝に乗った瞬間は、膝に乗った文だけを見せる。
-      // 新しいサインの説明が同じときに出たり、説明・ヒントの吹き出しがまだ出ていたりしたら、
-      // 我慢の説明はそれを消さないように次の機会に回す
-      if (r.endured && r.enteredMode !== 'lap') {
-        overlay.toast(FEEDBACK.relief, 1600);
-        renderer.addEffect('relief');
-        if (!explained && elapsed >= bubbleUntil) showCardOnce('tip:patience');
-      }
       if (day.dayNumber === 1) {
         if (!tut.wait && elapsed > 3) {
           tut.wait = true;
@@ -213,6 +237,8 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
       wariness: day.wariness,
       // ツンの間か（ツンデレの見た目を変える。src/render/renderer.js の personalize）
       shy: isShy(day.trust, personality(), day.dere),
+      // イベントの小道具（イベントのない日は null。src/render/props.js）
+      prop: ev ? eventProp(ev) : null,
       // その日の進み具合 0〜1（窓の外の景色・部屋の明るさ。src/render/daylight.js）
       dayTime: Math.min(1, Math.max(0, 1 - day.timeLeft / DAYS[day.dayNumber - 1].durationSec)),
     }),

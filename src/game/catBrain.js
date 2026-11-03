@@ -18,11 +18,10 @@ export function tick(cat, day, personality, dt, rng) {
 
   const prevMode = cat.mode;
   let c = { ...cat, walking: false };
-  let d = { ...day, timeLeft: Math.max(0, day.timeLeft - dt) };
+  const a = ambient(day, dt);
+  let d = a.day;
+  const calm = a.calm;
   let endured = null;
-
-  d.wariness = Math.max(0, d.wariness - RULES.warinessDecayPerSec * dt);
-  const calm = d.wariness < RULES.calmThreshold;
 
   if (d.boxLockLeft > 0) {
     d.boxLockLeft = Math.max(0, d.boxLockLeft - dt);
@@ -63,6 +62,14 @@ export function tick(cat, day, personality, dt, rng) {
   }
 
   return { cat: c, day: d, enteredMode: c.mode !== prevMode ? c.mode : null, endured };
+}
+
+// 時間が進むと、残り時間が減り、待っている分だけ警戒が下がる。calm：落ち着いている（猫が近づき、信頼が増える）。
+// いつもの日（tick）とイベントの日（src/game/events.js）で共通
+export function ambient(day, dt) {
+  const d = { ...day, timeLeft: Math.max(0, day.timeLeft - dt) };
+  d.wariness = Math.max(0, d.wariness - RULES.warinessDecayPerSec * dt);
+  return { day: d, calm: d.wariness < RULES.calmThreshold };
 }
 
 // 信頼に応じて、猫がそれ以上近づかない距離。bonus はおやつの日などに、いつもより近くまで来る分

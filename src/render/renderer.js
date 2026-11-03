@@ -6,8 +6,9 @@
 // - 目は小さな縦長の点。口は「ω」だけ。ひげ・鼻は描かない
 // - ほっぺに薄いピンク。色はベタ塗りでグラデーションを使わない
 // - 線は均一な太さのこげ茶。角は丸く
-import { MAX_VALUE, RULES } from '../data/params.js';
+import { MAX_VALUE, RULES, EVENTS } from '../data/params.js';
 import { daylightAt, mixColor, rgba } from './daylight.js';
+import { drawParcel, drawPaperBits, drawPropText } from './props.js';
 
 export const W = 360;
 export const H = 640;
@@ -121,6 +122,8 @@ export function createRenderer(canvas) {
     shown: { alpha: 1, coat: null, mode: null },
     // 昼の進み具合（窓の外の景色・部屋の明るさ）。タイトル・名前付けは朝、エンディングは膝に乗ったときのまま
     dayTime: 0,
+    // イベントの小道具 { kind, phase, start（いまの phase になった時刻）, prev（ひとつ前の phase）, anchor（箱を置いた場所） }
+    prop: null,
   };
 
   function resize() {
@@ -270,6 +273,9 @@ export function createRenderer(canvas) {
     // 膝に乗るまでは、猫は膝の奥（膝を手前に描く）。跳び乗ったら膝の上（猫を手前に描く）
     const onLap = cat.mode === 'lap' && a.lapBlend > 0.6;
     if (onLap) lap();
+    // イベントの小道具：猫より奥に置くもの（猫が箱から出たあとの空の箱）を先に描く
+    const prop = updateProp(view, t, p);
+    if (prop && propBehind(prop, cat)) drawProp(ctx, prop, t, p);
     withAlpha(alpha, (g) => {
       g.save();
       g.translate(p.x, p.y);
@@ -291,6 +297,8 @@ export function createRenderer(canvas) {
       drawEffects(g, t, p.s, look);
       g.restore();
     });
+    // 猫の手前に置くもの（猫が入っている箱）
+    if (prop && !propBehind(prop, cat)) drawProp(ctx, prop, t, p);
     if (!onLap) lap();
 
     drawReach(ctx, t, p);
@@ -387,6 +395,23 @@ export function createRenderer(canvas) {
         reliefCue(ctx, u, scale);
       }
     }
+  }
+
+  // イベントの小道具の状態を進める。箱は、猫が箱の前に着いたとき（approach が終わったとき）の場所に置き、その日のあいだ動かさない
+  function updateProp(view, t, p) {
+    if (view.scene !== 'day' || !view.prop) {
+      a.prop = null;
+      return null;
+    }
+    const { kind, phase } = view.prop;
+    if (!a.prop || a.prop.kind !== kind) a.prop = { kind, phase, start: t, prev: null, anchor: null };
+    if (a.prop.phase !== phase) a.prop = { ...a.prop, prev: a.prop.phase, phase, start: t };
+    // 表示上の猫は少し遅れて追いかけてくるので、いまの表示の位置ではなく、猫が止まる位置（実際の距離）に置く
+    if (!a.prop.anchor && phase !== 'approach') {
+      const q = placement(view.cat.distance);
+      a.prop.anchor = { x: q.x, y: q.y + PARCEL_SINK * q.s, s: q.s };
+    }
+    return a.prop;
   }
 
   // なでようとしたとき、膝に置いていた左手が猫のほうへ伸びる
@@ -1318,6 +1343,65 @@ function timidCue(ctx, t, scale = 1) {
   ctx.font = 'bold 14px sans-serif';
   ctx.fillText('ビクビク', 0, 0);
   ctx.restore();
+}
+
+// ---------------------------------------------------------------- イベントの小道具（形は src/render/props.js）
+
+// 箱は、猫の足もとより少し下に置く（伏せた猫の体が、箱の下からはみ出さないように）
+const PARCEL_SINK = 14;
+// 箱が置かれるときは、猫の右どなりに落ちてきて、もぐるときに猫の前へすべり込む
+const PARCEL_SIDE = 80;
+const PARCEL_FALL_SEC = 0.35;
+// もぐった瞬間に紙くずが舞う長さ
+const PAPER_BITS_SEC = 0.8;
+
+// 猫より奥に描く：猫が箱から出て、箱より手前（近く）に来たとき。箱より遠くにいる間は、箱を手前に描く
+function propBehind(prop, cat) {
+  return prop.phase === 'left' && cat.distance < EVENTS.box.boxDistance;
+}
+
+function drawProp(ctx, prop, t, p) {
+  const A = prop.anchor;
+  if (!A) return;
+  const u = t - prop.start;
+  const fit = Math.max(1, 0.85 / A.s);
+  const parcelAt = (x, y, s, opts) => {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(s, s);
+    drawParcel(ctx, opts);
+    ctx.restore();
+  };
+  switch (prop.phase) {
+    case 'arrive': {
+      // 「ドサッ」と置かれて、猫が「？」と見る
+      const fall = clamp01(u / PARCEL_FALL_SEC);
+      parcelAt(A.x + PARCEL_SIDE * A.s, A.y - (1 - fall) * 120, A.s * 0.9);
+      if (fall >= 1 && u < 0.8) drawPropText(ctx, 'ドサッ', A.x + 40 * A.s, A.y - 80 * A.s, 15, fit);
+      if (u > 0.8) drawPropText(ctx, '？', p.x + 34 * p.s, p.y - 120 * p.s, 20, fit);
+      return;
+    }
+    case 'hop':
+      parcelAt(A.x + PARCEL_SIDE * A.s * (1 - clamp01(u / EVENTS.box.hopSec)), A.y, A.s * 0.9);
+      return;
+    case 'hide':
+      parcelAt(A.x, A.y, A.s, { pile: true });
+      if (prop.prev === 'hop' && u < PAPER_BITS_SEC) {
+        ctx.save();
+        ctx.translate(A.x, A.y);
+        ctx.scale(A.s, A.s);
+        drawPaperBits(ctx, u / PAPER_BITS_SEC);
+        ctx.restore();
+        drawPropText(ctx, 'カサカサ', A.x - 90 * A.s, A.y - 100 * A.s, 13, fit);
+      }
+      return;
+    case 'peek':
+    case 'happy':
+      parcelAt(A.x, A.y, A.s, { inside: false });
+      return;
+    default:
+      parcelAt(A.x, A.y, A.s);
+  }
 }
 
 function exclaim(ctx, x, y) {

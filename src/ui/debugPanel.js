@@ -8,7 +8,10 @@ const SPEEDS = [1, 2, 4, 8];
 const SHAPE_LABELS = { mochi: 'おもち', maru: 'まんまる', shimobukure: '下ぶくれ', hoppe: 'ほっぺもち' };
 const EAR_LABELS = { small: '小', normal: '中', big: '大' };
 
-export function createDebugPanel(el, { onPersonality, onCoat, onFace, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords }) {
+// イベントの日の固定（値は 'イベント:日'。空ならランダム）
+const EVENT_OPTIONS = [['', 'ランダム'], ['box:4', '箱が届いた（4日目）']];
+
+export function createDebugPanel(el, { onPersonality, onCoat, onFace, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords, onEvent }) {
   const details = document.createElement('details');
   // スマホ幅ではゲーム画面に重なるので、折りたたんだ状態で始める
   details.open = window.innerWidth >= 800;
@@ -47,6 +50,13 @@ export function createDebugPanel(el, { onPersonality, onCoat, onFace, onSkipDay,
   const faceRow = document.createElement('div');
   faceRow.append('顔: ', shapeSelect, ' 耳: ', earSelect);
   details.append(faceRow);
+
+  const eventSelect = document.createElement('select');
+  for (const [value, label] of EVENT_OPTIONS) eventSelect.append(new Option(label, value));
+  eventSelect.addEventListener('change', () => onEvent?.(eventSelect.value));
+  const eventRow = document.createElement('div');
+  eventRow.append('イベント: ', eventSelect);
+  details.append(eventRow);
 
   const buttons = document.createElement('div');
   for (const [text, fn] of [['次の日へ', onSkipDay], ['信頼MAX', onTrustMax], ['最初から', onReset], ['記録を消す', onClearRecords]]) {

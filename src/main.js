@@ -1,5 +1,6 @@
 // 起動・ゲームループ・画面切替。
-import { createGame, finishDay, chooseNight, chooseCat, chooseFace } from './game/progression.js';
+import { createGame, finishDay, chooseNight, chooseCat, chooseFace, chooseEvents } from './game/progression.js';
+import { MAX_DAY } from './data/params.js';
 import { createRng } from './util/rng.js';
 import { createRenderer } from './render/renderer.js';
 import { createInput } from './ui/input.js';
@@ -67,7 +68,15 @@ const input = createInput({
 });
 
 // misses: 猫の様子ごとの失敗回数（ヒントを出すため。1回のプレイの間だけ覚える）
-const session = { game: createGame(), misses: {} };
+// デバッグでイベントの日を固定したとき（{ id, day }。なければ毎回ランダム）
+let fixedEvent = null;
+function newEvents() {
+  if (!fixedEvent) return chooseEvents();
+  const events = Array(MAX_DAY).fill(null);
+  events[fixedEvent.day - 1] = fixedEvent.id;
+  return events;
+}
+const session = { game: createGame({ events: newEvents() }), misses: {} };
 let rng = createRng(session.game.seed);
 let scene;
 // 試作中はデバッグパネルで性格・毛色を固定できる（null ならランダム。性格は毛色で決まる）
@@ -86,7 +95,7 @@ function goTitle() {
   pauseMenu.close();
   // BGM の切り替えは、はじめてから表示する
   bgmBtn.hidden = true;
-  session.game = createGame({ ...chooseCat({ personality: fixedPersonality, coat: fixedCoat }), face: chooseFace(fixedFace ?? {}) });
+  session.game = createGame({ ...chooseCat({ personality: fixedPersonality, coat: fixedCoat }), face: chooseFace(fixedFace ?? {}), events: newEvents() });
   session.misses = {};
   rng = createRng(session.game.seed);
   showTitle();
@@ -180,6 +189,12 @@ if (SHOW_DEBUG) {
     },
     onSkipDay: () => scene.skipDay?.(),
     onTrustMax: () => scene.trustMax?.(),
+    onEvent(value) {
+      // 'box:4' なら箱を4日目に固定。'' ならランダムに戻す。次の日から反映する
+      const [id, day] = value.split(':');
+      fixedEvent = id ? { id, day: Number(day) } : null;
+      session.game = { ...session.game, events: newEvents() };
+    },
     onReset() {
       screenEl.replaceChildren();
       goTitle();

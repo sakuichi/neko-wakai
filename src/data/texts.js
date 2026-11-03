@@ -44,7 +44,7 @@ export const TUTORIAL = {
   flee: '焦りは禁物。猫は追いかけるほど逃げる',
 };
 
-// 説明。キーは 'action:xxx' 'sign:xxx' 'day:xxx' 'tip:xxx'
+// 説明。キーは 'action:xxx' 'sign:xxx' 'day:xxx' 'tip:xxx' 'event:xxx'
 // pause: true はゲームを一時停止するカード（遊び方が変わるもの・触ると失敗するのに触りたくなるもの）。
 // それ以外は、ゲームを止めない吹き出しで出す
 export const CARDS = {
@@ -97,6 +97,11 @@ export const CARDS = {
     title: '猫のサイン：気まぐれすりすり',
     body: 'すり寄ってきた……けど、しっぽがパタパタしている。\n猫の気は変わりやすい。しっぽをよく見よう。',
   },
+  'event:box': {
+    pause: true,
+    title: 'イベント：箱が届いた',
+    body: '通販の箱が届いた。\n中身より、箱のほうが気になるみたい……？\n顔を出したら、ゆっくりまばたき。箱の中では、触らずに見守ろう。',
+  },
   'tip:patience': {
     title: 'がまんできた',
     body: '触らずに見守ったので、{name}は少し安心したみたい。\nイライラやお腹見せは、やり過ごすだけで仲良くなれる。',
@@ -137,6 +142,11 @@ export const FEEDBACK = {
 export const DERE_TEXT = '（{name}の目つきが、少しやわらかくなった）';
 // 手がこわい猫（ビビり）が、なでられても平気になった瞬間に出す
 export const TIMID_GONE_TEXT = '（{name}は、手がこわくなくなったみたい）';
+
+// イベントの日のトースト（キーは src/game/events.js の cue）
+export const EVENT_TEXT = {
+  box: { hid: '（箱にもぐった）', out: '（箱から出てきた！）' },
+};
 
 export const LAP_TEXT = '{name}が、膝に乗ってきた……！';
 

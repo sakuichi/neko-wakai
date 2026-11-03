@@ -1,11 +1,12 @@
 // 日の進行・夜の選択の効果・エンディング判定。描画や入力には依存しない。
-import { DAYS, NIGHT, PERSONALITIES, MAX_DAY, MAX_VALUE, DEFAULT_PERSONALITY, COAT_PERSONALITY, FACES } from '../data/params.js';
+import { DAYS, NIGHT, PERSONALITIES, MAX_DAY, MAX_VALUE, DEFAULT_PERSONALITY, COAT_PERSONALITY, FACES, EVENTS, EVENT_DAYS } from '../data/params.js';
 import { isShy, isTimid } from './rules.js';
 
 // catName は1日目の最初にプレイヤーが付ける。coat は毛色（src/render/renderer.js の COATS のキー）、face は顔の形（chooseFace）
-export function createGame({ personality = DEFAULT_PERSONALITY, seed = Date.now(), coat = 'chatora', face = { shape: 'mochi', ears: 'normal' } } = {}) {
+// events：日ごとのイベント（添字は日−1。なければ null。chooseEvents）
+export function createGame({ personality = DEFAULT_PERSONALITY, seed = Date.now(), coat = 'chatora', face = { shape: 'mochi', ears: 'normal' }, events = Array(MAX_DAY).fill(null) } = {}) {
   // dere・handsOk：ツンデレがデレた・ビビりの手が平気になったか（一度なったら戻らない。src/game/rules.js の isShy・isTimid）
-  return { day: 1, trust: 0, personality, coat, face, catName: null, nightChoice: null, mistakes: 0, seed, seenCards: [], dere: false, handsOk: false };
+  return { day: 1, trust: 0, personality, coat, face, catName: null, nightChoice: null, mistakes: 0, seed, seenCards: [], dere: false, handsOk: false, events };
 }
 
 /**
@@ -17,6 +18,23 @@ export function chooseFace({ shape = null, ears = null } = {}, random = Math.ran
     shape: shape ?? FACES.shapes[Math.floor(random() * FACES.shapes.length)],
     ears: ears ?? FACES.ears[Math.floor(random() * FACES.ears.length)],
   };
+}
+
+/**
+ * イベントを、イベントの日（EVENT_DAYS）のどれかに1つずつ、重ならないように割り当てる。
+ * @returns {(string|null)[]} 長さ MAX_DAY。添字は日−1、イベントのない日は null
+ */
+export function chooseEvents(random = Math.random) {
+  const days = [...EVENT_DAYS];
+  for (let i = days.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [days[i], days[j]] = [days[j], days[i]];
+  }
+  const events = Array(MAX_DAY).fill(null);
+  Object.keys(EVENTS).forEach((id, i) => {
+    if (i < days.length) events[days[i] - 1] = id;
+  });
+  return events;
 }
 
 /**
@@ -54,6 +72,8 @@ export function startDay(game) {
     signs: def.signs,
     canLap: def.canLap,
     approachMul: def.approachMul,
+    // その日のイベント（なければ null。src/game/events.js）
+    event: game.events?.[game.day - 1] ?? null,
     // 夜のあいだ（おやつなど）に信頼が境目を越えていたら、その日は最初からデレて・平気になっている
     dere: !!game.dere || !isShy(game.trust, p),
     handsOk: !!game.handsOk || !isTimid(game.trust, p),
