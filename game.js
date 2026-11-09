@@ -88,6 +88,9 @@ __modules['src/data/params.js'] = (() => {
     // 振り向く（turnSec。まばたきが通じたら happySec ゴロゴロ）。これを rounds 回で終わり。まばたきしなくても終わる。
     // 狩りを最初に最後まで見守れた回に、その場でごほうび doneTrust（2回目以降は、いつもの我慢のごほうびだけ）
     bird: { birdDistance: 45, arriveSec: 1.6, huntSec: [3, 4], leaveSec: 1.2, turnSec: 2.5, happySec: 1, rounds: 2, doneTrust: 12 },
+    // 読書中：ページをめくってから readSec の間は「読んでいる」。その間だけ、いつもの距離の下限を気にせず readSpeed で近づく。
+    // 膝の前（距離0）まで来たら本の上に乗る（ごほうび doneTrust）。onBookSec たったら降りる（信頼100なら、そのまま膝の上で和解）
+    read: { readSec: 2.5, readSpeed: 6, onBookSec: 4, doneTrust: 12 },
   };
 
   const DAYS = [
@@ -550,7 +553,7 @@ __modules['src/render/daylight.js'] = (() => {
 // ---- src/render/props.js
 __modules['src/render/props.js'] = (() => {
   // イベントの小道具（4〜6日目）。描く位置・大きさは src/render/renderer.js が決め、ここではそれぞれの座標で描く
-  // （箱は底の真ん中、小鳥は胴の真ん中が原点。枝は窓の座標のまま）。
+  // （箱は底の真ん中、小鳥は胴の真ん中、本は真ん中が原点。枝は窓の座標のまま）。
   // 線の色・太さは renderer の猫と同じ
 
   const LINE = '#4e3d36';
@@ -730,7 +733,90 @@ __modules['src/render/props.js'] = (() => {
     }
     ctx.restore();
   }
-  return { drawParcel, drawPaperBits, drawPropText, drawBranch, drawBird };
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // 開いた本（読書中）。原点は本の真ん中（背）。大きさは renderer の BOOK_RECT。flip（0〜1）はページをめくる動き（範囲外なら描かない）
+  function drawOpenBook(ctx, flip) {
+    ctx.save();
+    ctx.lineWidth = LW;
+    ctx.strokeStyle = LINE;
+    ctx.fillStyle = '#c96f5a';
+    roundRect(ctx, -112, -60, 224, 92, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#fffaf0';
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(0, -48);
+      ctx.quadraticCurveTo(side * 50, -62, side * 102, -50);
+      ctx.lineTo(side * 102, 22);
+      ctx.quadraticCurveTo(side * 50, 10, 0, 24);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    // 文字の行
+    ctx.strokeStyle = 'rgba(78, 61, 54, 0.3)';
+    ctx.lineWidth = 2;
+    for (const side of [-1, 1]) for (let i = 0; i < 5; i++) line(ctx, side * 18, -34 + i * 11, side * 86, -38 + i * 11);
+    if (flip > 0 && flip < 1) {
+      // めくれているページ
+      ctx.fillStyle = '#fff3dc';
+      ctx.strokeStyle = LINE;
+      ctx.lineWidth = 3;
+      const w = Math.cos(flip * Math.PI) * 100;
+      ctx.beginPath();
+      ctx.moveTo(0, -48);
+      ctx.quadraticCurveTo(w / 2, -70 - Math.sin(flip * Math.PI) * 12, w, -52);
+      ctx.lineTo(w, 20);
+      ctx.quadraticCurveTo(w / 2, 6, 0, 24);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 閉じた本を右手に持つ（猫が本の上に乗ったあと。開いた本の片側ぶんの大きさ）。原点は本の真ん中。skin：親指の色（renderer の LAP_COLORS.skin）
+  function drawClosedBook(ctx, skin) {
+    ctx.save();
+    ctx.lineWidth = LW;
+    ctx.strokeStyle = LINE;
+    // ページの小口
+    ctx.fillStyle = '#fffaf0';
+    roundRect(ctx, -50, -44, 104, 88, 6);
+    ctx.fill();
+    ctx.stroke();
+    // 表紙
+    ctx.fillStyle = '#c96f5a';
+    roundRect(ctx, -56, -48, 104, 92, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(78, 61, 54, 0.35)';
+    ctx.lineWidth = 2;
+    line(ctx, -44, -48, -44, 44);
+    ctx.fillStyle = '#f3d9a6';
+    ctx.fillRect(-28, -24, 56, 14);
+    // 本をつかむ親指
+    ctx.fillStyle = skin;
+    ctx.strokeStyle = LINE;
+    ctx.lineWidth = LW;
+    ctx.beginPath();
+    ctx.ellipse(-52, 8, 11, 15, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+  return { drawParcel, drawPaperBits, drawPropText, drawBranch, drawBird, drawOpenBook, drawClosedBook };
 })();
 
 // ---- src/render/renderer.js
@@ -745,7 +831,7 @@ __modules['src/render/renderer.js'] = (() => {
   // - 線は均一な太さのこげ茶。角は丸く
   const { MAX_VALUE, RULES, EVENTS } = __modules['src/data/params.js'];
   const { daylightAt, mixColor, rgba } = __modules['src/render/daylight.js'];
-  const { drawParcel, drawPaperBits, drawPropText, drawBranch, drawBird } = __modules['src/render/props.js'];
+  const { drawParcel, drawPaperBits, drawPropText, drawBranch, drawBird, drawOpenBook, drawClosedBook } = __modules['src/render/props.js'];
 
   const W = 360;
   const H = 640;
@@ -892,6 +978,13 @@ __modules['src/render/renderer.js'] = (() => {
       return { x: lerp(p.x, LAP_SEAT.x, u), y: lerp(p.y, LAP_SEAT.y, u) - Math.sin(u * Math.PI) * 40, s: lerp(p.s, LAP_SEAT.s, u) };
     }
 
+    // 読書中の開いた本に当たったか（ページをめくれるのは、開いた本を描いている間だけ）
+    function hitTestBook(x, y) {
+      if (a.prop?.kind !== 'book' || a.prop.phase !== 'read') return false;
+      const r = BOOK_RECT;
+      return x >= BOOK_AT.x + r.x && x <= BOOK_AT.x + r.x + r.w && y >= BOOK_AT.y + r.y && y <= BOOK_AT.y + r.y + r.h;
+    }
+
     function hitTestCat(x, y) {
       const p = a.shownP ?? placement(a.shownDistance);
       const cy = p.y - 55 * p.s;
@@ -966,7 +1059,9 @@ __modules['src/render/renderer.js'] = (() => {
       COAT = COATS[coatKey] ?? COATS.chatora;
       const faceKey = fadingOut ? a.fade.face : view.face;
       FACE = faceParams(faceKey);
-      const cat = fadingOut ? a.fade.pose : poseFor(view);
+      // 読書中に本の上に乗っている猫（onBook）は、膝に乗った姿で描く
+      const pose = fadingOut ? a.fade.pose : poseFor(view);
+      const cat = pose.mode === 'onBook' ? { ...pose, mode: 'lap' } : pose;
       // 消えている間は、前の画面の猫の見た目（アップ・寝姿の動き・性格の仕草）のまま描く
       const look = fadingOut
         ? a.fade.look
@@ -983,7 +1078,8 @@ __modules['src/render/renderer.js'] = (() => {
       else a.shownDistance += (cat.distance - a.shownDistance) * clamp01(dt * follow);
       a.pathOffset *= Math.exp(-dt * 1.5);
       updateIdleBlink(t);
-      a.lapBlend = cat.mode === 'lap' ? Math.min(1, a.lapBlend + dt / LAP_JUMP_SEC) : 0;
+      // 膝に跳び乗る・降りる（降りるのは、読書中に本の上から降りたとき）。どちらも LAP_JUMP_SEC かけて動く
+      a.lapBlend = cat.mode === 'lap' ? Math.min(1, a.lapBlend + dt / LAP_JUMP_SEC) : Math.max(0, a.lapBlend - dt / LAP_JUMP_SEC);
 
       const scale = canvas.width / W;
       ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -1038,6 +1134,8 @@ __modules['src/render/renderer.js'] = (() => {
       // 猫の手前に置くもの（猫が入っている箱）
       if (prop && !propBehind(prop, cat)) drawProp(ctx, prop, t, p);
       if (!onLap) lap();
+      // 読書中の本は、膝の上（猫より手前）に持つ
+      if (prop?.kind === 'book') drawBook(ctx, prop, t);
 
       drawReach(ctx, t, p);
       drawPaws(ctx, t);
@@ -1145,6 +1243,8 @@ __modules['src/render/renderer.js'] = (() => {
       if (!a.prop || a.prop.kind !== kind) a.prop = { kind, phase, start: t, prev: null, anchor: null };
       // from：phase が変わったときの鳥の位置（飛び去るときは、そこから飛ぶ）
       if (a.prop.phase !== phase) a.prop = { ...a.prop, prev: a.prop.phase, phase, start: t, from: a.prop.birdAt };
+      // 本：ページ数が増えたら、めくる動きを始める
+      if (kind === 'book' && a.prop.pages !== view.prop.pages) a.prop = { ...a.prop, pages: view.prop.pages, flipAt: a.prop.pages === undefined ? null : t };
       // 表示上の猫は少し遅れて追いかけてくるので、いまの表示の位置ではなく、猫が止まる位置（実際の距離）に置く
       if (kind === 'parcel' && !a.prop.anchor && phase !== 'approach') {
         const q = placement(view.cat.distance);
@@ -1237,7 +1337,7 @@ __modules['src/render/renderer.js'] = (() => {
     // 直前に描いた猫の濃さ・毛色・顔・姿勢 { alpha, coat, face, mode }
     const shownCat = () => a.shown;
 
-    return { resize, toLogical, hitTestCat, addEffect, draw, shownPosition, shownCat };
+    return { resize, toLogical, hitTestCat, hitTestBook, addEffect, draw, shownPosition, shownCat };
   }
 
   // ---------------------------------------------------------------- 部屋（ベタ塗り）
@@ -2204,6 +2304,28 @@ __modules['src/render/renderer.js'] = (() => {
     ctx.restore();
   }
 
+  // 読書中の本：開いた本の真ん中（膝の上）と、その範囲（当たり判定にも使う）。閉じた本は右手に持つ
+  const BOOK_AT = { x: 180, y: 600 };
+  const BOOK_RECT = { x: -112, y: -60, w: 224, h: 92 };
+  const CLOSED_BOOK_AT = { x: 286, y: 566, angle: 0.22 };
+  // ページをめくる動きの長さ
+  const FLIP_SEC = 0.35;
+
+  function drawBook(ctx, prop, t) {
+    ctx.save();
+    if (prop.phase === 'read') {
+      ctx.translate(BOOK_AT.x, BOOK_AT.y);
+      drawOpenBook(ctx, prop.flipAt == null ? -1 : (t - prop.flipAt) / FLIP_SEC);
+      ctx.restore();
+      drawPropText(ctx, `${prop.pages ?? 0}ページ`, 18, 530, 12);
+      return;
+    }
+    ctx.translate(CLOSED_BOOK_AT.x, CLOSED_BOOK_AT.y);
+    ctx.rotate(CLOSED_BOOK_AT.angle);
+    drawClosedBook(ctx, C.skin);
+    ctx.restore();
+  }
+
   // 狩りの間、猫の頭の横に「カカカ」（小刻みに震わせる）
   function drawHuntCue(ctx, prop, t, p) {
     if (prop.phase !== 'hunt') return;
@@ -2577,6 +2699,11 @@ __modules['src/data/texts.js'] = (() => {
       title: 'イベント：窓の外に鳥',
       body: '窓の外に小鳥が来た。\n{name}は狩りモードで、いまは集中しているみたい。\n背中を向けている間は触らずに見守って、こっちを見たら、ゆっくりまばたき。',
     },
+    'event:read': {
+      pause: true,
+      title: 'イベント：読書中',
+      body: '今日は本を読もう。\n猫は、かまわないほうが寄ってくるらしい。\n本をタップしてページをめくろう。{name}には触らずに……。',
+    },
     'tip:patience': {
       title: 'がまんできた',
       body: '触らずに見守ったので、{name}は少し安心したみたい。\nイライラやお腹見せは、やり過ごすだけで仲良くなれる。',
@@ -2622,6 +2749,7 @@ __modules['src/data/texts.js'] = (() => {
   const EVENT_TEXT = {
     box: { hid: '（箱にもぐった）', out: '（箱から出てきた！）' },
     bird: { hunt: '（窓の外をじっと見ている……）', left: '（鳥が行ってしまった。ほっとしたみたい）', understood: '（狩りの邪魔をしない人だと、わかってくれたみたい）' },
+    read: { wonder: '（……？）', onBook: '（本の上に乗ってきた……！）' },
   };
 
   const LAP_TEXT = '{name}が、膝に乗ってきた……！';
@@ -2848,7 +2976,7 @@ __modules['src/ui/debugPanel.js'] = (() => {
   const EAR_LABELS = { small: '小', normal: '中', big: '大' };
 
   // イベントの日の固定（値は 'イベント:日'。空ならランダム）
-  const EVENT_OPTIONS = [['', 'ランダム'], ['box:4', '箱が届いた（4日目）'], ['bird:4', '窓の外に鳥（4日目）']];
+  const EVENT_OPTIONS = [['', 'ランダム'], ['box:4', '箱が届いた（4日目）'], ['bird:4', '窓の外に鳥（4日目）'], ['read:4', '読書中（4日目）']];
 
   function createDebugPanel(el, { onPersonality, onCoat, onFace, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords, onEvent }) {
     const details = document.createElement('details');
@@ -3117,11 +3245,31 @@ __modules['src/ui/sound.js'] = (() => {
       osc.stop(t + 0.2);
     }
 
+    // 本のページをめくる：紙がこすれる短い「パラッ」。ゴロゴロのノイズを速く再生して高くし、高いところだけ通す
+    function page() {
+      if (!ready()) return;
+      const t = ac.currentTime;
+      const src = ac.createBufferSource();
+      src.buffer = noise;
+      src.playbackRate.value = 6;
+      const hp = ac.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = 1200;
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.5, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+      src.connect(hp).connect(g).connect(out);
+      src.start(t);
+      src.stop(t + 0.18);
+    }
+
     return {
       unlock,
       purr,
       meow,
       bump,
+      page,
       get enabled() {
         return enabled;
       },
@@ -4089,6 +4237,8 @@ __modules['src/game/events.js'] = (() => {
     const base = { id, phase: 'approach', phaseT: 0, blinks: 0, done: false };
     // round：鳥が来て去った回数（触って邪魔した回も数える）。watched：狩りを最後まで見守れた回数。huntFor：今回の狩りの長さ
     if (id === 'bird') return { ...base, round: 0, watched: 0, huntFor: 0 };
+    // readLeft：ページをめくってから、まだ読んでいる残り秒。wondered：読むのをやめて「……？」となったか（その日1回だけ）
+    if (id === 'read') return { ...base, phase: 'read', readLeft: 0, pages: 0, wondered: false };
     return { ...base, hideFor: 0 };
   }
 
@@ -4096,6 +4246,7 @@ __modules['src/game/events.js'] = (() => {
    * @returns {{ev, cat, day, cues: string[]}} cues：この tick で起きたこと
    *   箱：'drop' 箱が置かれた / 'hid' もぐった / 'peek' 顔を出した / 'out' 出てきた
    *   鳥：'hunt' 狩りを始めた / 'understood' 初めて見守れて、鳥が去った（わかってくれた） / 'left' 2回目以降に見守れて、鳥が去った
+   *   読書：'wonder' 初めて読むのをやめた（……？） / 'onBook' 本の上に乗ってきた
    */
   function eventTick(ev, cat, day, personality, dt, rng) {
     const a = ambient(day, dt);
@@ -4103,6 +4254,9 @@ __modules['src/game/events.js'] = (() => {
     if (a.calm) d = { ...d, trust: clamp(d.trust + RULES.calmTrustPerSec * dt * d.trustRate) };
     const e = { ...ev, phaseT: ev.phaseT + dt };
     const c = { ...cat, walking: false };
+    // 読書中：猫が段ボールの中にいても、逃げていても、読んでいる時間は過ぎていく（歩くのは readTick で、落ち着いているときだけ）
+    const reading = e.id === 'read' && e.readLeft > 0;
+    if (reading) e.readLeft = Math.max(0, e.readLeft - dt);
 
     if (d.boxLockLeft > 0) {
       // 前の晩に置いた段ボールから、まだ出てこない（いつもの日と同じ）。出てきてから、イベントが始まる
@@ -4118,8 +4272,8 @@ __modules['src/game/events.js'] = (() => {
       c.mode = 'relax';
     }
 
-    const step = e.id === 'bird' ? birdTick : boxTick;
-    return step(e, c, d, personality, dt, rng, a.calm);
+    const step = { bird: birdTick, read: readTick }[e.id] ?? boxTick;
+    return step(e, c, d, personality, dt, rng, a.calm, reading);
   }
 
   // 落ち着いていれば、くつろいで target まで歩く
@@ -4243,19 +4397,75 @@ __modules['src/game/events.js'] = (() => {
     }
   }
 
+  // 読書中：読んでいる（ページをめくってから readSec の）間だけ、いつもの距離の下限を気にせず近づく。膝の前（距離0）まで来たら本の上に乗る
+  // reading：この tick のはじめに読んでいたか（readLeft は eventTick で減らしてある）
+  function readTick(e, c, d, personality, dt, rng, calm, reading) {
+    const P = EVENTS.read;
+    const cues = [];
+
+    if (e.phase === 'read') {
+      c.mode = 'relax';
+      if (reading) {
+        if (calm) {
+          c.distance = Math.max(0, c.distance - P.readSpeed * dt);
+          c.walking = c.distance > 0;
+        }
+        if (e.readLeft === 0 && !e.wondered && c.distance > 0) {
+          // 読むのをやめると、猫は「……？」と立ち止まる（遊び方に気づけるよう、その日の最初の1回だけ知らせる）
+          e.wondered = true;
+          cues.push('wonder');
+        }
+      }
+      if (c.distance <= 0) {
+        e = { ...e, phase: 'onBook', phaseT: 0 };
+        d = { ...d, trust: clamp(d.trust + P.doneTrust * d.trustRate) };
+        c.walking = false;
+        cues.push('onBook');
+      }
+    } else if (e.phase === 'onBook') {
+      if (e.phaseT >= P.onBookSec) {
+        // 本の上から降りる。信頼が100なら、そのまま膝の上で和解（いつもの膝の流れ）
+        e = { ...e, phase: 'out', phaseT: 0, done: true };
+        const lap = d.canLap && d.trust >= MAX_VALUE;
+        c.mode = lap ? 'lap' : 'relax';
+        if (!lap) c.modeTimeLeft = RULES.modeSec.relax[0];
+        return { ev: e, cat: c, day: d, cues };
+      }
+    }
+    if (e.phase === 'onBook') {
+      c.mode = 'onBook';
+      c.distance = 0;
+    }
+    return { ev: e, cat: c, day: d, cues };
+  }
+
   /**
    * イベントの間のなでる・まばたき。いつもの決まり（applyAction）に、猫の様子を読み替えて渡す。
    * @returns {{ev, cat, day, feedback, mistake}|null} イベントが終わったあとは null（いつもの applyAction に任せる）
    */
   function eventAct(action, ev, cat, day, personality) {
     if (ev.done) return null;
+    // ページをめくる（本のタップ）は読書中の日だけ。猫が逃げていても、段ボールの中にいてもめくれる
+    if (action.type === 'page') {
+      const turned = ev.id === 'read' && ev.phase === 'read';
+      const next = turned ? { ...ev, readLeft: EVENTS.read.readSec, pages: ev.pages + 1 } : ev;
+      return { ev: next, cat, day, feedback: null, mistake: false };
+    }
 
     // 逃げている間・前の晩の段ボールの中では、いつもの日と同じ（逃げている猫には何も起きない。段ボールの中を触ると引っ込む）
     if (cat.mode === 'flee' || cat.mode === 'inBox') {
       const r = applyAction(action, cat, day, personality);
       return { ev, cat: r.cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
     }
-    return ev.id === 'bird' ? birdAct(action, ev, cat, day, personality) : boxAct(action, ev, cat, day, personality);
+    const act = { bird: birdAct, read: readAct }[ev.id] ?? boxAct;
+    return act(action, ev, cat, day, personality);
+  }
+
+  // 読書中：読んでいる間の猫は、くつろいでいるのと同じ（触ると逃げてミス、まばたきは「じっと見つめる」）。本の上では何も起きない
+  function readAct(action, ev, cat, day, personality) {
+    const r = applyAction(action, { ...cat, mode: ev.phase === 'onBook' ? 'lap' : 'relax' }, day, personality);
+    if (ev.phase === 'onBook') return { ev, cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
+    return { ev, cat: r.cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
   }
 
   function boxAct(action, ev, cat, day, personality) {
@@ -4317,6 +4527,7 @@ __modules['src/game/events.js'] = (() => {
   // 描画用（src/render/renderer.js）。箱は done のあと、空になった箱がその場に残る（left）。鳥は done のあとも窓の外に枝が残る
   function eventProp(ev) {
     if (ev.id === 'bird') return { kind: 'bird', phase: ev.done ? 'done' : ev.phase, phaseT: ev.phaseT };
+    if (ev.id === 'read') return { kind: 'book', phase: ev.done ? 'done' : ev.phase, phaseT: ev.phaseT, pages: ev.pages };
     return { kind: 'parcel', phase: ev.done ? 'left' : ev.phase, phaseT: ev.phaseT };
   }
   return { createEventState, eventTick, eventAct, eventProp };
@@ -4419,7 +4630,8 @@ __modules['src/scenes/dayScene.js'] = (() => {
         mistakes: day.mistakes,
         dere: day.dere,
         handsOk: day.handsOk,
-        cat: { mode: cat.mode, distance: cat.distance, walking: !!cat.walking },
+        // 本の上（onBook）は読書中の昼だけの姿。夜の画面には、膝の前でくつろいでいる姿として渡す
+        cat: { mode: cat.mode === 'onBook' ? 'relax' : cat.mode, distance: cat.distance, walking: !!cat.walking },
       });
     }
 
@@ -4486,9 +4698,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
       day = r.day;
       let explained = false;
       if (r.enteredMode === 'lap') {
-        hud.show(false);
-        input.setBlinkEnabled(false);
-        overlay.toast(text(LAP_TEXT), 3200);
+        enterLap();
       } else if (r.enteredMode) {
         explained = showCardOnce(`sign:${r.enteredMode}`);
       }
@@ -4502,8 +4712,16 @@ __modules['src/scenes/dayScene.js'] = (() => {
       }
     }
 
+    // 膝に乗った（和解）。いつもの日も、読書中に本の上から膝に乗ったときも同じ
+    function enterLap() {
+      hud.show(false);
+      input.setBlinkEnabled(false);
+      overlay.toast(text(LAP_TEXT), 3200);
+    }
+
     // イベントの日：イベントの進行（src/game/events.js）。起きたことをトーストで知らせる
     function updateEvent(dt) {
+      const prevMode = cat.mode;
       const r = eventTick(ev, cat, day, personality(), dt, rng);
       ev = r.ev;
       cat = r.cat;
@@ -4517,6 +4735,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
         // 鳥が去って、ほっとした（いつもの「やり過ごせた」と同じ演出）
         if (cue === 'left' || cue === 'understood') renderer.addEffect('relief');
       }
+      if (cat.mode === 'lap' && prevMode !== 'lap') enterLap();
     }
 
     function playSound(feedback) {
@@ -4558,6 +4777,12 @@ __modules['src/scenes/dayScene.js'] = (() => {
       },
       pet(x, y) {
         if (ended || overlay.busy) return;
+        // 読書中は、本のタップでページをめくる（猫と重なっていても本を優先する。触ってミスにならないように）
+        if (ev && !ev.done && ev.id === 'read' && ev.phase === 'read' && renderer.hitTestBook(x, y)) {
+          ev = eventAct({ type: 'page' }, ev, cat, day, personality()).ev;
+          sound.page();
+          return;
+        }
         if (!renderer.hitTestCat(x, y)) {
           // 猫以外をタップしたときは、足あとだけ残す（タップが届いていることがわかるように）
           renderer.addEffect('paw', { x, y });

@@ -1,5 +1,5 @@
 // イベントの小道具（4〜6日目）。描く位置・大きさは src/render/renderer.js が決め、ここではそれぞれの座標で描く
-// （箱は底の真ん中、小鳥は胴の真ん中が原点。枝は窓の座標のまま）。
+// （箱は底の真ん中、小鳥は胴の真ん中、本は真ん中が原点。枝は窓の座標のまま）。
 // 線の色・太さは renderer の猫と同じ
 
 const LINE = '#4e3d36';
@@ -177,5 +177,88 @@ export function drawBird(ctx, t, flying) {
     line(ctx, -2, 7, -3, 12);
     line(ctx, 3, 7, 3, 12);
   }
+  ctx.restore();
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// 開いた本（読書中）。原点は本の真ん中（背）。大きさは renderer の BOOK_RECT。flip（0〜1）はページをめくる動き（範囲外なら描かない）
+export function drawOpenBook(ctx, flip) {
+  ctx.save();
+  ctx.lineWidth = LW;
+  ctx.strokeStyle = LINE;
+  ctx.fillStyle = '#c96f5a';
+  roundRect(ctx, -112, -60, 224, 92, 10);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#fffaf0';
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(0, -48);
+    ctx.quadraticCurveTo(side * 50, -62, side * 102, -50);
+    ctx.lineTo(side * 102, 22);
+    ctx.quadraticCurveTo(side * 50, 10, 0, 24);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  // 文字の行
+  ctx.strokeStyle = 'rgba(78, 61, 54, 0.3)';
+  ctx.lineWidth = 2;
+  for (const side of [-1, 1]) for (let i = 0; i < 5; i++) line(ctx, side * 18, -34 + i * 11, side * 86, -38 + i * 11);
+  if (flip > 0 && flip < 1) {
+    // めくれているページ
+    ctx.fillStyle = '#fff3dc';
+    ctx.strokeStyle = LINE;
+    ctx.lineWidth = 3;
+    const w = Math.cos(flip * Math.PI) * 100;
+    ctx.beginPath();
+    ctx.moveTo(0, -48);
+    ctx.quadraticCurveTo(w / 2, -70 - Math.sin(flip * Math.PI) * 12, w, -52);
+    ctx.lineTo(w, 20);
+    ctx.quadraticCurveTo(w / 2, 6, 0, 24);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// 閉じた本を右手に持つ（猫が本の上に乗ったあと。開いた本の片側ぶんの大きさ）。原点は本の真ん中。skin：親指の色（renderer の LAP_COLORS.skin）
+export function drawClosedBook(ctx, skin) {
+  ctx.save();
+  ctx.lineWidth = LW;
+  ctx.strokeStyle = LINE;
+  // ページの小口
+  ctx.fillStyle = '#fffaf0';
+  roundRect(ctx, -50, -44, 104, 88, 6);
+  ctx.fill();
+  ctx.stroke();
+  // 表紙
+  ctx.fillStyle = '#c96f5a';
+  roundRect(ctx, -56, -48, 104, 92, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(78, 61, 54, 0.35)';
+  ctx.lineWidth = 2;
+  line(ctx, -44, -48, -44, 44);
+  ctx.fillStyle = '#f3d9a6';
+  ctx.fillRect(-28, -24, 56, 14);
+  // 本をつかむ親指
+  ctx.fillStyle = skin;
+  ctx.strokeStyle = LINE;
+  ctx.lineWidth = LW;
+  ctx.beginPath();
+  ctx.ellipse(-52, 8, 11, 15, 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
   ctx.restore();
 }

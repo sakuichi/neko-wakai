@@ -8,7 +8,7 @@
 // - 線は均一な太さのこげ茶。角は丸く
 import { MAX_VALUE, RULES, EVENTS } from '../data/params.js';
 import { daylightAt, mixColor, rgba } from './daylight.js';
-import { drawParcel, drawPaperBits, drawPropText, drawBranch, drawBird } from './props.js';
+import { drawParcel, drawPaperBits, drawPropText, drawBranch, drawBird, drawOpenBook, drawClosedBook } from './props.js';
 
 export const W = 360;
 export const H = 640;
@@ -155,6 +155,13 @@ export function createRenderer(canvas) {
     return { x: lerp(p.x, LAP_SEAT.x, u), y: lerp(p.y, LAP_SEAT.y, u) - Math.sin(u * Math.PI) * 40, s: lerp(p.s, LAP_SEAT.s, u) };
   }
 
+  // 読書中の開いた本に当たったか（ページをめくれるのは、開いた本を描いている間だけ）
+  function hitTestBook(x, y) {
+    if (a.prop?.kind !== 'book' || a.prop.phase !== 'read') return false;
+    const r = BOOK_RECT;
+    return x >= BOOK_AT.x + r.x && x <= BOOK_AT.x + r.x + r.w && y >= BOOK_AT.y + r.y && y <= BOOK_AT.y + r.y + r.h;
+  }
+
   function hitTestCat(x, y) {
     const p = a.shownP ?? placement(a.shownDistance);
     const cy = p.y - 55 * p.s;
@@ -229,7 +236,9 @@ export function createRenderer(canvas) {
     COAT = COATS[coatKey] ?? COATS.chatora;
     const faceKey = fadingOut ? a.fade.face : view.face;
     FACE = faceParams(faceKey);
-    const cat = fadingOut ? a.fade.pose : poseFor(view);
+    // 読書中に本の上に乗っている猫（onBook）は、膝に乗った姿で描く
+    const pose = fadingOut ? a.fade.pose : poseFor(view);
+    const cat = pose.mode === 'onBook' ? { ...pose, mode: 'lap' } : pose;
     // 消えている間は、前の画面の猫の見た目（アップ・寝姿の動き・性格の仕草）のまま描く
     const look = fadingOut
       ? a.fade.look
@@ -246,7 +255,8 @@ export function createRenderer(canvas) {
     else a.shownDistance += (cat.distance - a.shownDistance) * clamp01(dt * follow);
     a.pathOffset *= Math.exp(-dt * 1.5);
     updateIdleBlink(t);
-    a.lapBlend = cat.mode === 'lap' ? Math.min(1, a.lapBlend + dt / LAP_JUMP_SEC) : 0;
+    // 膝に跳び乗る・降りる（降りるのは、読書中に本の上から降りたとき）。どちらも LAP_JUMP_SEC かけて動く
+    a.lapBlend = cat.mode === 'lap' ? Math.min(1, a.lapBlend + dt / LAP_JUMP_SEC) : Math.max(0, a.lapBlend - dt / LAP_JUMP_SEC);
 
     const scale = canvas.width / W;
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
@@ -301,6 +311,8 @@ export function createRenderer(canvas) {
     // 猫の手前に置くもの（猫が入っている箱）
     if (prop && !propBehind(prop, cat)) drawProp(ctx, prop, t, p);
     if (!onLap) lap();
+    // 読書中の本は、膝の上（猫より手前）に持つ
+    if (prop?.kind === 'book') drawBook(ctx, prop, t);
 
     drawReach(ctx, t, p);
     drawPaws(ctx, t);
@@ -408,6 +420,8 @@ export function createRenderer(canvas) {
     if (!a.prop || a.prop.kind !== kind) a.prop = { kind, phase, start: t, prev: null, anchor: null };
     // from：phase が変わったときの鳥の位置（飛び去るときは、そこから飛ぶ）
     if (a.prop.phase !== phase) a.prop = { ...a.prop, prev: a.prop.phase, phase, start: t, from: a.prop.birdAt };
+    // 本：ページ数が増えたら、めくる動きを始める
+    if (kind === 'book' && a.prop.pages !== view.prop.pages) a.prop = { ...a.prop, pages: view.prop.pages, flipAt: a.prop.pages === undefined ? null : t };
     // 表示上の猫は少し遅れて追いかけてくるので、いまの表示の位置ではなく、猫が止まる位置（実際の距離）に置く
     if (kind === 'parcel' && !a.prop.anchor && phase !== 'approach') {
       const q = placement(view.cat.distance);
@@ -500,7 +514,7 @@ export function createRenderer(canvas) {
   // 直前に描いた猫の濃さ・毛色・顔・姿勢 { alpha, coat, face, mode }
   const shownCat = () => a.shown;
 
-  return { resize, toLogical, hitTestCat, addEffect, draw, shownPosition, shownCat };
+  return { resize, toLogical, hitTestCat, hitTestBook, addEffect, draw, shownPosition, shownCat };
 }
 
 // ---------------------------------------------------------------- 部屋（ベタ塗り）
@@ -1464,6 +1478,28 @@ function drawWindowBird(ctx, prop, t) {
   ctx.lineWidth = 3;
   line(ctx, 48, 120, 66, 96);
   line(ctx, 112, 184, 128, 160);
+  ctx.restore();
+}
+
+// 読書中の本：開いた本の真ん中（膝の上）と、その範囲（当たり判定にも使う）。閉じた本は右手に持つ
+const BOOK_AT = { x: 180, y: 600 };
+const BOOK_RECT = { x: -112, y: -60, w: 224, h: 92 };
+const CLOSED_BOOK_AT = { x: 286, y: 566, angle: 0.22 };
+// ページをめくる動きの長さ
+const FLIP_SEC = 0.35;
+
+function drawBook(ctx, prop, t) {
+  ctx.save();
+  if (prop.phase === 'read') {
+    ctx.translate(BOOK_AT.x, BOOK_AT.y);
+    drawOpenBook(ctx, prop.flipAt == null ? -1 : (t - prop.flipAt) / FLIP_SEC);
+    ctx.restore();
+    drawPropText(ctx, `${prop.pages ?? 0}ページ`, 18, 530, 12);
+    return;
+  }
+  ctx.translate(CLOSED_BOOK_AT.x, CLOSED_BOOK_AT.y);
+  ctx.rotate(CLOSED_BOOK_AT.angle);
+  drawClosedBook(ctx, C.skin);
   ctx.restore();
 }
 

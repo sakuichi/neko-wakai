@@ -18,6 +18,8 @@ export function createEventState(id) {
   const base = { id, phase: 'approach', phaseT: 0, blinks: 0, done: false };
   // round：鳥が来て去った回数（触って邪魔した回も数える）。watched：狩りを最後まで見守れた回数。huntFor：今回の狩りの長さ
   if (id === 'bird') return { ...base, round: 0, watched: 0, huntFor: 0 };
+  // readLeft：ページをめくってから、まだ読んでいる残り秒。wondered：読むのをやめて「……？」となったか（その日1回だけ）
+  if (id === 'read') return { ...base, phase: 'read', readLeft: 0, pages: 0, wondered: false };
   return { ...base, hideFor: 0 };
 }
 
@@ -25,6 +27,7 @@ export function createEventState(id) {
  * @returns {{ev, cat, day, cues: string[]}} cues：この tick で起きたこと
  *   箱：'drop' 箱が置かれた / 'hid' もぐった / 'peek' 顔を出した / 'out' 出てきた
  *   鳥：'hunt' 狩りを始めた / 'understood' 初めて見守れて、鳥が去った（わかってくれた） / 'left' 2回目以降に見守れて、鳥が去った
+ *   読書：'wonder' 初めて読むのをやめた（……？） / 'onBook' 本の上に乗ってきた
  */
 export function eventTick(ev, cat, day, personality, dt, rng) {
   const a = ambient(day, dt);
@@ -32,6 +35,9 @@ export function eventTick(ev, cat, day, personality, dt, rng) {
   if (a.calm) d = { ...d, trust: clamp(d.trust + RULES.calmTrustPerSec * dt * d.trustRate) };
   const e = { ...ev, phaseT: ev.phaseT + dt };
   const c = { ...cat, walking: false };
+  // 読書中：猫が段ボールの中にいても、逃げていても、読んでいる時間は過ぎていく（歩くのは readTick で、落ち着いているときだけ）
+  const reading = e.id === 'read' && e.readLeft > 0;
+  if (reading) e.readLeft = Math.max(0, e.readLeft - dt);
 
   if (d.boxLockLeft > 0) {
     // 前の晩に置いた段ボールから、まだ出てこない（いつもの日と同じ）。出てきてから、イベントが始まる
@@ -47,8 +53,8 @@ export function eventTick(ev, cat, day, personality, dt, rng) {
     c.mode = 'relax';
   }
 
-  const step = e.id === 'bird' ? birdTick : boxTick;
-  return step(e, c, d, personality, dt, rng, a.calm);
+  const step = { bird: birdTick, read: readTick }[e.id] ?? boxTick;
+  return step(e, c, d, personality, dt, rng, a.calm, reading);
 }
 
 // 落ち着いていれば、くつろいで target まで歩く
@@ -172,19 +178,75 @@ function birdTick(e, c, d, personality, dt, rng, calm) {
   }
 }
 
+// 読書中：読んでいる（ページをめくってから readSec の）間だけ、いつもの距離の下限を気にせず近づく。膝の前（距離0）まで来たら本の上に乗る
+// reading：この tick のはじめに読んでいたか（readLeft は eventTick で減らしてある）
+function readTick(e, c, d, personality, dt, rng, calm, reading) {
+  const P = EVENTS.read;
+  const cues = [];
+
+  if (e.phase === 'read') {
+    c.mode = 'relax';
+    if (reading) {
+      if (calm) {
+        c.distance = Math.max(0, c.distance - P.readSpeed * dt);
+        c.walking = c.distance > 0;
+      }
+      if (e.readLeft === 0 && !e.wondered && c.distance > 0) {
+        // 読むのをやめると、猫は「……？」と立ち止まる（遊び方に気づけるよう、その日の最初の1回だけ知らせる）
+        e.wondered = true;
+        cues.push('wonder');
+      }
+    }
+    if (c.distance <= 0) {
+      e = { ...e, phase: 'onBook', phaseT: 0 };
+      d = { ...d, trust: clamp(d.trust + P.doneTrust * d.trustRate) };
+      c.walking = false;
+      cues.push('onBook');
+    }
+  } else if (e.phase === 'onBook') {
+    if (e.phaseT >= P.onBookSec) {
+      // 本の上から降りる。信頼が100なら、そのまま膝の上で和解（いつもの膝の流れ）
+      e = { ...e, phase: 'out', phaseT: 0, done: true };
+      const lap = d.canLap && d.trust >= MAX_VALUE;
+      c.mode = lap ? 'lap' : 'relax';
+      if (!lap) c.modeTimeLeft = RULES.modeSec.relax[0];
+      return { ev: e, cat: c, day: d, cues };
+    }
+  }
+  if (e.phase === 'onBook') {
+    c.mode = 'onBook';
+    c.distance = 0;
+  }
+  return { ev: e, cat: c, day: d, cues };
+}
+
 /**
  * イベントの間のなでる・まばたき。いつもの決まり（applyAction）に、猫の様子を読み替えて渡す。
  * @returns {{ev, cat, day, feedback, mistake}|null} イベントが終わったあとは null（いつもの applyAction に任せる）
  */
 export function eventAct(action, ev, cat, day, personality) {
   if (ev.done) return null;
+  // ページをめくる（本のタップ）は読書中の日だけ。猫が逃げていても、段ボールの中にいてもめくれる
+  if (action.type === 'page') {
+    const turned = ev.id === 'read' && ev.phase === 'read';
+    const next = turned ? { ...ev, readLeft: EVENTS.read.readSec, pages: ev.pages + 1 } : ev;
+    return { ev: next, cat, day, feedback: null, mistake: false };
+  }
 
   // 逃げている間・前の晩の段ボールの中では、いつもの日と同じ（逃げている猫には何も起きない。段ボールの中を触ると引っ込む）
   if (cat.mode === 'flee' || cat.mode === 'inBox') {
     const r = applyAction(action, cat, day, personality);
     return { ev, cat: r.cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
   }
-  return ev.id === 'bird' ? birdAct(action, ev, cat, day, personality) : boxAct(action, ev, cat, day, personality);
+  const act = { bird: birdAct, read: readAct }[ev.id] ?? boxAct;
+  return act(action, ev, cat, day, personality);
+}
+
+// 読書中：読んでいる間の猫は、くつろいでいるのと同じ（触ると逃げてミス、まばたきは「じっと見つめる」）。本の上では何も起きない
+function readAct(action, ev, cat, day, personality) {
+  const r = applyAction(action, { ...cat, mode: ev.phase === 'onBook' ? 'lap' : 'relax' }, day, personality);
+  if (ev.phase === 'onBook') return { ev, cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
+  return { ev, cat: r.cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
 }
 
 function boxAct(action, ev, cat, day, personality) {
@@ -246,5 +308,6 @@ function result(pose, ev, cat, r) {
 // 描画用（src/render/renderer.js）。箱は done のあと、空になった箱がその場に残る（left）。鳥は done のあとも窓の外に枝が残る
 export function eventProp(ev) {
   if (ev.id === 'bird') return { kind: 'bird', phase: ev.done ? 'done' : ev.phase, phaseT: ev.phaseT };
+  if (ev.id === 'read') return { kind: 'book', phase: ev.done ? 'done' : ev.phase, phaseT: ev.phaseT, pages: ev.pages };
   return { kind: 'parcel', phase: ev.done ? 'left' : ev.phase, phaseT: ev.phaseT };
 }

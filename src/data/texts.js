@@ -107,6 +107,11 @@ export const CARDS = {
     title: 'イベント：窓の外に鳥',
     body: '窓の外に小鳥が来た。\n{name}は狩りモードで、いまは集中しているみたい。\n背中を向けている間は触らずに見守って、こっちを見たら、ゆっくりまばたき。',
   },
+  'event:read': {
+    pause: true,
+    title: 'イベント：読書中',
+    body: '今日は本を読もう。\n猫は、かまわないほうが寄ってくるらしい。\n本をタップしてページをめくろう。{name}には触らずに……。',
+  },
   'tip:patience': {
     title: 'がまんできた',
     body: '触らずに見守ったので、{name}は少し安心したみたい。\nイライラやお腹見せは、やり過ごすだけで仲良くなれる。',
@@ -152,6 +157,7 @@ export const TIMID_GONE_TEXT = '（{name}は、手がこわくなくなったみ
 export const EVENT_TEXT = {
   box: { hid: '（箱にもぐった）', out: '（箱から出てきた！）' },
   bird: { hunt: '（窓の外をじっと見ている……）', left: '（鳥が行ってしまった。ほっとしたみたい）', understood: '（狩りの邪魔をしない人だと、わかってくれたみたい）' },
+  read: { wonder: '（……？）', onBook: '（本の上に乗ってきた……！）' },
 };
 
 export const LAP_TEXT = '{name}が、膝に乗ってきた……！';

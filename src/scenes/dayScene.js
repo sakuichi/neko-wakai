@@ -93,7 +93,8 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
       mistakes: day.mistakes,
       dere: day.dere,
       handsOk: day.handsOk,
-      cat: { mode: cat.mode, distance: cat.distance, walking: !!cat.walking },
+      // 本の上（onBook）は読書中の昼だけの姿。夜の画面には、膝の前でくつろいでいる姿として渡す
+      cat: { mode: cat.mode === 'onBook' ? 'relax' : cat.mode, distance: cat.distance, walking: !!cat.walking },
     });
   }
 
@@ -160,9 +161,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
     day = r.day;
     let explained = false;
     if (r.enteredMode === 'lap') {
-      hud.show(false);
-      input.setBlinkEnabled(false);
-      overlay.toast(text(LAP_TEXT), 3200);
+      enterLap();
     } else if (r.enteredMode) {
       explained = showCardOnce(`sign:${r.enteredMode}`);
     }
@@ -176,8 +175,16 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
     }
   }
 
+  // 膝に乗った（和解）。いつもの日も、読書中に本の上から膝に乗ったときも同じ
+  function enterLap() {
+    hud.show(false);
+    input.setBlinkEnabled(false);
+    overlay.toast(text(LAP_TEXT), 3200);
+  }
+
   // イベントの日：イベントの進行（src/game/events.js）。起きたことをトーストで知らせる
   function updateEvent(dt) {
+    const prevMode = cat.mode;
     const r = eventTick(ev, cat, day, personality(), dt, rng);
     ev = r.ev;
     cat = r.cat;
@@ -191,6 +198,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
       // 鳥が去って、ほっとした（いつもの「やり過ごせた」と同じ演出）
       if (cue === 'left' || cue === 'understood') renderer.addEffect('relief');
     }
+    if (cat.mode === 'lap' && prevMode !== 'lap') enterLap();
   }
 
   function playSound(feedback) {
@@ -232,6 +240,12 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
     },
     pet(x, y) {
       if (ended || overlay.busy) return;
+      // 読書中は、本のタップでページをめくる（猫と重なっていても本を優先する。触ってミスにならないように）
+      if (ev && !ev.done && ev.id === 'read' && ev.phase === 'read' && renderer.hitTestBook(x, y)) {
+        ev = eventAct({ type: 'page' }, ev, cat, day, personality()).ev;
+        sound.page();
+        return;
+      }
       if (!renderer.hitTestCat(x, y)) {
         // 猫以外をタップしたときは、足あとだけ残す（タップが届いていることがわかるように）
         renderer.addEffect('paw', { x, y });

@@ -160,11 +160,31 @@ export function createSound() {
     osc.stop(t + 0.2);
   }
 
+  // 本のページをめくる：紙がこすれる短い「パラッ」。ゴロゴロのノイズを速く再生して高くし、高いところだけ通す
+  function page() {
+    if (!ready()) return;
+    const t = ac.currentTime;
+    const src = ac.createBufferSource();
+    src.buffer = noise;
+    src.playbackRate.value = 6;
+    const hp = ac.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 1200;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.5, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+    src.connect(hp).connect(g).connect(out);
+    src.start(t);
+    src.stop(t + 0.18);
+  }
+
   return {
     unlock,
     purr,
     meow,
     bump,
+    page,
     get enabled() {
       return enabled;
     },
