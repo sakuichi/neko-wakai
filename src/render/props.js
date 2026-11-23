@@ -232,7 +232,7 @@ export function drawOpenBook(ctx, flip) {
   ctx.restore();
 }
 
-// 閉じた本を右手に持つ（猫が本の上に乗ったあと。開いた本の片側ぶんの大きさ）。原点は本の真ん中。skin：親指の色（renderer の LAP_COLORS.skin）
+// 閉じた本を右手に持つ（読書のあと。開いた本の片側ぶんの大きさ）。原点は本の真ん中。skin：親指の色（renderer の LAP_COLORS.skin）
 export function drawClosedBook(ctx, skin) {
   ctx.save();
   ctx.lineWidth = LW;

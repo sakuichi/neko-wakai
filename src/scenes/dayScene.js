@@ -44,7 +44,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   // イベントのトーストを出したら、その表示が終わる（eventToastUntil）まで、ツンが取れた・手が平気になったトーストを待たせる
   // （トーストは1つしか出せないので、同じ瞬間に出すとイベントのほうが消えてしまう）。時間はゲームの経過（elapsed）で数える
   let eventToastUntil = 0;
-  // 読書の日：本の上から降りたあと、この時刻（elapsed）までは、本のあった場所のタップを猫へのタッチにしない
+  // 読書の日：猫が本をのぞき込むのをやめたあと、この時刻（elapsed）までは、本のあった場所のタップを猫へのタッチにしない
   let bookGuardUntil = 0;
   const laterToasts = [];
 
@@ -95,7 +95,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
       mistakes: day.mistakes,
       dere: day.dere,
       handsOk: day.handsOk,
-      // 本の上（onBook）は読書中の昼だけの姿。夜の画面には、膝の前でくつろいでいる姿として渡す
+      // 本をのぞき込む姿（onBook）は読書中の昼だけの姿。夜の画面には、膝の前でくつろいでいる姿として渡す
       cat: { mode: cat.mode === 'onBook' ? 'relax' : cat.mode, distance: cat.distance, walking: !!cat.walking },
     });
   }
@@ -177,7 +177,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
     }
   }
 
-  // 膝に乗った（和解）。いつもの日も、読書中に本の上から膝に乗ったときも同じ
+  // 膝に乗った（和解）。いつもの日も、読書中に本をのぞき込んだあと膝に乗ったときも同じ
   function enterLap() {
     hud.show(false);
     input.setBlinkEnabled(false);
@@ -250,7 +250,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
         sound.page();
         return;
       }
-      // 本の上にいる間と、降りた直後は、本のあった場所のタップを猫へのタッチにしない（連打していた指で触ってしまわないように）
+      // 猫が本をのぞき込んでいる間と、やめた直後は、本のあった場所のタップを猫へのタッチにしない（連打していた指で触ってしまわないように）
       const guarding = ev?.id === 'read' && (ev.done ? elapsed < bookGuardUntil : ev.phase === 'onBook');
       if (guarding && renderer.inBookArea(x, y)) {
         renderer.addEffect('paw', { x, y });

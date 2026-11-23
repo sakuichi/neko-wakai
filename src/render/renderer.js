@@ -241,9 +241,8 @@ export function createRenderer(canvas) {
     COAT = COATS[coatKey] ?? COATS.chatora;
     const faceKey = fadingOut ? a.fade.face : view.face;
     FACE = faceParams(faceKey);
-    // 読書中に本の上に乗っている猫（onBook）は、膝に乗った姿で描く
-    const pose = fadingOut ? a.fade.pose : poseFor(view);
-    const cat = pose.mode === 'onBook' ? { ...pose, mode: 'lap' } : pose;
+    // 読書中に本をのぞき込んでいる猫（onBook）は、膝には乗せず、膝の前（距離0の床）で描く（膝に乗るのは和解のときだけ）
+    const cat = fadingOut ? a.fade.pose : poseFor(view);
     // 消えている間は、前の画面の猫の見た目（アップ・寝姿の動き・性格の仕草）のまま描く
     const look = fadingOut
       ? a.fade.look
@@ -260,7 +259,7 @@ export function createRenderer(canvas) {
     else a.shownDistance += (cat.distance - a.shownDistance) * clamp01(dt * follow);
     a.pathOffset *= Math.exp(-dt * 1.5);
     updateIdleBlink(t);
-    // 膝に跳び乗る・降りる（降りるのは、読書中に本の上から降りたとき）。どちらも LAP_JUMP_SEC かけて動く
+    // 膝に跳び乗る（LAP_JUMP_SEC かけて動く）。膝の姿でなくなったときも、同じ速さで戻す
     a.lapBlend = cat.mode === 'lap' ? Math.min(1, a.lapBlend + dt / LAP_JUMP_SEC) : Math.max(0, a.lapBlend - dt / LAP_JUMP_SEC);
 
     const scale = canvas.width / W;
@@ -853,6 +852,9 @@ function drawCat(ctx, mode, k) {
       // 近づいている間は歩く。止まったら香箱座り
       if (k.walking) return walk(ctx, k, breath, personalize(mode, k, {}));
       return loaf(ctx, k, breath, 'sleep', personalize(mode, k, {}).ears);
+    case 'onBook':
+      // 読書中：膝の前に座って、首をかしげて本をのぞき込む（「チラッ」と見分けがつくよう、目は小さいまま・合図は出さない）
+      return sit({ eyes: 'dot', tail: 'sway', tilt: 0.24 + Math.sin(k.t * 1.2) * 0.05 });
     case 'look':
       sit({ eyes: 'dotBig', tail: 'sway', tilt: Math.sin(k.t * 1.5) * 0.07 });
       // 「チラッ」は昼の駆け引きの合図。名前を付けるときのアップでは出さない
@@ -1493,11 +1495,12 @@ const CLOSED_BOOK_AT = { x: 286, y: 566, angle: 0.22 };
 // ページをめくる動きの長さ
 const FLIP_SEC = 0.35;
 
+// 読んでいる間と、猫が本をのぞき込んでいる間（onBook。ページはめくれない）は、膝の上に開いた本。終わったら閉じて右手に持つ
 function drawBook(ctx, prop, t) {
   ctx.save();
-  if (prop.phase === 'read') {
+  if (prop.phase === 'read' || prop.phase === 'onBook') {
     ctx.translate(BOOK_AT.x, BOOK_AT.y);
-    drawOpenBook(ctx, prop.flipAt == null ? -1 : (t - prop.flipAt) / FLIP_SEC);
+    drawOpenBook(ctx, prop.phase === 'read' && prop.flipAt != null ? (t - prop.flipAt) / FLIP_SEC : -1);
     ctx.restore();
     drawPropText(ctx, `${prop.pages ?? 0}ページ`, 18, 530, 12);
     return;

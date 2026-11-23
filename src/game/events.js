@@ -27,7 +27,7 @@ export function createEventState(id) {
  * @returns {{ev, cat, day, cues: string[]}} cues：この tick で起きたこと
  *   箱：'drop' 箱が置かれた / 'hid' もぐった / 'peek' 顔を出した / 'watched' ツンの間に、まばたきせずに見送れた / 'out' 出てきた
  *   鳥：'hunt' 狩りを始めた / 'understood' 初めて見守れて、鳥が去った（わかってくれた） / 'left' 2回目以降に見守れて、鳥が去った
- *   読書：'wonder' 初めて読むのをやめた（……？） / 'onBook' 本の上に乗ってきた
+ *   読書：'wonder' 初めて読むのをやめた（……？） / 'onBook' 膝の前まで来て、本をのぞき込んできた
  */
 export function eventTick(ev, cat, day, personality, dt, rng) {
   const a = ambient(day, dt);
@@ -188,7 +188,7 @@ function birdTick(e, c, d, personality, dt, rng, calm) {
   }
 }
 
-// 読書中：読んでいる（ページをめくってから readSec の）間だけ、いつもの距離の下限を気にせず近づく。膝の前（距離0）まで来たら本の上に乗る
+// 読書中：読んでいる（ページをめくってから readSec の）間だけ、いつもの距離の下限を気にせず近づく。膝の前（距離0）まで来たら、本をのぞき込む（onBook。膝には乗らない）
 // reading：この tick のはじめに読んでいたか（readLeft は eventTick で減らしてある）
 function readTick(e, c, d, personality, dt, rng, calm, reading) {
   const P = EVENTS.read;
@@ -215,7 +215,7 @@ function readTick(e, c, d, personality, dt, rng, calm, reading) {
     }
   } else if (e.phase === 'onBook') {
     if (e.phaseT >= P.onBookSec) {
-      // 本の上から降りる。信頼が膝に乗る信頼（ふつうは100）なら、そのまま膝の上で和解（いつもの膝の流れ）
+      // のぞき込むのをやめる。信頼が膝に乗る信頼（ふつうは100）なら、そのまま膝に乗って和解（いつもの膝の流れ）
       e = { ...e, phase: 'out', phaseT: 0, done: true };
       const lap = d.canLap && d.trust >= (d.lapTrust ?? MAX_VALUE);
       c.mode = lap ? 'lap' : 'relax';
@@ -252,7 +252,7 @@ export function eventAct(action, ev, cat, day, personality) {
   return act(action, ev, cat, day, personality);
 }
 
-// 読書中：読んでいる間の猫は、くつろいでいるのと同じ（触ると逃げてミス、まばたきは「じっと見つめる」）。本の上では何も起きない
+// 読書中：読んでいる間の猫は、くつろいでいるのと同じ（触ると逃げてミス、まばたきは「じっと見つめる」）。本をのぞき込んでいる間は何も起きない
 function readAct(action, ev, cat, day, personality) {
   const r = applyAction(action, { ...cat, mode: ev.phase === 'onBook' ? 'lap' : 'relax' }, day, personality);
   if (ev.phase === 'onBook') return { ev, cat, day: r.day, feedback: r.feedback, mistake: r.mistake };

@@ -90,8 +90,8 @@ __modules['src/data/params.js'] = (() => {
     // 狩りを最初に最後まで見守れた回に、その場でごほうび doneTrust（2回目以降は、いつもの我慢のごほうびだけ）
     bird: { birdDistance: 45, arriveSec: 1.6, huntSec: [3, 4], leaveSec: 1.2, turnSec: 2.5, happySec: 1, rounds: 2, doneTrust: 6 },
     // 読書中：ページをめくってから readSec の間は「読んでいる」。その間だけ、いつもの距離の下限を気にせず readSpeed で近づく。
-    // 膝の前（距離0）まで来たら本の上に乗る（ごほうび doneTrust）。onBookSec たったら降りる（信頼100なら、そのまま膝の上で和解）
-    // 本の上にいる間と、降りてから tapGuardSec の間は、本のあった場所のタップを猫へのタッチにしない（ページを連打していた指で、うっかり触らないように）
+    // 膝の前（距離0）まで来たら、本をのぞき込む（ごほうび doneTrust。膝には乗らない）。onBookSec たったら、いつもの日に戻る（信頼100なら、そのまま膝に乗って和解）
+    // のぞき込んでいる間と、やめてから tapGuardSec の間は、本のあった場所のタップを猫へのタッチにしない（ページを連打していた指で、うっかり触らないように）
     read: { readSec: 2.5, readSpeed: 6, onBookSec: 4, doneTrust: 6, tapGuardSec: 1 },
   };
 
@@ -793,7 +793,7 @@ __modules['src/render/props.js'] = (() => {
     ctx.restore();
   }
 
-  // 閉じた本を右手に持つ（猫が本の上に乗ったあと。開いた本の片側ぶんの大きさ）。原点は本の真ん中。skin：親指の色（renderer の LAP_COLORS.skin）
+  // 閉じた本を右手に持つ（読書のあと。開いた本の片側ぶんの大きさ）。原点は本の真ん中。skin：親指の色（renderer の LAP_COLORS.skin）
   function drawClosedBook(ctx, skin) {
     ctx.save();
     ctx.lineWidth = LW;
@@ -1071,9 +1071,8 @@ __modules['src/render/renderer.js'] = (() => {
       COAT = COATS[coatKey] ?? COATS.chatora;
       const faceKey = fadingOut ? a.fade.face : view.face;
       FACE = faceParams(faceKey);
-      // 読書中に本の上に乗っている猫（onBook）は、膝に乗った姿で描く
-      const pose = fadingOut ? a.fade.pose : poseFor(view);
-      const cat = pose.mode === 'onBook' ? { ...pose, mode: 'lap' } : pose;
+      // 読書中に本をのぞき込んでいる猫（onBook）は、膝には乗せず、膝の前（距離0の床）で描く（膝に乗るのは和解のときだけ）
+      const cat = fadingOut ? a.fade.pose : poseFor(view);
       // 消えている間は、前の画面の猫の見た目（アップ・寝姿の動き・性格の仕草）のまま描く
       const look = fadingOut
         ? a.fade.look
@@ -1090,7 +1089,7 @@ __modules['src/render/renderer.js'] = (() => {
       else a.shownDistance += (cat.distance - a.shownDistance) * clamp01(dt * follow);
       a.pathOffset *= Math.exp(-dt * 1.5);
       updateIdleBlink(t);
-      // 膝に跳び乗る・降りる（降りるのは、読書中に本の上から降りたとき）。どちらも LAP_JUMP_SEC かけて動く
+      // 膝に跳び乗る（LAP_JUMP_SEC かけて動く）。膝の姿でなくなったときも、同じ速さで戻す
       a.lapBlend = cat.mode === 'lap' ? Math.min(1, a.lapBlend + dt / LAP_JUMP_SEC) : Math.max(0, a.lapBlend - dt / LAP_JUMP_SEC);
 
       const scale = canvas.width / W;
@@ -1683,6 +1682,9 @@ __modules['src/render/renderer.js'] = (() => {
         // 近づいている間は歩く。止まったら香箱座り
         if (k.walking) return walk(ctx, k, breath, personalize(mode, k, {}));
         return loaf(ctx, k, breath, 'sleep', personalize(mode, k, {}).ears);
+      case 'onBook':
+        // 読書中：膝の前に座って、首をかしげて本をのぞき込む（「チラッ」と見分けがつくよう、目は小さいまま・合図は出さない）
+        return sit({ eyes: 'dot', tail: 'sway', tilt: 0.24 + Math.sin(k.t * 1.2) * 0.05 });
       case 'look':
         sit({ eyes: 'dotBig', tail: 'sway', tilt: Math.sin(k.t * 1.5) * 0.07 });
         // 「チラッ」は昼の駆け引きの合図。名前を付けるときのアップでは出さない
@@ -2323,11 +2325,12 @@ __modules['src/render/renderer.js'] = (() => {
   // ページをめくる動きの長さ
   const FLIP_SEC = 0.35;
 
+  // 読んでいる間と、猫が本をのぞき込んでいる間（onBook。ページはめくれない）は、膝の上に開いた本。終わったら閉じて右手に持つ
   function drawBook(ctx, prop, t) {
     ctx.save();
-    if (prop.phase === 'read') {
+    if (prop.phase === 'read' || prop.phase === 'onBook') {
       ctx.translate(BOOK_AT.x, BOOK_AT.y);
-      drawOpenBook(ctx, prop.flipAt == null ? -1 : (t - prop.flipAt) / FLIP_SEC);
+      drawOpenBook(ctx, prop.phase === 'read' && prop.flipAt != null ? (t - prop.flipAt) / FLIP_SEC : -1);
       ctx.restore();
       drawPropText(ctx, `${prop.pages ?? 0}ページ`, 18, 530, 12);
       return;
@@ -2761,7 +2764,7 @@ __modules['src/data/texts.js'] = (() => {
   const EVENT_TEXT = {
     box: { hid: '（箱にもぐった）', watched: '（見つめないでくれて、ほっとしたみたい）', out: '（箱から出てきた！）' },
     bird: { hunt: '（窓の外をじっと見ている……）', left: '（鳥が行ってしまった。ほっとしたみたい）', understood: '（狩りの邪魔をしない人だと、わかってくれたみたい）' },
-    read: { wonder: '（……？）', onBook: '（本の上に乗ってきた……！）' },
+    read: { wonder: '（……？）', onBook: '（本をのぞき込んできた……！）' },
   };
 
   const LAP_TEXT = '{name}が、膝に乗ってきた……！';
@@ -4259,7 +4262,7 @@ __modules['src/game/events.js'] = (() => {
    * @returns {{ev, cat, day, cues: string[]}} cues：この tick で起きたこと
    *   箱：'drop' 箱が置かれた / 'hid' もぐった / 'peek' 顔を出した / 'watched' ツンの間に、まばたきせずに見送れた / 'out' 出てきた
    *   鳥：'hunt' 狩りを始めた / 'understood' 初めて見守れて、鳥が去った（わかってくれた） / 'left' 2回目以降に見守れて、鳥が去った
-   *   読書：'wonder' 初めて読むのをやめた（……？） / 'onBook' 本の上に乗ってきた
+   *   読書：'wonder' 初めて読むのをやめた（……？） / 'onBook' 膝の前まで来て、本をのぞき込んできた
    */
   function eventTick(ev, cat, day, personality, dt, rng) {
     const a = ambient(day, dt);
@@ -4420,7 +4423,7 @@ __modules['src/game/events.js'] = (() => {
     }
   }
 
-  // 読書中：読んでいる（ページをめくってから readSec の）間だけ、いつもの距離の下限を気にせず近づく。膝の前（距離0）まで来たら本の上に乗る
+  // 読書中：読んでいる（ページをめくってから readSec の）間だけ、いつもの距離の下限を気にせず近づく。膝の前（距離0）まで来たら、本をのぞき込む（onBook。膝には乗らない）
   // reading：この tick のはじめに読んでいたか（readLeft は eventTick で減らしてある）
   function readTick(e, c, d, personality, dt, rng, calm, reading) {
     const P = EVENTS.read;
@@ -4447,7 +4450,7 @@ __modules['src/game/events.js'] = (() => {
       }
     } else if (e.phase === 'onBook') {
       if (e.phaseT >= P.onBookSec) {
-        // 本の上から降りる。信頼が膝に乗る信頼（ふつうは100）なら、そのまま膝の上で和解（いつもの膝の流れ）
+        // のぞき込むのをやめる。信頼が膝に乗る信頼（ふつうは100）なら、そのまま膝に乗って和解（いつもの膝の流れ）
         e = { ...e, phase: 'out', phaseT: 0, done: true };
         const lap = d.canLap && d.trust >= (d.lapTrust ?? MAX_VALUE);
         c.mode = lap ? 'lap' : 'relax';
@@ -4484,7 +4487,7 @@ __modules['src/game/events.js'] = (() => {
     return act(action, ev, cat, day, personality);
   }
 
-  // 読書中：読んでいる間の猫は、くつろいでいるのと同じ（触ると逃げてミス、まばたきは「じっと見つめる」）。本の上では何も起きない
+  // 読書中：読んでいる間の猫は、くつろいでいるのと同じ（触ると逃げてミス、まばたきは「じっと見つめる」）。本をのぞき込んでいる間は何も起きない
   function readAct(action, ev, cat, day, personality) {
     const r = applyAction(action, { ...cat, mode: ev.phase === 'onBook' ? 'lap' : 'relax' }, day, personality);
     if (ev.phase === 'onBook') return { ev, cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
@@ -4604,7 +4607,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
     // イベントのトーストを出したら、その表示が終わる（eventToastUntil）まで、ツンが取れた・手が平気になったトーストを待たせる
     // （トーストは1つしか出せないので、同じ瞬間に出すとイベントのほうが消えてしまう）。時間はゲームの経過（elapsed）で数える
     let eventToastUntil = 0;
-    // 読書の日：本の上から降りたあと、この時刻（elapsed）までは、本のあった場所のタップを猫へのタッチにしない
+    // 読書の日：猫が本をのぞき込むのをやめたあと、この時刻（elapsed）までは、本のあった場所のタップを猫へのタッチにしない
     let bookGuardUntil = 0;
     const laterToasts = [];
 
@@ -4655,7 +4658,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
         mistakes: day.mistakes,
         dere: day.dere,
         handsOk: day.handsOk,
-        // 本の上（onBook）は読書中の昼だけの姿。夜の画面には、膝の前でくつろいでいる姿として渡す
+        // 本をのぞき込む姿（onBook）は読書中の昼だけの姿。夜の画面には、膝の前でくつろいでいる姿として渡す
         cat: { mode: cat.mode === 'onBook' ? 'relax' : cat.mode, distance: cat.distance, walking: !!cat.walking },
       });
     }
@@ -4737,7 +4740,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
       }
     }
 
-    // 膝に乗った（和解）。いつもの日も、読書中に本の上から膝に乗ったときも同じ
+    // 膝に乗った（和解）。いつもの日も、読書中に本をのぞき込んだあと膝に乗ったときも同じ
     function enterLap() {
       hud.show(false);
       input.setBlinkEnabled(false);
@@ -4810,7 +4813,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
           sound.page();
           return;
         }
-        // 本の上にいる間と、降りた直後は、本のあった場所のタップを猫へのタッチにしない（連打していた指で触ってしまわないように）
+        // 猫が本をのぞき込んでいる間と、やめた直後は、本のあった場所のタップを猫へのタッチにしない（連打していた指で触ってしまわないように）
         const guarding = ev?.id === 'read' && (ev.done ? elapsed < bookGuardUntil : ev.phase === 'onBook');
         if (guarding && renderer.inBookArea(x, y)) {
           renderer.addEffect('paw', { x, y });

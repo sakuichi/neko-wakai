@@ -953,36 +953,77 @@ function drawFrames(r, view, t0, sec) {
 
 const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
-test('描画（不具合の再現）：本の上（onBook・距離0）から relax・距離0 に変わっても、最初のフレームで床の位置へ飛ばない（LAP_JUMP_SEC かけて降りる）。0.5秒以上たてば床の位置に着く', () => {
+test('描画：本をのぞき込んでいる猫（onBook・距離0）が relax・距離0 に変わっても、位置は跳ばない（どのフレームでも前のフレームから2px以内）', () => {
   const onBookView = bookView('onBook', { mode: 'onBook', distance: 0 }, 5);
   const relaxView = bookView('done', { mode: 'relax', distance: 0 }, 5);
-
-  // 床の位置（いつもの距離0の relax）：別の renderer で最初から relax・距離0 を描いて落ち着いた位置
-  const floorR = createRenderer(textFrameCanvas().canvas);
-  const floorFrames = drawFrames(floorR, relaxView, 1, 6);
-  const floor = floorFrames[floorFrames.length - 1];
-  assert.ok(dist2(floor, floorFrames[floorFrames.length - 2]) < 0.01, '床の位置が落ち着いている（このテストの前提）');
-
-  // 本の上：膝の上に乗り切るまで描く
   const r = createRenderer(textFrameCanvas().canvas);
   const onFrames = drawFrames(r, onBookView, 1, 6);
-  const seat = onFrames[onFrames.length - 1];
-  assert.ok(dist2(seat, onFrames[onFrames.length - 2]) < 0.01, `本の上の位置が落ち着いている（このテストの前提）: ${JSON.stringify(onFrames.slice(-2))}`);
-  const gap = dist2(seat, floor);
-  assert.ok(Math.abs(seat.y - floor.y) > 10, `膝の上 ${JSON.stringify(seat)} と床 ${JSON.stringify(floor)} の位置が離れている（このテストの前提）`);
+  const last = onFrames[onFrames.length - 1];
+  assert.ok(dist2(last, onFrames[onFrames.length - 2]) < 0.01, `のぞき込んでいる位置が落ち着いている（このテストの前提）: ${JSON.stringify(onFrames.slice(-2))}`);
 
-  // 降りる：relax・距離0 に変えた最初のフレームは、膝の上と床の中間より膝の上に近い（1フレームで飛ばない）
   const t0 = 1 + onFrames.length * FRAME;
   const offFrames = drawFrames(r, relaxView, t0, 1.5);
-  const first = offFrames[0];
-  assert.ok(dist2(first, seat) < gap / 2, `降りた最初のフレームで ${dist2(first, seat).toFixed(1)}px 動いた（膝の上 ${JSON.stringify(seat)} → ${JSON.stringify(first)}、床 ${JSON.stringify(floor)}）`);
-  // 0.5秒（LAP_JUMP_SEC）より前は、まだ床に着いていない
-  const at = (sec) => offFrames[Math.round(sec / FRAME) - 1];
-  assert.ok(Math.abs(at(0.25).y - floor.y) > 1, `0.25秒後にもう床に着いている: ${JSON.stringify(at(0.25))}`);
-  // 0.5秒以上たてば床の位置
+  const frames = [last, ...offFrames];
+  for (let i = 1; i < frames.length; i++) {
+    const d = dist2(frames[i], frames[i - 1]);
+    assert.ok(d <= 2, `relax に変えて ${i} フレーム目に ${d.toFixed(1)}px 動いた（${JSON.stringify(frames[i - 1])} → ${JSON.stringify(frames[i])}）`);
+  }
+});
+
+// ---------------------------------------------------------------- 本をのぞき込む（onBook）：膝の上には乗らず、膝の前の床の位置で描く。本は開いたまま
+
+// view を最初から sec 秒描いて、落ち着いた位置（最後のフレーム）を返す。落ち着いていなければ落とす
+function settledPosition(view, label, sec = 6) {
+  const frames = drawFrames(createRenderer(textFrameCanvas().canvas), view, 1, sec);
+  const p = frames[frames.length - 1];
+  assert.ok(dist2(p, frames[frames.length - 2]) < 0.01, `${label}の位置が落ち着いている（このテストの前提）: ${JSON.stringify(frames.slice(-2))}`);
+  return p;
+}
+
+test('描画：cat { mode: onBook, distance: 0 }・本の phase onBook を何フレームか描くと、shownPosition() は relax・距離0 の床の位置と同じ（±1px）、膝の上の位置（lap）とは y が10以上離れている。shownCat().mode は lap でない', () => {
+  const floor = settledPosition(bookView('done', { mode: 'relax', distance: 0 }, 5), '床（relax・距離0）');
+  const seat = settledPosition(bookView('done', { mode: 'lap', distance: 0 }, 5), '膝の上（lap）');
+  const r = createRenderer(textFrameCanvas().canvas);
+  const frames = drawFrames(r, bookView('onBook', { mode: 'onBook', distance: 0 }, 5), 1, 6);
+  const p = frames[frames.length - 1];
+  assert.ok(Math.abs(p.x - floor.x) <= 1 && Math.abs(p.y - floor.y) <= 1, `のぞき込んでいる位置 ${JSON.stringify(p)}（床 ${JSON.stringify(floor)}）`);
+  assert.ok(Math.abs(p.y - seat.y) >= 10, `のぞき込んでいる位置 ${JSON.stringify(p)} が膝の上 ${JSON.stringify(seat)} に近い`);
+  assert.notEqual(r.shownCat().mode, 'lap', 'のぞき込んでいる猫を膝の姿で描いている');
+});
+
+test('描画：本の phase onBook の間も「Nページ」を描く（開いた本のまま）。phase done では描かない（閉じた本）', () => {
+  const onBook = drawView(bookView('onBook', { mode: 'onBook', distance: 0 }, 5)).texts;
+  assert.ok(onBook.includes('5ページ'), `onBook：「5ページ」がない: ${onBook.join(' / ')}`);
+  const done = drawView(bookView('done', { mode: 'relax', distance: 0 }, 5)).texts;
+  assert.ok(!done.includes('5ページ'), `done：「5ページ」を描いている: ${done.join(' / ')}`);
+});
+
+test('描画：本をのぞき込んでいる猫（onBook・距離0）が lap に変わったら（膝に乗った）、最初のフレームで膝の上へ飛ばず、LAP_JUMP_SEC（0.5秒）かけて膝の上の位置に着く。shownCat().mode は lap', () => {
+  const seat = settledPosition(bookView('done', { mode: 'lap', distance: 0 }, 5), '膝の上（lap）');
+  const r = createRenderer(textFrameCanvas().canvas);
+  const onFrames = drawFrames(r, bookView('onBook', { mode: 'onBook', distance: 0 }, 5), 1, 6);
+  const from = onFrames[onFrames.length - 1];
+  assert.ok(dist2(from, onFrames[onFrames.length - 2]) < 0.01, `のぞき込んでいる位置が落ち着いている（このテストの前提）: ${JSON.stringify(onFrames.slice(-2))}`);
+  const gap = dist2(from, seat);
+  assert.ok(Math.abs(from.y - seat.y) >= 10, `のぞき込んでいる位置 ${JSON.stringify(from)} と膝の上 ${JSON.stringify(seat)} が離れている（このテストの前提）`);
+
+  const t0 = 1 + onFrames.length * FRAME;
+  const lapFrames = drawFrames(r, bookView('done', { mode: 'lap', distance: 0 }, 5), t0, 1.5);
+  const first = lapFrames[0];
+  assert.ok(dist2(first, from) < gap / 2, `膝に乗った最初のフレームで ${dist2(first, from).toFixed(1)}px 動いた（${JSON.stringify(from)} → ${JSON.stringify(first)}、膝の上 ${JSON.stringify(seat)}）`);
+  const at = (sec) => lapFrames[Math.round(sec / FRAME) - 1];
+  // 0.5秒（LAP_JUMP_SEC）より前は、まだ膝の上に着いていない
+  assert.ok(Math.abs(at(0.25).y - seat.y) > 1, `0.25秒後にもう膝の上に着いている: ${JSON.stringify(at(0.25))}`);
+  // 0.5秒以上たてば膝の上の位置
   const end = at(1.5);
-  assert.ok(Math.abs(end.y - floor.y) <= 1, `1.5秒後の y ${end.y}（床 ${floor.y}）`);
-  assert.ok(Math.abs(end.x - floor.x) <= 2, `1.5秒後の x ${end.x}（床 ${floor.x}）`);
+  assert.ok(Math.abs(end.y - seat.y) <= 1, `1.5秒後の y ${end.y}（膝の上 ${seat.y}）`);
+  assert.ok(Math.abs(end.x - seat.x) <= 2, `1.5秒後の x ${end.x}（膝の上 ${seat.x}）`);
+  assert.equal(r.shownCat().mode, 'lap');
+});
+
+test('文章：EVENT_TEXT.read.onBook に「のぞき込」が入っている（本の上に乗るのではなく、本をのぞき込む）', async () => {
+  const onBook = await readText('onBook');
+  assert.ok(onBook.includes('のぞき込'), `EVENT_TEXT.read.onBook: ${onBook}`);
 });
 
 // ---------------------------------------------------------------- 不具合の再現：逃げている間・段ボールの中では readLeft が減らない

@@ -83,8 +83,8 @@ export const EVENTS = {
   // 狩りを最初に最後まで見守れた回に、その場でごほうび doneTrust（2回目以降は、いつもの我慢のごほうびだけ）
   bird: { birdDistance: 45, arriveSec: 1.6, huntSec: [3, 4], leaveSec: 1.2, turnSec: 2.5, happySec: 1, rounds: 2, doneTrust: 6 },
   // 読書中：ページをめくってから readSec の間は「読んでいる」。その間だけ、いつもの距離の下限を気にせず readSpeed で近づく。
-  // 膝の前（距離0）まで来たら本の上に乗る（ごほうび doneTrust）。onBookSec たったら降りる（信頼100なら、そのまま膝の上で和解）
-  // 本の上にいる間と、降りてから tapGuardSec の間は、本のあった場所のタップを猫へのタッチにしない（ページを連打していた指で、うっかり触らないように）
+  // 膝の前（距離0）まで来たら、本をのぞき込む（ごほうび doneTrust。膝には乗らない）。onBookSec たったら、いつもの日に戻る（信頼100なら、そのまま膝に乗って和解）
+  // のぞき込んでいる間と、やめてから tapGuardSec の間は、本のあった場所のタップを猫へのタッチにしない（ページを連打していた指で、うっかり触らないように）
   read: { readSec: 2.5, readSpeed: 6, onBookSec: 4, doneTrust: 6, tapGuardSec: 1 },
 };
 
