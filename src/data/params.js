@@ -75,6 +75,7 @@ export const EVENT_DAYS = [4, 5, 6];
 export const EVENTS = {
   // 箱が届いた：猫が箱の位置（boxDistance）まで来ると箱が置かれ、もぐる。もぐる長さは hideSec の範囲、顔を出すのは peekSec。
   // 顔を出したときに blinksToFinish 回まばたきが通じると、箱から出てくる（ごほうび doneTrust）。箱の中で触られたら afterPetHideSec は顔を出さない
+  // ツンの間（まばたきに照れる）は、顔を出したときに、まばたきせずに見送れたら1回と数える
   // 箱から出てくるのが遅いと、その日のうちに膝まで来られず、和解が1日遅れやすい。出てくるまでを20秒台に収めている（docs/spec.md 7章）
   box: { boxDistance: 45, arriveSec: 1.6, hopSec: 0.6, hideSec: [2, 3.5], peekSec: 2.8, happySec: 2, afterPetHideSec: 5, blinksToFinish: 2, doneTrust: 8 },
   // 窓の外に鳥：猫が窓の前（birdDistance）まで来ると背中を向け、鳥が来る（arriveSec）→狩り（huntSec の範囲）→鳥が去る（leaveSec）→
@@ -83,7 +84,8 @@ export const EVENTS = {
   bird: { birdDistance: 45, arriveSec: 1.6, huntSec: [3, 4], leaveSec: 1.2, turnSec: 2.5, happySec: 1, rounds: 2, doneTrust: 6 },
   // 読書中：ページをめくってから readSec の間は「読んでいる」。その間だけ、いつもの距離の下限を気にせず readSpeed で近づく。
   // 膝の前（距離0）まで来たら本の上に乗る（ごほうび doneTrust）。onBookSec たったら降りる（信頼100なら、そのまま膝の上で和解）
-  read: { readSec: 2.5, readSpeed: 6, onBookSec: 4, doneTrust: 6 },
+  // 本の上にいる間と、降りてから tapGuardSec の間は、本のあった場所のタップを猫へのタッチにしない（ページを連打していた指で、うっかり触らないように）
+  read: { readSec: 2.5, readSpeed: 6, onBookSec: 4, doneTrust: 6, tapGuardSec: 1 },
 };
 
 // trustMul：その日の信頼の増え方の倍率（書いていない日は1）。1〜2日目は最初の出会いが大事なので、少し増えやすい

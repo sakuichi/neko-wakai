@@ -2,7 +2,7 @@
 // 描画や入力には依存しない。なでる・まばたきの判定は、いつもの決まり（src/game/rules.js）に、猫の様子を読み替えて任せる。
 import { RULES, MAX_VALUE, EVENTS } from '../data/params.js';
 import { ambient } from './catBrain.js';
-import { applyAction } from './rules.js';
+import { applyAction, isShy } from './rules.js';
 
 const clamp = (v) => Math.min(MAX_VALUE, Math.max(0, v));
 
@@ -25,7 +25,7 @@ export function createEventState(id) {
 
 /**
  * @returns {{ev, cat, day, cues: string[]}} cues：この tick で起きたこと
- *   箱：'drop' 箱が置かれた / 'hid' もぐった / 'peek' 顔を出した / 'out' 出てきた
+ *   箱：'drop' 箱が置かれた / 'hid' もぐった / 'peek' 顔を出した / 'watched' ツンの間に、まばたきせずに見送れた / 'out' 出てきた
  *   鳥：'hunt' 狩りを始めた / 'understood' 初めて見守れて、鳥が去った（わかってくれた） / 'left' 2回目以降に見守れて、鳥が去った
  *   読書：'wonder' 初めて読むのをやめた（……？） / 'onBook' 本の上に乗ってきた
  */
@@ -93,8 +93,18 @@ function boxTick(e, c, d, personality, dt, rng, calm) {
     }
   } else if (e.phase === 'peek') {
     if (e.phaseT >= P.peekSec) {
-      go('hide');
-      e.hideFor = hideLength(rng);
+      // ツンの間はまばたきが通じない（照れる）ので、まばたきせずに見送れたら「見つめないでくれた」と1回数える
+      const watched = isShy(d.trust, personality, d.dere);
+      if (watched) {
+        e = { ...e, blinks: e.blinks + 1 };
+        cues.push('watched');
+      }
+      if (watched && e.blinks >= P.blinksToFinish) {
+        go('happy');
+      } else {
+        go('hide');
+        e.hideFor = hideLength(rng);
+      }
     }
   } else if (e.phase === 'happy') {
     if (e.phaseT >= P.happySec) {

@@ -731,3 +731,138 @@ test('peek 中に押し始めたまばたき（sawLook: true）を hide で離�
   assert.equal(q.ev.phase, 'hide');
   assert.equal(q.ev.blinks, s.ev.blinks);
 });
+
+// ---------------------------------------------------------------- 不具合の再現：ツンデレのツンの間に箱の日が来ると、箱から出てこない
+// ツンの間は、顔を出したとき（peek）にまばたきしても blinkAway になる。peek がまばたきされずに終わったら「見つめないでくれた」として数える
+
+// ツンの間のツンデレ（信頼 shyUntil 未満・dere false）の箱の日。時間は、その日の長さ（箱の日の durationSec）
+function shyBoxStart(E, dayOverrides = {}) {
+  const tsundere = PERSONALITIES.tsundere;
+  assert.ok(tsundere.shyUntil > 10, `ツンデレの shyUntil ${tsundere.shyUntil}（このテストの前提）`);
+  return boxStart(E.createEventState, { trust: 10, dere: false, timeLeft: DAYS[BOX_DAY - 1].durationSec, ...dayOverrides });
+}
+
+// peek が終わった tick（直前の tick が peek で、この tick で peek でなくなった）を、順に返す
+function peekEnds(start, log) {
+  const ends = [];
+  let prev = start.ev.phase;
+  for (const r of log) {
+    if (prev === 'peek' && r.ev.phase !== 'peek') ends.push(r);
+    prev = r.ev.phase;
+  }
+  return ends;
+}
+
+test('不具合の再現：ツンデレ・信頼 shyUntil 未満・dere false の箱の日、まばたきせずに待つと、その日のうちに out・done になり、信頼に doneTrust×trustRate が入る', async () => {
+  const E = await loadEvents();
+  const { BOX } = await loadParams();
+  const tsundere = PERSONALITIES.tsundere;
+  const trustRate = 0.5;
+  const start = shyBoxStart(E, { trustRate });
+  const { log, reached } = runTicks(E.eventTick, start, { personality: tsundere, maxSec: start.day.timeLeft, until: (r) => r.cues.includes('out') });
+  assert.ok(reached, `その日のうちに箱から出てこない（最後の phase ${log[log.length - 1].ev.phase}・blinks ${log[log.length - 1].ev.blinks}）`);
+  const outTick = log[log.length - 1];
+  assert.ok(outTick.day.timeLeft > 0, 'out の tick で時間切れになっている');
+  assert.ok(log.every((r) => isShyNow(r.day, tsundere)), 'out までの間にツンでなくなった（このテストの前提）');
+  assert.equal(outTick.ev.done, true);
+  assert.equal(outTick.ev.phase, 'out');
+  assert.equal(outTick.cat.mode, 'relax');
+  const prevTrust = log.length >= 2 ? log[log.length - 2].day.trust : start.day.trust;
+  const expected = Math.min(MAX_VALUE, prevTrust + (RULES.calmTrustPerSec * DT + BOX.doneTrust) * trustRate);
+  assert.ok(near(outTick.day.trust, expected), `out の tick の信頼 ${outTick.day.trust}（期待 ${expected}）`);
+});
+
+// ツンの間か（src/game/rules.js の isShy と同じ条件：まだデレていなくて、信頼が shyUntil 未満）
+function isShyNow(day, personality) {
+  return !day.dere && day.trust < personality.shyUntil;
+}
+
+test("ツンの間の箱：1回目の peek がまばたきされずに終わると blinks 1・cue 'watched'・phase hide。2回目の peek が終わると phase happy", async () => {
+  const E = await loadEvents();
+  const { BOX } = await loadParams();
+  assert.equal(BOX.blinksToFinish, 2, 'blinksToFinish が 2（このテストの前提）');
+  const tsundere = PERSONALITIES.tsundere;
+  const start = shyBoxStart(E);
+  const { log, reached } = runTicks(E.eventTick, start, { personality: tsundere, until: (r) => r.ev.phase === 'happy' || r.ev.done });
+  assert.ok(reached, `happy にならないまま上限に達した（peek の終わり: ${peekEnds(start, log).map((r) => r.ev.phase).join(',')}）`);
+  const ends = peekEnds(start, log);
+  assert.ok(ends.length >= 1, 'peek が1回も終わっていない（このテストの前提）');
+  assert.ok(isShyNow(ends[0].day, tsundere), '1回目の peek の終わりでツンでない（このテストの前提）');
+  assert.equal(ends[0].ev.blinks, 1, '1回目の peek の終わりの blinks');
+  assert.deepEqual(ends[0].cues, ['watched'], '1回目の peek の終わりの cue');
+  assert.equal(ends[0].ev.phase, 'hide', '1回目の peek の終わりの phase');
+  assert.equal(ends.length, 2, `peek が終わった回数: ${ends.length}`);
+  assert.equal(ends[1].ev.phase, 'happy', '2回目の peek の終わりの phase');
+});
+
+test("ツンのない猫（甘えん坊）・デレたあとのツンデレ（dere true）は、peek がまばたきされずに終わっても blinks は増えず、cue 'watched' は出ない（hide に戻る）", async () => {
+  const E = await loadEvents();
+  const cases = [
+    ['甘えん坊', PERSONALITIES.amaenbo, { trust: 10, dere: true }],
+    ['ツンデレ dere true', PERSONALITIES.tsundere, { trust: 10, dere: true }],
+  ];
+  for (const [label, personality, dayOverrides] of cases) {
+    const start = boxStart(E.createEventState, dayOverrides);
+    const { log, reached } = runTicks(E.eventTick, start, { personality, until: untilEntered('peek', 2) });
+    assert.ok(reached, `${label}：2回目の peek の前に上限に達した（このテストの前提）`);
+    const ends = peekEnds(start, log);
+    assert.equal(ends.length, 1, `${label}：peek が終わった回数（このテストの前提）`);
+    assert.equal(ends[0].ev.phase, 'hide', `${label}：peek の終わりの phase`);
+    assert.equal(ends[0].ev.blinks, 0, `${label}：peek の終わりの blinks`);
+    assert.ok(!log.some((r) => r.cues.includes('watched')), `${label}：cue 'watched' が出た`);
+  }
+});
+
+test("ツンの間に peek でまばたき：blinkAway で hide に戻り、blinks は増えない。その peek は数えず、次の peek まで cue 'watched' は出ない", async () => {
+  const E = await loadEvents();
+  const tsundere = PERSONALITIES.tsundere;
+  const start = shyBoxStart(E);
+  const p = runTicks(E.eventTick, start, { personality: tsundere, until: (r) => r.ev.phase === 'peek' });
+  assert.ok(p.reached, 'peek の前に上限に達した（このテストの前提）');
+  assert.ok(isShyNow(p.last.day, tsundere), 'peek でツンでない（このテストの前提）');
+  const a = E.eventAct(blink(1000), p.last.ev, p.last.cat, p.last.day, tsundere);
+  assert.equal(a.feedback, 'blinkAway');
+  assert.equal(a.ev.phase, 'hide');
+  assert.equal(a.ev.blinks, p.last.ev.blinks);
+  const next = runTicks(E.eventTick, { ev: a.ev, cat: a.cat, day: a.day }, { personality: tsundere, until: (r) => r.ev.phase === 'peek' });
+  assert.ok(next.reached, '次の peek の前に上限に達した（このテストの前提）');
+  assert.ok(!next.log.some((r) => r.cues.includes('watched')), "まばたきした peek のあとに cue 'watched' が出た");
+  assert.equal(next.last.ev.blinks, p.last.ev.blinks, '次の peek までの blinks');
+});
+
+// 昼の画面を作り、トースト・効果を記録する（boxDayScene と同じ作りで、効果も記録する）
+async function boxEffectDayScene({ personality, trust }) {
+  const { createDayScene } = await import('../src/scenes/dayScene.js');
+  const { createGame } = await import('../src/game/progression.js');
+  const { CARDS } = await import('../src/data/texts.js');
+  const noop = () => {};
+  const toasts = [];
+  const effects = [];
+  const overlay = { busy: false, splash: noop, card: noop, bubble: noop, toast: (text, ms) => toasts.push({ text, ms }), clear: noop };
+  const hud = { show: noop, update: noop };
+  const renderer = { addEffect: (type) => effects.push(type), hitTestCat: () => true };
+  const input = { setBlinkEnabled: noop, holdMs: () => 0 };
+  const sound = { purr: noop, meow: noop, bump: noop };
+  const session = {
+    game: { ...createGame({ personality, seed: 1 }), day: BOX_DAY, trust, catName: 'たま', events: boxEvents(), seenCards: Object.keys(CARDS) },
+    misses: {},
+  };
+  const scene = createDayScene({ session, overlay, hud, renderer, input, sound, rng: fixedRng(0.5), onEnd: noop });
+  return { scene, toasts, effects };
+}
+
+test("昼の画面：ツンの間の箱で peek がまばたきされずに終わった（cue 'watched'）update に、EVENT_TEXT.box.watched のトーストと relief の効果が出る", async () => {
+  const watched = await eventText('watched');
+  const { scene, toasts, effects } = await boxEffectDayScene({ personality: 'tsundere', trust: 0 });
+  assert.equal(scene.view().shy, true, 'ツンの間でない（このテストの前提）');
+  let endStep = null;
+  for (let i = 0; i < 2000 && !endStep && scene.state().day.timeLeft > 0; i++) {
+    const before = scene.view().prop?.phase;
+    const n = { toasts: toasts.length, effects: effects.length };
+    scene.update(DT);
+    if (before === 'peek' && scene.view().prop?.phase !== 'peek') endStep = { toasts: toasts.slice(n.toasts).map((t) => t.text), effects: effects.slice(n.effects) };
+  }
+  assert.ok(endStep, 'peek が終わらないまま進めた（このテストの前提）');
+  assert.deepEqual(endStep.toasts.filter((t) => t === watched), [watched], `peek が終わった update のトースト: ${endStep.toasts.join(' / ')}`);
+  assert.ok(endStep.effects.includes('relief'), `peek が終わった update の効果: ${endStep.effects.join(',')}`);
+});

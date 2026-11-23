@@ -155,7 +155,7 @@ export const TIMID_GONE_TEXT = '（{name}は、手がこわくなくなったみ
 
 // イベントの日のトースト（キーは src/game/events.js の cue）
 export const EVENT_TEXT = {
-  box: { hid: '（箱にもぐった）', out: '（箱から出てきた！）' },
+  box: { hid: '（箱にもぐった）', watched: '（見つめないでくれて、ほっとしたみたい）', out: '（箱から出てきた！）' },
   bird: { hunt: '（窓の外をじっと見ている……）', left: '（鳥が行ってしまった。ほっとしたみたい）', understood: '（狩りの邪魔をしない人だと、わかってくれたみたい）' },
   read: { wonder: '（……？）', onBook: '（本の上に乗ってきた……！）' },
 };

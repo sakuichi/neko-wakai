@@ -1147,3 +1147,108 @@ test('本の上で onBookSec たったとき、day.lapTrust 85 で信頼が lapT
   assert.equal(doneTick.cat.mode, 'relax');
   assert.equal(doneTick.cat.distance, 0);
 });
+
+// ---------------------------------------------------------------- 不具合の再現：本を連打していると、本が閉じたあとのタップが猫へのタッチになり、逃げてミスになる
+// 猫が本の上にいる間と、読書が終わって（done）から tapGuardSec の間は、開いた本の範囲（inBookArea）のタップを猫へのタッチにしない
+
+// readDayScene と同じ作りで、偽の renderer に inBookArea を足したもの。hits.area を書き換えると inBookArea の答えが変わる
+async function guardDayScene({ trust = 0, area = true, cat = true } = {}) {
+  const { createDayScene } = await import('../src/scenes/dayScene.js');
+  const { createGame } = await import('../src/game/progression.js');
+  const { CARDS } = await import('../src/data/texts.js');
+  const noop = () => {};
+  const effects = [];
+  const sounds = [];
+  const hits = { area, cat };
+  let scene = null;
+  const overlay = { busy: false, splash: noop, card: noop, bubble: noop, toast: noop, clear: noop };
+  const hud = { show: noop, update: noop };
+  const renderer = {
+    addEffect: (type, data) => effects.push(data === undefined ? { type } : { type, data }),
+    hitTestCat: () => hits.cat,
+    // 本の phase が read のときだけ、本に当たる（本物の hitTestBook と同じ）
+    hitTestBook: () => scene.view().prop?.phase === 'read',
+    inBookArea: () => hits.area,
+  };
+  const input = { setBlinkEnabled: noop, holdMs: () => 0 };
+  const sound = { purr: () => sounds.push('purr'), meow: () => sounds.push('meow'), bump: () => sounds.push('bump'), page: () => sounds.push('page') };
+  const session = {
+    game: { ...createGame({ personality: 'amaenbo', seed: 1 }), day: READ_DAY, trust, catName: 'たま', events: readEvents(), seenCards: Object.keys(CARDS) },
+    misses: {},
+  };
+  scene = createDayScene({ session, overlay, hud, renderer, input, sound, rng: fixedRng(0.5), onEnd: noop });
+  return { scene, effects, sounds, hits };
+}
+
+async function loadTapGuardSec() {
+  const R = await loadRead();
+  assert.equal(typeof R.tapGuardSec, 'number', 'EVENTS.read.tapGuardSec がない');
+  return R.tapGuardSec;
+}
+
+// 本をめくり続けて、読書が終わった（prop.phase 'done'）update の直後まで進める。信頼 0 なので、猫は膝の前でくつろいでいる
+function reachReadDone(scene) {
+  playRead(scene, () => scene.view().prop?.phase === 'done');
+  assert.equal(scene.view().prop?.phase, 'done', 'done にならないまま進めた（このテストの前提）');
+  assert.ok(scene.state().day.timeLeft > 0, 'done の前に時間切れになった（このテストの前提）');
+  assert.equal(scene.state().cat.mode, 'relax', 'done のあとの猫がくつろぎでない（このテストの前提）');
+}
+
+// タップして、そのタップで出た効果と、前後の mistakes を返す
+function tap(g, x = BOOK.x, y = BOOK.y) {
+  const n = g.effects.length;
+  const mistakesBefore = g.scene.state().day.mistakes;
+  g.scene.pet(x, y);
+  return { effects: g.effects.slice(n), mistakesBefore, mistakesAfter: g.scene.state().day.mistakes };
+}
+
+test('不具合の再現：読書の日、本の上が終わって done になった直後（tapGuardSec 未満）に、inBookArea も hitTestCat も true の場所をタップしても、ミスにならず猫は逃げない。paw の効果だけ出る', async () => {
+  await loadRead();
+  const g = await guardDayScene({ area: true, cat: true });
+  reachReadDone(g.scene);
+  const t = tap(g);
+  assert.equal(t.mistakesAfter, 0, 'ミスになった');
+  assert.notEqual(g.scene.state().cat.mode, 'flee', '猫が逃げた');
+  assert.deepEqual(t.effects, [{ type: 'paw', data: { x: BOOK.x, y: BOOK.y } }], 'タップの効果');
+});
+
+test('読書が done になってから tapGuardSec 以上たったタップは、今までどおりなでる（くつろいでいる猫は逃げてミス）', async () => {
+  const guard = await loadTapGuardSec();
+  const g = await guardDayScene({ area: true, cat: true });
+  reachReadDone(g.scene);
+  for (let i = 0; i < Math.ceil(guard / DT) + 1; i++) g.scene.update(DT);
+  assert.equal(g.scene.state().cat.mode, 'relax', 'タップの前に猫がくつろぎでなくなった（このテストの前提）');
+  const t = tap(g);
+  assert.equal(t.mistakesAfter, t.mistakesBefore + 1, 'ミスにならない');
+  assert.equal(g.scene.state().cat.mode, 'flee', '猫が逃げない');
+  assert.ok(t.effects.some((e) => e.type === 'reach'), `タップの効果: ${JSON.stringify(t.effects)}`);
+});
+
+test('本の上（onBook）の間に inBookArea が true の場所をタップすると、paw の効果だけ出て、reach は出ず、ミスにならない', async () => {
+  await loadRead();
+  const g = await guardDayScene({ area: true, cat: true });
+  playRead(g.scene, () => g.scene.view().prop?.phase === 'onBook');
+  assert.equal(g.scene.view().prop?.phase, 'onBook', '本の上に乗らないまま進めた（このテストの前提）');
+  const t = tap(g);
+  assert.deepEqual(t.effects, [{ type: 'paw', data: { x: BOOK.x, y: BOOK.y } }], 'タップの効果');
+  assert.equal(t.mistakesAfter, t.mistakesBefore, 'ミスになった');
+  assert.equal(g.scene.view().prop?.phase, 'onBook', 'タップで本の上から降りた');
+});
+
+test('inBookArea が false の場所（猫に当たる）は、読書が done になった直後でも今までどおりなでる（くつろいでいる猫は逃げてミス）', async () => {
+  await loadRead();
+  const g = await guardDayScene({ area: false, cat: true });
+  reachReadDone(g.scene);
+  const t = tap(g);
+  assert.equal(t.mistakesAfter, t.mistakesBefore + 1, 'ミスにならない');
+  assert.equal(g.scene.state().cat.mode, 'flee', '猫が逃げない');
+  assert.ok(t.effects.some((e) => e.type === 'reach'), `タップの効果: ${JSON.stringify(t.effects)}`);
+  assert.ok(!t.effects.some((e) => e.type === 'paw'), `paw の効果が出た: ${JSON.stringify(t.effects)}`);
+});
+
+test('描画：inBookArea(x, y) は開いた本の範囲かどうかだけで決まる。prop がなくても（何も描かなくても）本の真ん中あたり（180, 590）で true、画面の上のほう（180, 200）で false', () => {
+  const r = createRenderer(textFrameCanvas().canvas);
+  assert.equal(typeof r.inBookArea, 'function', 'createRenderer の返り値に inBookArea がない');
+  assert.equal(r.inBookArea(BOOK.x, BOOK.y), true, '本の真ん中あたり');
+  assert.equal(r.inBookArea(TOP.x, TOP.y), false, '画面の上のほう');
+});

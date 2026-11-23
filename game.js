@@ -82,6 +82,7 @@ __modules['src/data/params.js'] = (() => {
   const EVENTS = {
     // 箱が届いた：猫が箱の位置（boxDistance）まで来ると箱が置かれ、もぐる。もぐる長さは hideSec の範囲、顔を出すのは peekSec。
     // 顔を出したときに blinksToFinish 回まばたきが通じると、箱から出てくる（ごほうび doneTrust）。箱の中で触られたら afterPetHideSec は顔を出さない
+    // ツンの間（まばたきに照れる）は、顔を出したときに、まばたきせずに見送れたら1回と数える
     // 箱から出てくるのが遅いと、その日のうちに膝まで来られず、和解が1日遅れやすい。出てくるまでを20秒台に収めている（docs/spec.md 7章）
     box: { boxDistance: 45, arriveSec: 1.6, hopSec: 0.6, hideSec: [2, 3.5], peekSec: 2.8, happySec: 2, afterPetHideSec: 5, blinksToFinish: 2, doneTrust: 8 },
     // 窓の外に鳥：猫が窓の前（birdDistance）まで来ると背中を向け、鳥が来る（arriveSec）→狩り（huntSec の範囲）→鳥が去る（leaveSec）→
@@ -90,7 +91,8 @@ __modules['src/data/params.js'] = (() => {
     bird: { birdDistance: 45, arriveSec: 1.6, huntSec: [3, 4], leaveSec: 1.2, turnSec: 2.5, happySec: 1, rounds: 2, doneTrust: 6 },
     // 読書中：ページをめくってから readSec の間は「読んでいる」。その間だけ、いつもの距離の下限を気にせず readSpeed で近づく。
     // 膝の前（距離0）まで来たら本の上に乗る（ごほうび doneTrust）。onBookSec たったら降りる（信頼100なら、そのまま膝の上で和解）
-    read: { readSec: 2.5, readSpeed: 6, onBookSec: 4, doneTrust: 6 },
+    // 本の上にいる間と、降りてから tapGuardSec の間は、本のあった場所のタップを猫へのタッチにしない（ページを連打していた指で、うっかり触らないように）
+    read: { readSec: 2.5, readSpeed: 6, onBookSec: 4, doneTrust: 6, tapGuardSec: 1 },
   };
 
   // trustMul：その日の信頼の増え方の倍率（書いていない日は1）。1〜2日目は最初の出会いが大事なので、少し増えやすい
@@ -986,6 +988,11 @@ __modules['src/render/renderer.js'] = (() => {
     // 読書中の開いた本に当たったか（ページをめくれるのは、開いた本を描いている間だけ）
     function hitTestBook(x, y) {
       if (a.prop?.kind !== 'book' || a.prop.phase !== 'read') return false;
+      return inBookArea(x, y);
+    }
+
+    // 開いた本の範囲に入っているか（本を描いているかどうかは見ない。本が閉じた直後のタップを見分けるのに使う）
+    function inBookArea(x, y) {
       const r = BOOK_RECT;
       return x >= BOOK_AT.x + r.x && x <= BOOK_AT.x + r.x + r.w && y >= BOOK_AT.y + r.y && y <= BOOK_AT.y + r.y + r.h;
     }
@@ -1342,7 +1349,7 @@ __modules['src/render/renderer.js'] = (() => {
     // 直前に描いた猫の濃さ・毛色・顔・姿勢 { alpha, coat, face, mode }
     const shownCat = () => a.shown;
 
-    return { resize, toLogical, hitTestCat, hitTestBook, addEffect, draw, shownPosition, shownCat };
+    return { resize, toLogical, hitTestCat, hitTestBook, inBookArea, addEffect, draw, shownPosition, shownCat };
   }
 
   // ---------------------------------------------------------------- 部屋（ベタ塗り）
@@ -2752,7 +2759,7 @@ __modules['src/data/texts.js'] = (() => {
 
   // イベントの日のトースト（キーは src/game/events.js の cue）
   const EVENT_TEXT = {
-    box: { hid: '（箱にもぐった）', out: '（箱から出てきた！）' },
+    box: { hid: '（箱にもぐった）', watched: '（見つめないでくれて、ほっとしたみたい）', out: '（箱から出てきた！）' },
     bird: { hunt: '（窓の外をじっと見ている……）', left: '（鳥が行ってしまった。ほっとしたみたい）', understood: '（狩りの邪魔をしない人だと、わかってくれたみたい）' },
     read: { wonder: '（……？）', onBook: '（本の上に乗ってきた……！）' },
   };
@@ -4227,7 +4234,7 @@ __modules['src/game/events.js'] = (() => {
   // 描画や入力には依存しない。なでる・まばたきの判定は、いつもの決まり（src/game/rules.js）に、猫の様子を読み替えて任せる。
   const { RULES, MAX_VALUE, EVENTS } = __modules['src/data/params.js'];
   const { ambient } = __modules['src/game/catBrain.js'];
-  const { applyAction } = __modules['src/game/rules.js'];
+  const { applyAction, isShy } = __modules['src/game/rules.js'];
 
   const clamp = (v) => Math.min(MAX_VALUE, Math.max(0, v));
 
@@ -4250,7 +4257,7 @@ __modules['src/game/events.js'] = (() => {
 
   /**
    * @returns {{ev, cat, day, cues: string[]}} cues：この tick で起きたこと
-   *   箱：'drop' 箱が置かれた / 'hid' もぐった / 'peek' 顔を出した / 'out' 出てきた
+   *   箱：'drop' 箱が置かれた / 'hid' もぐった / 'peek' 顔を出した / 'watched' ツンの間に、まばたきせずに見送れた / 'out' 出てきた
    *   鳥：'hunt' 狩りを始めた / 'understood' 初めて見守れて、鳥が去った（わかってくれた） / 'left' 2回目以降に見守れて、鳥が去った
    *   読書：'wonder' 初めて読むのをやめた（……？） / 'onBook' 本の上に乗ってきた
    */
@@ -4318,8 +4325,18 @@ __modules['src/game/events.js'] = (() => {
       }
     } else if (e.phase === 'peek') {
       if (e.phaseT >= P.peekSec) {
-        go('hide');
-        e.hideFor = hideLength(rng);
+        // ツンの間はまばたきが通じない（照れる）ので、まばたきせずに見送れたら「見つめないでくれた」と1回数える
+        const watched = isShy(d.trust, personality, d.dere);
+        if (watched) {
+          e = { ...e, blinks: e.blinks + 1 };
+          cues.push('watched');
+        }
+        if (watched && e.blinks >= P.blinksToFinish) {
+          go('happy');
+        } else {
+          go('hide');
+          e.hideFor = hideLength(rng);
+        }
       }
     } else if (e.phase === 'happy') {
       if (e.phaseT >= P.happySec) {
@@ -4546,7 +4563,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
   const { tick } = __modules['src/game/catBrain.js'];
   const { applyAction, isShy, isTimid } = __modules['src/game/rules.js'];
   const { createEventState, eventTick, eventAct, eventProp } = __modules['src/game/events.js'];
-  const { PERSONALITIES, MAX_VALUE, DAYS } = __modules['src/data/params.js'];
+  const { PERSONALITIES, MAX_VALUE, DAYS, EVENTS } = __modules['src/data/params.js'];
   const { CARDS, TUTORIAL, FEEDBACK, DAY_TITLES, HINTS, LAP_TEXT, DERE_TEXT, TIMID_GONE_TEXT, EVENT_TEXT, withName } = __modules['src/data/texts.js'];
 
   // 膝に乗ってから結果画面に移るまでの演出時間（ふみふみ → ゴロゴロ → 寝る）
@@ -4587,6 +4604,8 @@ __modules['src/scenes/dayScene.js'] = (() => {
     // イベントのトーストを出したら、その表示が終わる（eventToastUntil）まで、ツンが取れた・手が平気になったトーストを待たせる
     // （トーストは1つしか出せないので、同じ瞬間に出すとイベントのほうが消えてしまう）。時間はゲームの経過（elapsed）で数える
     let eventToastUntil = 0;
+    // 読書の日：本の上から降りたあと、この時刻（elapsed）までは、本のあった場所のタップを猫へのタッチにしない
+    let bookGuardUntil = 0;
     const laterToasts = [];
 
     const personality = () => PERSONALITIES[session.game.personality];
@@ -4728,6 +4747,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
     // イベントの日：イベントの進行（src/game/events.js）。起きたことをトーストで知らせる
     function updateEvent(dt) {
       const prevMode = cat.mode;
+      const wasDone = ev.done;
       const r = eventTick(ev, cat, day, personality(), dt, rng);
       ev = r.ev;
       cat = r.cat;
@@ -4738,9 +4758,10 @@ __modules['src/scenes/dayScene.js'] = (() => {
           overlay.toast(text(t), EVENT_TOAST_MS);
           eventToastUntil = elapsed + EVENT_TOAST_MS / 1000;
         }
-        // 鳥が去って、ほっとした（いつもの「やり過ごせた」と同じ演出）
-        if (cue === 'left' || cue === 'understood') renderer.addEffect('relief');
+        // 鳥が去って・箱の中で見つめずにいてもらえて、ほっとした（いつもの「やり過ごせた」と同じ演出）
+        if (cue === 'left' || cue === 'understood' || cue === 'watched') renderer.addEffect('relief');
       }
+      if (ev.id === 'read' && ev.done && !wasDone) bookGuardUntil = elapsed + EVENTS.read.tapGuardSec;
       if (cat.mode === 'lap' && prevMode !== 'lap') enterLap();
     }
 
@@ -4787,6 +4808,12 @@ __modules['src/scenes/dayScene.js'] = (() => {
         if (ev && !ev.done && ev.id === 'read' && ev.phase === 'read' && renderer.hitTestBook(x, y)) {
           ev = eventAct({ type: 'page' }, ev, cat, day, personality()).ev;
           sound.page();
+          return;
+        }
+        // 本の上にいる間と、降りた直後は、本のあった場所のタップを猫へのタッチにしない（連打していた指で触ってしまわないように）
+        const guarding = ev?.id === 'read' && (ev.done ? elapsed < bookGuardUntil : ev.phase === 'onBook');
+        if (guarding && renderer.inBookArea(x, y)) {
+          renderer.addEffect('paw', { x, y });
           return;
         }
         if (!renderer.hitTestCat(x, y)) {

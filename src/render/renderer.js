@@ -158,6 +158,11 @@ export function createRenderer(canvas) {
   // 読書中の開いた本に当たったか（ページをめくれるのは、開いた本を描いている間だけ）
   function hitTestBook(x, y) {
     if (a.prop?.kind !== 'book' || a.prop.phase !== 'read') return false;
+    return inBookArea(x, y);
+  }
+
+  // 開いた本の範囲に入っているか（本を描いているかどうかは見ない。本が閉じた直後のタップを見分けるのに使う）
+  function inBookArea(x, y) {
     const r = BOOK_RECT;
     return x >= BOOK_AT.x + r.x && x <= BOOK_AT.x + r.x + r.w && y >= BOOK_AT.y + r.y && y <= BOOK_AT.y + r.y + r.h;
   }
@@ -514,7 +519,7 @@ export function createRenderer(canvas) {
   // 直前に描いた猫の濃さ・毛色・顔・姿勢 { alpha, coat, face, mode }
   const shownCat = () => a.shown;
 
-  return { resize, toLogical, hitTestCat, hitTestBook, addEffect, draw, shownPosition, shownCat };
+  return { resize, toLogical, hitTestCat, hitTestBook, inBookArea, addEffect, draw, shownPosition, shownCat };
 }
 
 // ---------------------------------------------------------------- 部屋（ベタ塗り）

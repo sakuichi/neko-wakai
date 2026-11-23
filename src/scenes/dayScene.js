@@ -3,7 +3,7 @@ import { startDay } from '../game/progression.js';
 import { tick } from '../game/catBrain.js';
 import { applyAction, isShy, isTimid } from '../game/rules.js';
 import { createEventState, eventTick, eventAct, eventProp } from '../game/events.js';
-import { PERSONALITIES, MAX_VALUE, DAYS } from '../data/params.js';
+import { PERSONALITIES, MAX_VALUE, DAYS, EVENTS } from '../data/params.js';
 import { CARDS, TUTORIAL, FEEDBACK, DAY_TITLES, HINTS, LAP_TEXT, DERE_TEXT, TIMID_GONE_TEXT, EVENT_TEXT, withName } from '../data/texts.js';
 
 // 膝に乗ってから結果画面に移るまでの演出時間（ふみふみ → ゴロゴロ → 寝る）
@@ -44,6 +44,8 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   // イベントのトーストを出したら、その表示が終わる（eventToastUntil）まで、ツンが取れた・手が平気になったトーストを待たせる
   // （トーストは1つしか出せないので、同じ瞬間に出すとイベントのほうが消えてしまう）。時間はゲームの経過（elapsed）で数える
   let eventToastUntil = 0;
+  // 読書の日：本の上から降りたあと、この時刻（elapsed）までは、本のあった場所のタップを猫へのタッチにしない
+  let bookGuardUntil = 0;
   const laterToasts = [];
 
   const personality = () => PERSONALITIES[session.game.personality];
@@ -185,6 +187,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
   // イベントの日：イベントの進行（src/game/events.js）。起きたことをトーストで知らせる
   function updateEvent(dt) {
     const prevMode = cat.mode;
+    const wasDone = ev.done;
     const r = eventTick(ev, cat, day, personality(), dt, rng);
     ev = r.ev;
     cat = r.cat;
@@ -195,9 +198,10 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
         overlay.toast(text(t), EVENT_TOAST_MS);
         eventToastUntil = elapsed + EVENT_TOAST_MS / 1000;
       }
-      // 鳥が去って、ほっとした（いつもの「やり過ごせた」と同じ演出）
-      if (cue === 'left' || cue === 'understood') renderer.addEffect('relief');
+      // 鳥が去って・箱の中で見つめずにいてもらえて、ほっとした（いつもの「やり過ごせた」と同じ演出）
+      if (cue === 'left' || cue === 'understood' || cue === 'watched') renderer.addEffect('relief');
     }
+    if (ev.id === 'read' && ev.done && !wasDone) bookGuardUntil = elapsed + EVENTS.read.tapGuardSec;
     if (cat.mode === 'lap' && prevMode !== 'lap') enterLap();
   }
 
@@ -244,6 +248,12 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
       if (ev && !ev.done && ev.id === 'read' && ev.phase === 'read' && renderer.hitTestBook(x, y)) {
         ev = eventAct({ type: 'page' }, ev, cat, day, personality()).ev;
         sound.page();
+        return;
+      }
+      // 本の上にいる間と、降りた直後は、本のあった場所のタップを猫へのタッチにしない（連打していた指で触ってしまわないように）
+      const guarding = ev?.id === 'read' && (ev.done ? elapsed < bookGuardUntil : ev.phase === 'onBook');
+      if (guarding && renderer.inBookArea(x, y)) {
+        renderer.addEffect('paw', { x, y });
         return;
       }
       if (!renderer.hitTestCat(x, y)) {
