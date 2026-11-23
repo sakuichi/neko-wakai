@@ -57,7 +57,8 @@ export function tick(cat, day, personality, dt, rng) {
   if (endured) gain += RULES.patienceTrust * personality.likes.patience;
   d.trust = clamp(d.trust + gain * d.trustRate);
 
-  if (d.canLap && d.trust >= MAX_VALUE && c.distance <= 0 && c.mode !== 'inBox') {
+  // 膝に乗る信頼は日によって違う（3日目は少し手前でも乗る。DAYS の lapTrust）
+  if (d.canLap && d.trust >= (d.lapTrust ?? MAX_VALUE) && c.distance <= 0 && c.mode !== 'inBox') {
     c.mode = 'lap';
   }
 

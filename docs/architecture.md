@@ -34,10 +34,10 @@ flowchart TD
     RULES -->|"ActionResult {CatState, DayState, feedback, mistake}"| DAY
     RULES -->|"isShy(trust, personality)（デレたトーストの判定・View の shy）・isTimid(trust, personality)（手が平気になったトーストの判定）"| DAY
 
-    DAY -->|"CatState, DayState, Personality, dt, rng"| BRAIN["時間経過：様子の切替・移動（くつろぎの間だけ歩く。下限に着いたら座り、下限が walkResumeGap 下がるまで待つ）・警戒と信頼の自然増減・我慢のごほうび（お腹見せ・しっぽパタパタ・気まぐれすりすりを触らずにやり過ごしたら信頼+4）。我慢のごほうびと背中の信頼には性格の likes.patience をかける・膝の判定<br/>src/game/catBrain.js（tick）"]
+    DAY -->|"CatState, DayState, Personality, dt, rng"| BRAIN["時間経過：様子の切替・移動（くつろぎの間だけ歩く。下限に着いたら座り、下限が walkResumeGap 下がるまで待つ）・警戒と信頼の自然増減・我慢のごほうび（お腹見せ・しっぽパタパタ・気まぐれすりすりを触らずにやり過ごしたら信頼+patienceTrust）。我慢のごほうびと背中の信頼には性格の likes.patience をかける・膝の判定（信頼が DayState.lapTrust 以上）<br/>src/game/catBrain.js（tick）"]
     BRAIN -->|"CatState（walking を含む）, DayState, enteredMode, endured（やり過ごせた様子。なければ null）"| DAY
 
-    DAY -->|"イベントの日（DayState.event）：EventState, CatState, DayState, Personality, dt, rng"| EVT["イベントの進行。id で切り替える（箱が届いた：近づく→箱が置かれる→もぐる⇄顔を出す→出てくる／窓の外に鳥：近づく→背中を向けて鳥が来る→狩り→鳥が去る→振り向く、を2回／読書中：本をめくって読んでいる間だけ近づく→本の上に乗る→降りる、信頼100ならそのまま膝）。なでる・まばたきは、猫の様子を読み替えて rules に任せる（eventAct）。前の晩の段ボールの間（boxLockLeft）は待ってから始める。終わったら done、昼の画面はいつもの tick に戻る<br/>src/game/events.js"]
+    DAY -->|"イベントの日（DayState.event）：EventState, CatState, DayState, Personality, dt, rng"| EVT["イベントの進行。id で切り替える（箱が届いた：近づく→箱が置かれる→もぐる⇄顔を出す→出てくる／窓の外に鳥：近づく→背中を向けて鳥が来る→狩り→鳥が去る→振り向く、を2回／読書中：本をめくって読んでいる間だけ近づく→本の上に乗る→降りる、信頼が lapTrust 以上ならそのまま膝）。なでる・まばたきは、猫の様子を読み替えて rules に任せる（eventAct）。前の晩の段ボールの間（boxLockLeft）は待ってから始める。終わったら done、昼の画面はいつもの tick に戻る<br/>src/game/events.js"]
     EVT -->|"EventState, CatState, DayState, cues（箱：drop・hid・peek・out／鳥：hunt・understood・left／読書：wonder・onBook）／ActionResult"| DAY
     EVT -->|"ambient（残り時間・警戒の自然な減り）"| BRAIN
     EVT -->|"applyAction（look・inBox・backTurn・relax などに読み替えて）"| RULES
@@ -148,7 +148,7 @@ stateDiagram-v2
 |---|---|---|
 | GameState | `day`, `trust`, `personality`, `coat`（毛色）, `face`（顔の形 `{ shape, ears }`）, `catName`（名前）, `nightChoice`, `mistakes`, `seenCards`（表示済みの説明）, `seed`, `events`（日ごとのイベント。添字は日−1、なければ null）, `dere`・`handsOk`（ツンデレがデレた・ビビりの手が平気になったか。一度 true になったら戻らない。ツンのない性格の dere、手がこわくない性格の handsOk は、1日目から true） | `src/main.js` の `session.game`（更新は `progression.js` が返す） |
 | Session | `game`（GameState）, `misses`（猫の様子ごとの失敗回数。ヒント用） | `src/main.js` |
-| DayState | `dayNumber`, `trust`, `wariness`, `timeLeft`, `trustRate`（おやつで ×0.85）, `boxLockLeft`, `floorBonus`（おやつの日に距離の下限を近くする分）, `mistakes`, `actions`, `signs`, `canLap`, `approachMul`, `event`（その日のイベント。なければ null）, `dere`・`handsOk`（startDay が GameState と信頼から決め、昼の間に境目を越えたら dayScene が true にする。デバッグで性格を切り替えたら、dayScene が新しい性格と今の信頼で決め直す） | `src/scenes/dayScene.js` |
+| DayState | `dayNumber`, `trust`, `wariness`, `timeLeft`, `trustRate`（その日の DAYS の trustMul。1〜2日目は ×1.2。おやつの翌日はさらに ×0.85）, `lapTrust`（膝に乗る信頼。DAYS の lapTrust、なければ100。3日目は85）, `boxLockLeft`, `floorBonus`（おやつの日に距離の下限を近くする分）, `mistakes`, `actions`, `signs`, `canLap`, `approachMul`, `event`（その日のイベント。なければ null）, `dere`・`handsOk`（startDay が GameState と信頼から決め、昼の間に境目を越えたら dayScene が true にする。デバッグで性格を切り替えたら、dayScene が新しい性格と今の信頼で決め直す） | `src/scenes/dayScene.js` |
 | CatState | `mode`（relax／look／tailUp／tailFlick／belly／backTurn／rub／fakeRub／purr／flee／inBox／lap。読書中だけ onBook（本の上。描画は膝の姿、日が終わるときは relax として渡す））, `distance`, `modeTimeLeft`, `walking`（くつろぎで歩いて近づいている間 true。描画で歩く姿にする）。夜の画面の猫だけ `hidden`（帰っていて見えない。`nightCatPose` が付け、描画でその場で消す） | `src/scenes/dayScene.js`（更新は `catBrain.js` / `rules.js` が返す） |
 | Action | `{ type: 'pet' }` / `{ type: 'blink', holdMs, sawLook }` / `{ type: 'page' }`（読書中に本をタップ） | `src/ui/input.js` が作り、`sawLook` と `page` は `src/scenes/dayScene.js` が付ける・作る |
 | View | `{ scene, cat, coat, face, personality, wariness, closeup, blinkHoldMs, lapTime, endingId, dayTime, shy, prop }`（dayTime・shy・prop は昼の画面だけ。prop はイベントの小道具。dayTime はその日の進み具合 0〜1、shy はツンデレのツンの間か） | 各画面の `view()` と `src/main.js` が作り、`src/render/renderer.js` が描く |

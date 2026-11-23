@@ -91,8 +91,8 @@ function reach(E, phase, { personality = plain, rng = fixedRng(0.5), dayOverride
 }
 
 // hunt に入ってから、さらに sec 秒進める（hunt の途中の状態）
-function reachHuntMiddle(E, BIRD, { personality = plain, sec = 1 } = {}) {
-  const h = reach(E, 'hunt', { personality });
+function reachHuntMiddle(E, BIRD, { personality = plain, sec = 1, dayOverrides = {} } = {}) {
+  const h = reach(E, 'hunt', { personality, dayOverrides });
   assert.ok(sec < huntLength(BIRD, 0.5), `hunt の長さが ${sec}秒より短い（このテストの前提）`);
   const m = runTicks(E.eventTick, h, { personality, maxSec: sec });
   assert.equal(m.last.ev.phase, 'hunt', `hunt に入って ${sec}秒後も hunt のまま（このテストの前提）`);
@@ -287,11 +287,13 @@ test('arrive・hunt・leave・turn でなでる：その phase の様子（backT
   const BIRD = await loadBird();
   const E = await loadEvents();
   assert.ok(BIRD.rounds >= 2, 'rounds が 2 以上（このテストの前提）');
+  // 信頼が mistakeTrust より多いところから始める（少ないと 0 で止まり、−mistakeTrust にならない）
+  const dayOverrides = { trust: RULES.mistakeTrust + 10 };
   const states = {
-    arrive: [reach(E, 'arrive'), 'backTurn'],
-    hunt: [reachHuntMiddle(E, BIRD), 'backTurn'],
-    leave: [reach(E, 'leave'), 'backTurn'],
-    turn: [reach(E, 'turn'), 'look'],
+    arrive: [reach(E, 'arrive', { dayOverrides }), 'backTurn'],
+    hunt: [reachHuntMiddle(E, BIRD, { dayOverrides }), 'backTurn'],
+    leave: [reach(E, 'leave', { dayOverrides }), 'backTurn'],
+    turn: [reach(E, 'turn', { dayOverrides }), 'look'],
   };
   // 歩き直しの間に増えてよい信頼の上限（落ち着いている分と背中を向けている分。我慢のごほうびは入らない）
   const maxGain = (RULES.calmTrustPerSec + RULES.backTurnTrustPerSec * plain.likes.patience) * DT * 1 + 1e-9;
@@ -361,7 +363,8 @@ test('happy 中・逃げている最中になでても何も起きない：feedb
 test('approach 中になでる：applyAction を relax で呼んだのと同じく逃げてミス。phase は approach のまま、round は増えない', async () => {
   await loadBird();
   const E = await loadEvents();
-  const start = { ...birdStart(E.createEventState), cat: makeCat({ mode: 'relax', distance: 70, modeTimeLeft: 3 }) };
+  // 信頼が mistakeTrust より多いところから始める（少ないと 0 で止まり、−mistakeTrust にならない）
+  const start = { ...birdStart(E.createEventState, { trust: RULES.mistakeTrust + 10 }), cat: makeCat({ mode: 'relax', distance: 70, modeTimeLeft: 3 }) };
   const s = runTicks(E.eventTick, start, { maxSec: DT }).last;
   assert.equal(s.ev.phase, 'approach', 'approach のまま（このテストの前提）');
   const expected = applyAction(pet, { ...s.cat, mode: 'relax' }, s.day, plain);
@@ -1109,28 +1112,36 @@ function assertWarmAfterUnderstood({ understood, u, log }, warm, label) {
   assert.ok(log.findIndex((x) => x.text === warm) > ui, `${label}：understood より前に出た`);
 }
 
-test('昼の画面（不具合の再現）：ツンデレ trust 30。understood の update で shyUntil をまたいでも、DERE_TEXT は understood の表示時間（ms）が過ぎてから1回だけ出る', async () => {
+// understood の update の直前の信頼が threshold の少し手前（understood で増える分の半分だけ手前）になる、開始の信頼。
+// 信頼 0 から一度流して、understood の直前までに増える分と、understood の update で増える分を測る（どちらも開始の信頼によらない）
+async function trustToCross({ personality, threshold }) {
+  const probe = await warmUpRun({ personality, trust: 0, afterSec: 0 });
+  const gain = probe.u.trustAfter - probe.u.trustBefore;
+  return threshold - probe.u.trustBefore - gain / 2;
+}
+
+test('昼の画面（不具合の再現）：ツンデレ、信頼 shyUntil の手前から。understood の update で shyUntil をまたいでも、DERE_TEXT は understood の表示時間（ms）が過ぎてから1回だけ出る', async () => {
   const { DERE_TEXT, withName } = await import('../src/data/texts.js');
   const shyUntil = PERSONALITIES.tsundere.shyUntil;
-  const run = await warmUpRun({ personality: 'tsundere', trust: 30 });
+  const run = await warmUpRun({ personality: 'tsundere', trust: await trustToCross({ personality: 'tsundere', threshold: shyUntil }) });
   assert.ok(run.u.trustBefore < shyUntil && run.u.trustAfter >= shyUntil, `understood の update で shyUntil ${shyUntil} をまたいでいない（このテストの前提）：${run.u.trustBefore} → ${run.u.trustAfter}`);
   assertWarmAfterUnderstood(run, withName(DERE_TEXT, 'たま'), 'DERE_TEXT');
 });
 
-test('昼の画面（不具合の再現）：ビビり trust 35。understood の update で timidUntil をまたいでも、TIMID_GONE_TEXT は understood の表示時間（ms）が過ぎてから1回だけ出る', async () => {
+test('昼の画面（不具合の再現）：ビビり、信頼 timidUntil の手前から。understood の update で timidUntil をまたいでも、TIMID_GONE_TEXT は understood の表示時間（ms）が過ぎてから1回だけ出る', async () => {
   const { TIMID_GONE_TEXT, withName } = await import('../src/data/texts.js');
   const timidUntil = PERSONALITIES.bibiri.timidUntil;
-  const run = await warmUpRun({ personality: 'bibiri', trust: 35 });
+  const run = await warmUpRun({ personality: 'bibiri', trust: await trustToCross({ personality: 'bibiri', threshold: timidUntil }) });
   assert.ok(run.u.trustBefore < timidUntil && run.u.trustAfter >= timidUntil, `understood の update で timidUntil ${timidUntil} をまたいでいない（このテストの前提）：${run.u.trustBefore} → ${run.u.trustAfter}`);
   assertWarmAfterUnderstood(run, withName(TIMID_GONE_TEXT, 'たま'), 'TIMID_GONE_TEXT');
 });
 
 test('昼の画面：トーストを待たせても判定は遅らせない。understood の update で、ツンデレは day.dere・ビビりは day.handsOk がもう true', async () => {
-  const tsundere = await warmUpRun({ personality: 'tsundere', trust: 30, afterSec: 0 });
+  const tsundere = await warmUpRun({ personality: 'tsundere', trust: await trustToCross({ personality: 'tsundere', threshold: PERSONALITIES.tsundere.shyUntil }), afterSec: 0 });
   assert.ok(tsundere.u.trustBefore < PERSONALITIES.tsundere.shyUntil && tsundere.u.trustAfter >= PERSONALITIES.tsundere.shyUntil, 'ツンデレ：understood の update で shyUntil をまたいでいない（このテストの前提）');
   assert.equal(tsundere.u.dere, true, 'ツンデレ：understood の update のあとの day.dere');
   assert.equal(tsundere.scene.view().shy, false, 'ツンデレ：understood の update のあとの view().shy');
-  const bibiri = await warmUpRun({ personality: 'bibiri', trust: 35, afterSec: 0 });
+  const bibiri = await warmUpRun({ personality: 'bibiri', trust: await trustToCross({ personality: 'bibiri', threshold: PERSONALITIES.bibiri.timidUntil }), afterSec: 0 });
   assert.ok(bibiri.u.trustBefore < PERSONALITIES.bibiri.timidUntil && bibiri.u.trustAfter >= PERSONALITIES.bibiri.timidUntil, 'ビビり：understood の update で timidUntil をまたいでいない（このテストの前提）');
   assert.equal(bibiri.u.handsOk, true, 'ビビり：understood の update のあとの day.handsOk');
 });

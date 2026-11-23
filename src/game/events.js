@@ -205,9 +205,9 @@ function readTick(e, c, d, personality, dt, rng, calm, reading) {
     }
   } else if (e.phase === 'onBook') {
     if (e.phaseT >= P.onBookSec) {
-      // 本の上から降りる。信頼が100なら、そのまま膝の上で和解（いつもの膝の流れ）
+      // 本の上から降りる。信頼が膝に乗る信頼（ふつうは100）なら、そのまま膝の上で和解（いつもの膝の流れ）
       e = { ...e, phase: 'out', phaseT: 0, done: true };
-      const lap = d.canLap && d.trust >= MAX_VALUE;
+      const lap = d.canLap && d.trust >= (d.lapTrust ?? MAX_VALUE);
       c.mode = lap ? 'lap' : 'relax';
       if (!lap) c.modeTimeLeft = RULES.modeSec.relax[0];
       return { ev: e, cat: c, day: d, cues };

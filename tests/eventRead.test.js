@@ -316,9 +316,10 @@ test('読み続けて距離0になった tick で onBook（phaseT 0・猫 onBook
 });
 
 test('本の上で onBookSec たったとき、canLap で信頼が MAX_VALUE なら、そのまま膝（cat.mode lap）で done', async () => {
-  await loadRead();
+  const R = await loadRead();
   const E = await loadEvents();
-  const start = readStart(E.createEventState, { trust: 90, canLap: true });
+  // 本の上に乗ったごほうび（doneTrust）で、ちょうど MAX_VALUE に届く信頼から始める
+  const start = readStart(E.createEventState, { trust: MAX_VALUE - R.doneTrust, canLap: true });
   const o = reachOnBook(E, start);
   assert.equal(o.last.day.trust, MAX_VALUE, 'onBook に入ったとき信頼が MAX_VALUE（このテストの前提）');
   const d = runTicks(E.eventTick, o.last, { until: (r) => r.ev.done });
@@ -355,7 +356,8 @@ test('onBook 中はめくれない（ev そのまま・feedback null・mistake f
 test("phase 'read' でなでる：applyAction を relax で呼んだのと同じ day・feedback・mistake・cat（flee・信頼 −mistakeTrust・mistakes+1・fleeDistance 離れる）。readLeft・pages は変えない", async () => {
   const R = await loadRead();
   const E = await loadEvents();
-  const s = readingMiddle(E, R);
+  // 信頼が mistakeTrust より多いところから始める（少ないと 0 で止まり、−mistakeTrust にならない）
+  const s = readingMiddle(E, R, { trust: RULES.mistakeTrust + 10 });
   const expected = applyAction(pet, { ...s.cat, mode: 'relax' }, s.day, plain);
   const r = E.eventAct(pet, s.ev, s.cat, s.day, plain);
   assert.ok(r, 'eventAct が null を返した');
@@ -1106,4 +1108,42 @@ test('昼の画面：読書の日、本の上から信頼100で膝に乗った�
   assert.ok(lapCalls.some(([name, v]) => name === 'hud.show' && v === false), `膝に乗った update で hud.show(false) が呼ばれていない: ${JSON.stringify(lapCalls)}`);
   assert.ok(lapCalls.some(([name, v]) => name === 'input.setBlinkEnabled' && v === false), `膝に乗った update で input.setBlinkEnabled(false) が呼ばれていない: ${JSON.stringify(lapCalls)}`);
   assert.ok(lapToasts.includes(withName(LAP_TEXT, 'たま')), `膝に乗った update のトースト: ${lapToasts.join(' / ')}`);
+});
+
+// ---------------------------------------------------------------- 膝に乗る信頼（day.lapTrust）。本の上から降りるときも、その日の lapTrust で膝に乗るかを決める
+
+// 膝の前（距離0）から始めて、最初の tick で本の上に乗せ、onBookSec たって降りる（done）tick まで進める。
+// 警戒を高くして、落ち着きの分の信頼が入らないようにする（本の上に乗ったごほうび doneTrust だけが入る）
+function lapTrustOnBook(E, trust) {
+  assert.equal(typeof DAYS[2].lapTrust, 'number', '3日目の DAYS に lapTrust がない（このテストの前提）');
+  const start = readStart(E.createEventState, { canLap: true, lapTrust: DAYS[2].lapTrust, trust, wariness: MAX_VALUE }, { distance: 0 });
+  const o = runTicks(E.eventTick, start, { maxSec: DT });
+  assert.equal(o.last.ev.phase, 'onBook', '最初の tick で本の上に乗っていない（このテストの前提）');
+  const d = runTicks(E.eventTick, o.last, { until: (r) => r.ev.done });
+  assert.ok(d.reached, 'done にならないまま上限に達した（このテストの前提）');
+  return d.log[d.log.length - 1];
+}
+
+test('本の上で onBookSec たったとき、canLap・day.lapTrust 85 で信頼 85 なら、そのまま膝（cat.mode lap）で done', async () => {
+  const R = await loadRead();
+  const E = await loadEvents();
+  const L = DAYS[2].lapTrust;
+  const doneTick = lapTrustOnBook(E, L - R.doneTrust);
+  assert.equal(doneTick.day.trust, L, 'done の tick の信頼が lapTrust ちょうど（このテストの前提）');
+  assert.equal(doneTick.ev.done, true);
+  assert.equal(doneTick.ev.phase, 'out');
+  assert.equal(doneTick.cat.mode, 'lap');
+  assert.equal(doneTick.cat.distance, 0);
+});
+
+test('本の上で onBookSec たったとき、day.lapTrust 85 で信頼が lapTrust 未満（84.9）なら、くつろぎ（relax）に戻って done', async () => {
+  const R = await loadRead();
+  const E = await loadEvents();
+  const L = DAYS[2].lapTrust;
+  const doneTick = lapTrustOnBook(E, L - R.doneTrust - 0.1);
+  assert.ok(Math.abs(doneTick.day.trust - (L - 0.1)) < 1e-9, `done の tick の信頼 ${doneTick.day.trust} が lapTrust − 0.1 でない（このテストの前提）`);
+  assert.equal(doneTick.ev.done, true);
+  assert.equal(doneTick.ev.phase, 'out');
+  assert.equal(doneTick.cat.mode, 'relax');
+  assert.equal(doneTick.cat.distance, 0);
 });

@@ -64,7 +64,9 @@ export function startDay(game) {
     trust: game.trust,
     wariness: def.startWariness,
     timeLeft: def.durationSec,
-    trustRate: 1,
+    trustRate: def.trustMul ?? 1,
+    // 膝に乗る信頼（3日目だけ低い）
+    lapTrust: def.lapTrust ?? MAX_VALUE,
     boxLockLeft: 0,
     floorBonus: 0,
     mistakes: 0,
@@ -85,7 +87,7 @@ export function startDay(game) {
     cat.distance = MAX_VALUE - p.treatDistance;
     day.wariness = NIGHT.treatStartWariness;
     day.floorBonus = NIGHT.treatFloorBonus;
-    day.trustRate = NIGHT.treatTrustRate;
+    day.trustRate = NIGHT.treatTrustRate * (def.trustMul ?? 1);
   } else if (game.nightChoice === 'box') {
     day.wariness = 0;
     day.boxLockLeft = p.boxLockSec;

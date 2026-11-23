@@ -100,7 +100,7 @@ function gainTrust(day, amount) {
   return { ...day, trust: clamp(day.trust + amount * day.trustRate) };
 }
 
-// 焦って触った（ミス）。警戒が上がり、信頼も少し減る
+// 焦って触った（ミス）。警戒が上がり、信頼も減る（RULES.mistakeTrust）
 function scare(day, amount, personality) {
   return {
     ...day,

@@ -79,8 +79,8 @@ function untilEntered(phase, n, startPhase = 'approach') {
 }
 
 // 箱の流れを、ev.phase が phase になるまで進める
-function reach(E, phase, { personality = plain, rng = fixedRng(0.5) } = {}) {
-  const { last, reached } = runTicks(E.eventTick, boxStart(E.createEventState), { personality, rng, until: (r) => r.ev.phase === phase });
+function reach(E, phase, { personality = plain, rng = fixedRng(0.5), dayOverrides = {} } = {}) {
+  const { last, reached } = runTicks(E.eventTick, boxStart(E.createEventState, dayOverrides), { personality, rng, until: (r) => r.ev.phase === phase });
   assert.ok(reached, `phase '${phase}' になる前に上限に達した（このテストの前提）`);
   return last;
 }
@@ -313,9 +313,11 @@ test('箱の中（hide・peek・happy）をなでる：feedback hide・ミス・
   const { BOX } = await loadParams();
   // 乱数 0 なら、ふつうの hide は hideSec の最短。なでたあとは afterPetHideSec になることを確かめる
   const rng = fixedRng(0);
+  // 信頼が mistakeTrust より多いところから始める（少ないと 0 で止まり、−mistakeTrust にならない）
+  const dayOverrides = { trust: RULES.mistakeTrust + 10 };
   const states = {
-    hide: reach(E, 'hide', { rng }),
-    peek: reach(E, 'peek', { rng }),
+    hide: reach(E, 'hide', { rng, dayOverrides }),
+    peek: reach(E, 'peek', { rng, dayOverrides }),
   };
   const p = states.peek;
   const happy = E.eventAct(blink(1000), p.ev, p.cat, p.day, plain);
@@ -344,7 +346,8 @@ test('箱の中（hide・peek・happy）をなでる：feedback hide・ミス・
 test('approach 中になでる：くつろいでいるのと同じく逃げてミス（applyAction を relax で呼んだのと同じ）。approach に戻り、もう一度箱まで歩く', async () => {
   const E = await loadEvents();
   const { BOX } = await loadParams();
-  const start = { ...boxStart(E.createEventState), cat: makeCat({ mode: 'relax', distance: 70, modeTimeLeft: 3 }) };
+  // 信頼が mistakeTrust より多いところから始める（少ないと 0 で止まり、−mistakeTrust にならない）
+  const start = { ...boxStart(E.createEventState, { trust: RULES.mistakeTrust + 10 }), cat: makeCat({ mode: 'relax', distance: 70, modeTimeLeft: 3 }) };
   const s = runTicks(E.eventTick, start, { maxSec: DT }).last;
   assert.equal(s.ev.phase, 'approach', 'approach のまま（このテストの前提）');
   const expected = applyAction(pet, { ...s.cat, mode: 'relax' }, s.day, plain);

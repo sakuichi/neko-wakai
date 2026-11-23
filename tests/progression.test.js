@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createGame, startDay, finishDay, chooseNight, endingFor, chooseCat } from '../src/game/progression.js';
-import { DAYS, NIGHT, PERSONALITIES, MAX_DAY, RULES, COAT_PERSONALITY } from '../src/data/params.js';
+import { DAYS, NIGHT, PERSONALITIES, MAX_DAY, MAX_VALUE, RULES, COAT_PERSONALITY } from '../src/data/params.js';
 import { COATS } from '../src/render/renderer.js';
 import { COAT_LABELS } from '../src/data/texts.js';
 import { tick } from '../src/game/catBrain.js';
@@ -55,7 +55,11 @@ test('夜「おやつを置く」：翌日は近くから始まるが、信頼�
     const g = chooseNight(createGame({ personality: key, seed: 1 }), 'treat');
     const { day, cat } = startDay(g);
     assert.equal(cat.distance, 100 - PERSONALITIES[key].treatDistance, key);
-    assert.equal(day.trustRate, NIGHT.treatTrustRate, key);
+    // 翌日（2日目）の増え方は、おやつの倍率 × その日の倍率（trustMul）
+    assert.equal(day.trustRate, NIGHT.treatTrustRate * (DAYS[1].trustMul ?? 1), key);
+    // おやつなしの同じ日より、増え方が下がる
+    const plainDay = startDay(chooseNight(createGame({ personality: key, seed: 1 }), 'nothing')).day;
+    assert.ok(day.trustRate < plainDay.trustRate, `${key}: おやつの翌日 ${day.trustRate}・おやつなし ${plainDay.trustRate}`);
   }
 });
 
@@ -84,7 +88,8 @@ test('夜「段ボール箱を置く」：翌日は警戒0で、しばらく箱�
     assert.equal(day.wariness, 0, key);
     assert.equal(day.boxLockLeft, PERSONALITIES[key].boxLockSec, key);
     assert.equal(cat.mode, 'inBox', key);
-    assert.equal(day.trustRate, 1, key);
+    // 翌日（2日目）の増え方は、その日の倍率（trustMul）のまま
+    assert.equal(day.trustRate, DAYS[1].trustMul ?? 1, key);
   }
 });
 
@@ -94,7 +99,8 @@ test('夜「何もしない」：その場で信頼が少し増え、翌日は�
   assert.equal(g.day, 2);
   const { day, cat } = startDay(g);
   assert.equal(cat.distance, 100);
-  assert.equal(day.trustRate, 1);
+  // 翌日（2日目）の増え方は、その日の倍率（trustMul）のまま
+  assert.equal(day.trustRate, DAYS[1].trustMul ?? 1);
   assert.equal(day.boxLockLeft, 0);
 });
 
@@ -285,4 +291,50 @@ test('一日の終わりに、昼の結果の dere・handsOk を引き継ぐ。�
   const { game: g3 } = finishDay({ ...g0, dere: false, handsOk: false }, { lapped: false, trust: 30, mistakes: 0 });
   assert.equal(g3.dere, false, '結果に無い：ゲームの dere 偽のまま');
   assert.equal(g3.handsOk, false, '結果に無い：ゲームの handsOk 偽のまま');
+});
+
+// ---------------------------------------------------------------- 日ごとの信頼の増え方（trustMul）と膝に乗る信頼（lapTrust）
+
+test('startDay：1日目・2日目の day.trustRate は DAYS の trustMul、3〜7日目は 1（おやつの翌日でない日）', () => {
+  for (const n of [1, 2]) {
+    assert.equal(typeof DAYS[n - 1].trustMul, 'number', `${n}日目の DAYS に trustMul がない（このテストの前提）`);
+    assert.notEqual(DAYS[n - 1].trustMul, 1, `${n}日目の trustMul が 1（このテストの前提）`);
+  }
+  for (let n = 1; n <= MAX_DAY; n++) {
+    const { day } = startDay({ ...createGame({ personality: 'tsundere', seed: 1 }), day: n });
+    const expected = n <= 2 ? DAYS[n - 1].trustMul : 1;
+    assert.equal(day.trustRate, expected, `${n}日目`);
+  }
+});
+
+test('startDay：2日目がおやつの翌日なら trustRate は NIGHT.treatTrustRate × 2日目の trustMul。3日目以降のおやつの翌日は NIGHT.treatTrustRate のまま', () => {
+  for (let n = 2; n <= MAX_DAY; n++) {
+    const g = chooseNight({ ...createGame({ personality: 'tsundere', seed: 1 }), day: n - 1 }, 'treat');
+    assert.equal(g.day, n, `${n}日目（このテストの前提）`);
+    const { day } = startDay(g);
+    const expected = n === 2 ? NIGHT.treatTrustRate * DAYS[1].trustMul : NIGHT.treatTrustRate;
+    assert.equal(day.trustRate, expected, `${n}日目`);
+  }
+});
+
+test('startDay：3日目の day.lapTrust は DAYS[2].lapTrust（85）、それ以外の日は MAX_VALUE', () => {
+  assert.equal(typeof DAYS[2].lapTrust, 'number', '3日目の DAYS に lapTrust がない（このテストの前提）');
+  assert.ok(DAYS[2].lapTrust < MAX_VALUE, `3日目の lapTrust ${DAYS[2].lapTrust} が MAX_VALUE 未満でない（このテストの前提）`);
+  for (let n = 1; n <= MAX_DAY; n++) {
+    const { day } = startDay({ ...createGame({ personality: 'tsundere', seed: 1 }), day: n });
+    assert.equal(day.lapTrust, n === 3 ? DAYS[2].lapTrust : MAX_VALUE, `${n}日目`);
+  }
+});
+
+test('1日目：startDay の day を tick に通すと、落ち着いて一緒にいる間に増える信頼は calmTrustPerSec × trustMul × dt', () => {
+  const { day, cat } = startDay(createGame({ personality: 'tsundere', seed: 1 }));
+  assert.equal(day.dayNumber, 1, '1日目（このテストの前提）');
+  // 警戒だけ 0 にして、落ち着いている状態にする（ほかは startDay のまま）
+  const calm = { ...day, wariness: 0 };
+  const dt = 0.5;
+  const r = tick(cat, calm, PERSONALITIES.tsundere, dt, () => 0.5);
+  assert.ok(r.day.wariness < RULES.calmThreshold, '落ち着いていない（このテストの前提）');
+  assert.equal(r.cat.mode, cat.mode, '様子が変わった（このテストの前提）');
+  const expected = day.trust + RULES.calmTrustPerSec * DAYS[0].trustMul * dt;
+  assert.ok(Math.abs(r.day.trust - expected) < 1e-9, `信頼 ${r.day.trust}（期待 ${expected}）`);
 });

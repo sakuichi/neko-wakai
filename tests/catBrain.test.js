@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { tick, distanceFloor } from '../src/game/catBrain.js';
 import { applyAction } from '../src/game/rules.js';
-import { RULES, PERSONALITIES, DAYS } from '../src/data/params.js';
+import { RULES, PERSONALITIES, DAYS, MAX_VALUE } from '../src/data/params.js';
 import { createRng } from '../src/util/rng.js';
 import { makeDay, makeCat, fixedRng } from './helpers.js';
 
@@ -370,4 +370,53 @@ test('背中を向けている間の信頼と我慢のごほうびに、性格�
       assertTrust(belly.day.trust, 10 + (RULES.calmTrustPerSec * 1 + P * k) * trustRate, `${label} 我慢:`);
     }
   }
+});
+
+// ---------------------------------------------------------------- 膝に乗る信頼（day.lapTrust）。3日目は MAX_VALUE より手前でも乗る
+
+// 3日目の day（膝に乗れる日・lapTrust つき）。警戒を高くして、この tick で信頼が増えないようにする（落ち着きの分が入らない）
+function lapDay(overrides = {}) {
+  assert.equal(typeof DAYS[2].lapTrust, 'number', '3日目の DAYS に lapTrust がない（このテストの前提）');
+  return makeDay({ canLap: true, lapTrust: DAYS[2].lapTrust, wariness: MAX_VALUE, ...overrides });
+}
+// くつろいで膝の前（距離0）にいる猫。様子の残り時間を長くして、この tick で様子が変わらないようにする
+const atLap = (overrides = {}) => makeCat({ mode: 'relax', distance: 0, modeTimeLeft: 10, ...overrides });
+
+test('3日目（lapTrust 85・canLap）：信頼が lapTrust ちょうどで距離0なら、膝に乗る', () => {
+  const L = DAYS[2].lapTrust;
+  const r = tick(atLap(), lapDay({ trust: L }), plain, 0.1, rng);
+  assert.equal(r.day.trust, L, 'この tick で信頼が変わった（このテストの前提）');
+  assert.equal(r.cat.mode, 'lap');
+  assert.equal(r.enteredMode, 'lap');
+});
+
+test('3日目（lapTrust 85・canLap）：信頼が lapTrust 未満（84.9）なら、距離0でも膝に乗らない', () => {
+  const L = DAYS[2].lapTrust;
+  const r = tick(atLap(), lapDay({ trust: L - 0.1 }), plain, 0.1, rng);
+  assert.equal(r.day.trust, L - 0.1, 'この tick で信頼が変わった（このテストの前提）');
+  assert.equal(r.cat.mode, 'relax');
+  assert.equal(r.enteredMode, null);
+});
+
+test('4日目（lapTrust MAX_VALUE）：信頼 85・距離0では膝に乗らない', () => {
+  const r = tick(atLap(), lapDay({ dayNumber: 4, signs: DAYS[3].signs, lapTrust: MAX_VALUE, trust: DAYS[2].lapTrust }), plain, 0.1, rng);
+  assert.equal(r.day.trust, DAYS[2].lapTrust, 'この tick で信頼が変わった（このテストの前提）');
+  assert.equal(r.cat.mode, 'relax');
+  assert.equal(r.enteredMode, null);
+});
+
+test('lapTrust を持たない day（古い形）でも、信頼 MAX_VALUE・距離0なら膝に乗る（今までどおり）', () => {
+  const day = makeDay({ canLap: true, trust: MAX_VALUE, wariness: MAX_VALUE });
+  assert.equal('lapTrust' in day, false, 'day に lapTrust がある（このテストの前提）');
+  const r = tick(atLap(), day, plain, 0.1, rng);
+  assert.equal(r.cat.mode, 'lap');
+  assert.equal(r.enteredMode, 'lap');
+});
+
+test('3日目（lapTrust 85）でも、箱から出られない間（inBox）は、信頼 85・距離0で膝に乗らない', () => {
+  const L = DAYS[2].lapTrust;
+  const r = tick(atLap({ mode: 'inBox' }), lapDay({ trust: L, boxLockLeft: 3 }), plain, 0.1, rng);
+  assert.ok(r.day.boxLockLeft > 0, '箱から出た（このテストの前提）');
+  assert.equal(r.cat.mode, 'inBox');
+  assert.equal(r.enteredMode, null);
 });

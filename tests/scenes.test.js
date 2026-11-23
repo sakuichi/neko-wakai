@@ -678,17 +678,36 @@ async function patienceDayScene({ day, trust = 0, seenCards, pick }) {
 
 test('昼の画面：我慢のごほうびで信頼が100になり、同じ update で膝に乗ったら、膝に乗った文が最後のトーストとして残り、ほっとした表示も我慢の説明も出さない', async () => {
   const { CARDS, FEEDBACK, LAP_TEXT, withName } = await import('../src/data/texts.js');
-  // 3日目（膝に乗れる日）。信頼97から始め、くつろぎで距離0まで歩いてから、お腹見せにする。
+  const { PERSONALITIES, DAYS, RULES, MAX_VALUE } = await import('../src/data/params.js');
+  // 4日目（膝に乗れる日で、膝に乗る信頼が MAX_VALUE の日）。くつろぎで距離0まで歩いてから、お腹見せにする。
   // お腹見せが時間切れで終わる update で、我慢のごほうびを足すと信頼が100になる（甘えん坊の我慢のごほうびは likes.patience 倍で、ふつうより小さい）
-  // 距離0のときの3日目の候補（甘えん坊の重み）：relax3, look2, tailUp2, tailFlick1, belly1, backTurn1, rub3（計13）。0.654 → belly
+  // 距離0のときの4日目の候補（甘えん坊の重み・警戒0）：relax3, look2, tailUp2, tailFlick1, belly1, backTurn1, rub3, fakeRub1。belly の幅の真ん中を選ぶ
+  const DAY = 4;
+  const w = PERSONALITIES.amaenbo.signWeights;
+  const signs = DAYS[DAY - 1].signs;
+  const sum = (list) => list.reduce((a, k) => a + w[k], 0);
+  const bellyPick = (sum(signs.slice(0, signs.indexOf('belly'))) + w.belly / 2) / sum(signs);
   const pick = (cat) => {
-    if (cat.mode === 'relax') return cat.distance > 0 ? 0 : 0.654;
+    if (cat.mode === 'relax') return cat.distance > 0 ? 0 : bellyPick;
     return 0;
   };
+  const seenCards = Object.keys(CARDS).filter((k) => k !== 'tip:patience');
+  // 開始の信頼：距離の下限が0になる信頼で一度流し、お腹見せが終わる update の直前までに増える分と、その update で増える分を測る。
+  // その update の直前に、100 より「その update で増える分の半分」だけ手前になるように始める
+  const probeTrust = MAX_VALUE - RULES.distanceFloorOffset;
+  const probe = await patienceDayScene({ day: DAY, trust: probeTrust, seenCards: [...seenCards], pick });
+  let bellyEnd = null;
+  for (let i = 0; i < 2000 && !bellyEnd; i++) {
+    const trustBefore = probe.scene.state().day.trust;
+    const s = probe.step();
+    if (s.before === 'belly' && s.after !== 'belly') bellyEnd = { trustBefore, trustAfter: probe.scene.state().day.trust };
+  }
+  assert.ok(bellyEnd, 'お腹見せが終わる前に上限に達した（開始の信頼を決める下見）');
+  const trust = MAX_VALUE - (bellyEnd.trustBefore - probeTrust) - (bellyEnd.trustAfter - bellyEnd.trustBefore) / 2;
   const { scene, session, toasts, step } = await patienceDayScene({
-    day: 3,
-    trust: 97,
-    seenCards: Object.keys(CARDS).filter((k) => k !== 'tip:patience'),
+    day: DAY,
+    trust,
+    seenCards,
     pick,
   });
   let lapStep = null;
@@ -822,7 +841,7 @@ test('昼の画面：サイン説明の吹き出しが表示中（5秒未満）�
 
 // 昼の画面を作り、トースト・吹き出し・止めるカード・効果・効果音を記録する。説明カードは見たことにしておく。
 // trust はその日の始まりの信頼。rng(cat) を渡すと、そのとき（update を始めたとき）の猫に応じた乱数を返す。省くと fixedRng(0.5)
-async function personalityDayScene({ personality, day, trust, rng = null }) {
+async function personalityDayScene({ personality, day, trust, rng = null, nightChoice = null }) {
   const { createDayScene } = await import('../src/scenes/dayScene.js');
   const { createGame } = await import('../src/game/progression.js');
   const { CARDS } = await import('../src/data/texts.js');
@@ -850,7 +869,7 @@ async function personalityDayScene({ personality, day, trust, rng = null }) {
     bump: () => played.push('bump'),
   };
   const session = {
-    game: { ...createGame({ personality, seed: 1 }), day, trust, catName: 'たま', seenCards: Object.keys(CARDS) },
+    game: { ...createGame({ personality, seed: 1 }), day, trust, nightChoice, catName: 'たま', seenCards: Object.keys(CARDS) },
     misses: {},
   };
   let scene = null;
@@ -941,8 +960,9 @@ test('昼の画面：ツンデレの信頼が、なでて shyUntil をまたい�
   assert.ok(S > 0, `ツンデレの shyUntil ${S}`);
   assert.ok(tsundere.likes, 'PERSONALITIES.tsundere.likes がない');
   // 3日目、信頼 shyUntil−5。すり寄りが届く距離まではくつろぎ（候補の先頭）、届いたらすり寄り（候補の最後）にする
+  // 前の晩はおやつ（距離の下限が treatFloorBonus 近くなる）。信頼 shyUntil 未満では、ふだんの下限（100 − 信頼 − distanceFloorOffset）がすり寄りの届く距離より遠いため
   const pick = (cat) => (cat.mode === 'relax' && cat.distance <= RULES.rubMaxDistance ? 0.999 : 0);
-  const { scene, toasts, during } = await personalityDayScene({ personality: 'tsundere', day: 3, trust: S - 5, rng: pick });
+  const { scene, toasts, during } = await personalityDayScene({ personality: 'tsundere', day: 3, trust: S - 5, rng: pick, nightChoice: 'treat' });
   for (let i = 0; i < 1000 && scene.state().cat.mode !== 'rub'; i++) scene.update(0.05);
   assert.equal(scene.state().cat.mode, 'rub', 'すり寄りになる前に上限に達した（このテストの前提）');
   const before = scene.state().day.trust;
@@ -1181,8 +1201,13 @@ test('昼の画面：ツンデレがデレたあとにミスして信頼が shyU
   const S = tsundere.shyUntil;
   assert.ok(S > 0, `ツンデレの shyUntil ${S}`);
   const M = RULES.mistakeTrust;
-  // 2日目、信頼 shyUntil−1 から、何もせず待ってデレさせる
-  const { scene, toasts, during, waitLook } = await personalityDayScene({ personality: 'tsundere', day: 2, trust: S - 1 });
+  // 3日目、信頼 shyUntil−1 から、何もせず待ってデレさせる。
+  // 次の様子は、はじめはこちらを見る（look）、もう一度 shyUntil を越えるのを待つ間は背中を向ける（backTurn）にする。
+  // 背中を向けている間は信頼が早く増えるので、ミス（−mistakeTrust）のあとでも、その日のうちに shyUntil を越えられる。
+  // 3日目の候補（ツンデレの重み・距離30より遠い）：relax3, look2, tailUp1, tailFlick1〜3（警戒しだい）, belly3, backTurn1。0.3 → look、0.999 → backTurn（最後）
+  let want = 'look';
+  const pick = () => (want === 'look' ? 0.3 : 0.999);
+  const { scene, toasts, during, waitLook } = await personalityDayScene({ personality: 'tsundere', day: 3, trust: S - 1, rng: pick });
   for (let i = 0; i < 400 && scene.state().day.trust < S; i++) scene.update(0.05);
   assert.ok(scene.state().day.trust >= S, `信頼が shyUntil をまたがなかった（このテストの前提）。信頼 ${scene.state().day.trust}`);
   assert.equal(toasts.filter((t) => t.text === dere).length, 1, 'デレたトーストが出ていない（このテストの前提）');
@@ -1215,6 +1240,7 @@ test('昼の画面：ツンデレがデレたあとにミスして信頼が shyU
     scene.act({ type: 'pet' });
   }
   assert.ok(scene.state().day.trust < S, `信頼 ${scene.state().day.trust} が shyUntil 未満にならない（このテストの前提）`);
+  want = 'backTurn';
   let recrossed = false;
   for (let i = 0; i < 800 && !recrossed; i++) {
     const s = during(() => scene.update(0.05));
@@ -1249,14 +1275,18 @@ test('昼の画面：ビビりの手が平気になったあとにミスして�
   assert.equal(toasts.filter((t) => t.text === gone).length, 1, '手が平気になったトーストが出ていない（このテストの前提）');
   // 平気になる前になでた1回は、仕様どおりビクビクする（なでる前の信頼で決まる）。ここから増えないことを確かめる
   const timidBefore = toasts.filter((t) => t.text === FEEDBACK.timid).length;
+  // 平気になったあとに、もう一度すり寄りをなでて信頼を上げておく。
+  // ミスで信頼が下がりすぎると、距離の下限（100 − 信頼 − distanceFloorOffset）がすり寄りの届く距離より遠くなり、すり寄りまで来られないため
+  waitMode('rub');
+  scene.act({ type: 'pet' });
 
-  // くつろぎのときになでる（ミス）。信頼が timidUntil−mistakeTrust を下回るまで繰り返す（すり寄りを待つ間に timidUntil に戻らないように）
-  for (let n = 0; n < 5 && scene.state().day.trust >= T - M; n++) {
+  // くつろぎのときになでる（ミス）。信頼が timidUntil を下回るまで繰り返す
+  for (let n = 0; n < 5 && scene.state().day.trust >= T; n++) {
     waitMode('relax');
     const m = during(() => scene.act({ type: 'pet' }));
     assert.equal(m.trustAfter, Math.max(0, m.trustBefore - M), `${n + 1}回目のミスで信頼が mistakeTrust 減っていない（このテストの前提）`);
   }
-  assert.ok(scene.state().day.trust < T - M, `ミスしても信頼 ${scene.state().day.trust} が下がらない（このテストの前提）`);
+  assert.ok(scene.state().day.trust < T, `ミスしても信頼 ${scene.state().day.trust} が下がらない（このテストの前提）`);
 
   // 信頼 timidUntil 未満のまま、すり寄りをなでる：ビクビクには戻らず purr・ふつうの効き
   waitMode('rub');

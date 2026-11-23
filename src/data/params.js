@@ -9,12 +9,12 @@ export const RULES = {
   warinessDecayPerSec: 5,
   // 警戒がこれ未満のとき、猫は近づき、落ち着いて一緒にいる分だけ信頼が増える
   calmThreshold: 30,
-  // 我慢のごほうび（patienceTrust）を足したぶん、待つだけで増える量を下げて、和解までの日数を前と同じくらいにしている
-  calmTrustPerSec: 0.25,
+  // 待つだけで和解できないように、低めにしている（難易度の調整。docs/spec.md 6.0）
+  calmTrustPerSec: 0.18,
   // 背中を向けて座っている間、1秒ごとに増える信頼
-  backTurnTrustPerSec: 1.5,
+  backTurnTrustPerSec: 0.8,
   // 触ると失敗するサイン（お腹見せ・しっぽパタパタ・気まぐれすりすり）を、触らずにやり過ごせたら増える信頼
-  patienceTrust: 4,
+  patienceTrust: 2,
 
   // 距離の下限は「100 − 信頼 − この値」。信頼が低くても、ある程度までは近づいてくる
   distanceFloorOffset: 30,
@@ -42,8 +42,8 @@ export const RULES = {
   // すり寄りを放っておくと、猫はこれだけ離れる
   rubIgnoredDistance: 10,
 
-  // 焦って触った（ミス）ときに減る信頼。焦らない人ほど早く仲良くなれるように（trustRate はかけない）
-  mistakeTrust: 5,
+  // 焦って触った（ミス）ときに減る信頼。焦らない人ほど早く仲良くなれるように（trustRate はかけない）。焦ってばかりだと通い猫になるくらい重くしている
+  mistakeTrust: 15,
 
   fleeDistance: 25,
   fleeSec: 1,
@@ -76,20 +76,23 @@ export const EVENTS = {
   // 箱が届いた：猫が箱の位置（boxDistance）まで来ると箱が置かれ、もぐる。もぐる長さは hideSec の範囲、顔を出すのは peekSec。
   // 顔を出したときに blinksToFinish 回まばたきが通じると、箱から出てくる（ごほうび doneTrust）。箱の中で触られたら afterPetHideSec は顔を出さない
   // 箱から出てくるのが遅いと、その日のうちに膝まで来られず、和解が1日遅れやすい。出てくるまでを20秒台に収めている（docs/spec.md 7章）
-  box: { boxDistance: 45, arriveSec: 1.6, hopSec: 0.6, hideSec: [2, 3.5], peekSec: 2.8, happySec: 2, afterPetHideSec: 5, blinksToFinish: 2, doneTrust: 15 },
+  box: { boxDistance: 45, arriveSec: 1.6, hopSec: 0.6, hideSec: [2, 3.5], peekSec: 2.8, happySec: 2, afterPetHideSec: 5, blinksToFinish: 2, doneTrust: 8 },
   // 窓の外に鳥：猫が窓の前（birdDistance）まで来ると背中を向け、鳥が来る（arriveSec）→狩り（huntSec の範囲）→鳥が去る（leaveSec）→
   // 振り向く（turnSec。まばたきが通じたら happySec ゴロゴロ）。これを rounds 回で終わり。まばたきしなくても終わる。
   // 狩りを最初に最後まで見守れた回に、その場でごほうび doneTrust（2回目以降は、いつもの我慢のごほうびだけ）
-  bird: { birdDistance: 45, arriveSec: 1.6, huntSec: [3, 4], leaveSec: 1.2, turnSec: 2.5, happySec: 1, rounds: 2, doneTrust: 12 },
+  bird: { birdDistance: 45, arriveSec: 1.6, huntSec: [3, 4], leaveSec: 1.2, turnSec: 2.5, happySec: 1, rounds: 2, doneTrust: 6 },
   // 読書中：ページをめくってから readSec の間は「読んでいる」。その間だけ、いつもの距離の下限を気にせず readSpeed で近づく。
   // 膝の前（距離0）まで来たら本の上に乗る（ごほうび doneTrust）。onBookSec たったら降りる（信頼100なら、そのまま膝の上で和解）
-  read: { readSec: 2.5, readSpeed: 6, onBookSec: 4, doneTrust: 12 },
+  read: { readSec: 2.5, readSpeed: 6, onBookSec: 4, doneTrust: 6 },
 };
 
+// trustMul：その日の信頼の増え方の倍率（書いていない日は1）。1〜2日目は最初の出会いが大事なので、少し増えやすい
+// lapTrust：膝に乗る信頼（書いていない日は MAX_VALUE）。3日目は「運命の日」で、少し手前でも乗ってくれる
+// この2つで、うまい人がときどき（1割ほど）3日目に和解できるようにしている（docs/spec.md 6.0）
 export const DAYS = [
-  { day: 1, durationSec: 40, startWariness: 35, actions: ['pet'], signs: ['relax'], canLap: false, approachMul: 1 },
-  { day: 2, durationSec: 40, startWariness: 45, actions: ['pet', 'blink'], signs: ['relax', 'look', 'tailUp', 'tailFlick'], canLap: false, approachMul: 1 },
-  { day: 3, durationSec: 40, startWariness: 40, actions: ['pet', 'blink'], signs: DAY3_SIGNS, canLap: true, approachMul: 1 },
+  { day: 1, durationSec: 40, startWariness: 35, actions: ['pet'], signs: ['relax'], canLap: false, approachMul: 1, trustMul: 1.2 },
+  { day: 2, durationSec: 40, startWariness: 45, actions: ['pet', 'blink'], signs: ['relax', 'look', 'tailUp', 'tailFlick'], canLap: false, approachMul: 1, trustMul: 1.2 },
+  { day: 3, durationSec: 40, startWariness: 40, actions: ['pet', 'blink'], signs: DAY3_SIGNS, canLap: true, approachMul: 1, lapTrust: 85 },
   { day: 4, durationSec: 40, startWariness: 40, actions: ['pet', 'blink'], signs: LATE_SIGNS, canLap: true, approachMul: 1 },
   { day: 5, durationSec: 40, startWariness: 40, actions: ['pet', 'blink'], signs: LATE_SIGNS, canLap: true, approachMul: 1 },
   { day: 6, durationSec: 40, startWariness: 40, actions: ['pet', 'blink'], signs: LATE_SIGNS, canLap: true, approachMul: 1 },
@@ -114,7 +117,7 @@ export const NIGHT = {
   treatStartWariness: 0,
   // おやつの日は、距離の下限がこれだけ近くなる
   treatFloorBonus: 20,
-  nothingTrust: 5,
+  nothingTrust: 3,
 };
 
 // approachSpeed：くつろぎで歩いている間に、1秒で近づく距離（座っている間は近づかない）
@@ -140,7 +143,7 @@ export const PERSONALITIES = {
     treatDistance: 10,
     boxLockSec: 5,
     likes: { pet: 1.2, blink: 1.6, patience: 1.5 },
-    shyUntil: 45,
+    shyUntil: 33,
     signWeights: { relax: 3, look: 2, tailUp: 1, tailFlick: 1, belly: 3, backTurn: 1, rub: 1, fakeRub: 2 },
   },
   bibiri: {
