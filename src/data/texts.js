@@ -157,7 +157,7 @@ export const TIMID_GONE_TEXT = '（{name}は、手がこわくなくなったみ
 export const EVENT_TEXT = {
   box: { hid: '（箱にもぐった）', watched: '（見つめないでくれて、ほっとしたみたい）', out: '（箱から出てきた！）' },
   bird: { hunt: '（窓の外をじっと見ている……）', left: '（鳥が行ってしまった。ほっとしたみたい）', understood: '（狩りの邪魔をしない人だと、わかってくれたみたい）' },
-  read: { wonder: '（……？）', onBook: '（本をのぞき込んできた……！）' },
+  read: { wonder: '（……？）', peekBook: '（本をのぞき込んできた……！）' },
 };
 
 export const LAP_TEXT = '{name}が、膝に乗ってきた……！';

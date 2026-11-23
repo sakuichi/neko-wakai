@@ -25,7 +25,7 @@ const near = (a, b, tol = 1e-9) => Math.abs(a - b) <= tol;
 const BOOK = { x: 180, y: 590 };
 const TOP = { x: 180, y: 200 };
 
-const READ_KEYS = ['readSec', 'readSpeed', 'onBookSec', 'doneTrust'];
+const READ_KEYS = ['readSec', 'readSpeed', 'peekBookSec', 'doneTrust'];
 
 async function loadRead() {
   const P = await import('../src/data/params.js');
@@ -78,10 +78,10 @@ function runTicks(eventTick, start, { personality = plain, rng = fixedRng(0.5), 
 // 読んでいる残りが1秒以下になったら、めくり直す（読むのをやめない）
 const keepReading = (E, personality = plain) => (cur) => (cur.ev.phase === 'read' && !cur.ev.done && cur.ev.readLeft <= 1 ? turnPage(E, cur, personality) : cur);
 
-// 読み続けて、onBook に入った tick まで進める
-function reachOnBook(E, start, { personality = plain } = {}) {
-  const o = runTicks(E.eventTick, start, { personality, beforeTick: keepReading(E, personality), until: (r) => r.ev.phase === 'onBook' });
-  assert.ok(o.reached, 'onBook に入らないまま上限に達した（このテストの前提）');
+// 読み続けて、peekBook に入った tick まで進める
+function reachPeekBook(E, start, { personality = plain } = {}) {
+  const o = runTicks(E.eventTick, start, { personality, beforeTick: keepReading(E, personality), until: (r) => r.ev.phase === 'peekBook' });
+  assert.ok(o.reached, 'peekBook に入らないまま上限に達した（このテストの前提）');
   return o;
 }
 
@@ -96,13 +96,13 @@ function readingMiddle(E, R, dayOverrides = {}) {
   return m.last;
 }
 
-// 本の上に乗っている途中の状態：近くからめくって onBook に入り、さらに 0.5 秒進める
-function onBookMiddle(E, R) {
-  assert.ok(R.onBookSec > 0.5, 'onBookSec が 0.5秒より長い（このテストの前提）');
-  const o = reachOnBook(E, readStart(E.createEventState, {}, { distance: R.readSpeed * 0.5 }));
+// 本をのぞき込んでいる途中の状態：近くからめくって peekBook に入り、さらに 0.5 秒進める
+function peekBookMiddle(E, R) {
+  assert.ok(R.peekBookSec > 0.5, 'peekBookSec が 0.5秒より長い（このテストの前提）');
+  const o = reachPeekBook(E, readStart(E.createEventState, {}, { distance: R.readSpeed * 0.5 }));
   const m = runTicks(E.eventTick, o.last, { maxSec: 0.5 });
-  assert.equal(m.last.ev.phase, 'onBook', '本の上に乗っている途中（このテストの前提）');
-  assert.equal(m.last.cat.mode, 'onBook', '本の上に乗っている途中の猫の様子（このテストの前提）');
+  assert.equal(m.last.ev.phase, 'peekBook', '本をのぞき込んでいる途中（このテストの前提）');
+  assert.equal(m.last.cat.mode, 'peekBook', '本をのぞき込んでいる途中の猫の様子（このテストの前提）');
   return m.last;
 }
 
@@ -276,23 +276,23 @@ test("その日に初めて読むのをやめた（readLeft が 0 になった�
   assert.equal(c.last.ev.wondered, true);
 });
 
-// ---------------------------------------------------------------- 4. 距離0で onBook、+doneTrust。onBookSec 後に done
+// ---------------------------------------------------------------- 4. 距離0で peekBook、+doneTrust。peekBookSec 後に done
 
-test('読み続けて距離0になった tick で onBook（phaseT 0・猫 onBook・cue onBook だけ）、信頼 +(calm 分＋doneTrust)×trustRate。onBookSec の間は onBook・距離0・cue なし。信頼が足りなければ done・phase out・relax・距離0（cue なし）', async () => {
+test('読み続けて距離0になった tick で peekBook（phaseT 0・猫 peekBook・cue peekBook だけ）、信頼 +(calm 分＋doneTrust)×trustRate。peekBookSec の間は peekBook・距離0・cue なし。信頼が足りなければ done・phase out・relax・距離0（cue なし）', async () => {
   const R = await loadRead();
   const E = await loadEvents();
   const trustRate = 0.5;
-  const o = reachOnBook(E, readStart(E.createEventState, { trust: 10, trustRate }));
+  const o = reachPeekBook(E, readStart(E.createEventState, { trust: 10, trustRate }));
   for (const x of o.log) assert.ok(x.cat.distance >= 0, `距離が 0 未満（${x.t.toFixed(2)}秒）: ${x.cat.distance}`);
   assert.ok(!o.log.some((x) => x.cues.includes('wonder')), '読み続けているのに wonder が出た（このテストの前提）');
   const enter = o.log[o.log.length - 1];
-  assert.equal(enter.ev.phase, 'onBook');
+  assert.equal(enter.ev.phase, 'peekBook');
   assert.equal(enter.ev.phaseT, 0);
   assert.equal(enter.cat.distance, 0);
-  assert.equal(enter.cat.mode, 'onBook');
-  assert.deepEqual(enter.cues, ['onBook']);
+  assert.equal(enter.cat.mode, 'peekBook');
+  assert.deepEqual(enter.cues, ['peekBook']);
   const expectedTrust = Math.min(MAX_VALUE, enter.before.day.trust + RULES.calmTrustPerSec * DT * trustRate + R.doneTrust * trustRate);
-  assert.ok(near(enter.day.trust, expectedTrust), `onBook に入った tick の信頼 ${enter.day.trust}（期待 ${expectedTrust}）`);
+  assert.ok(near(enter.day.trust, expectedTrust), `peekBook に入った tick の信頼 ${enter.day.trust}（期待 ${expectedTrust}）`);
   assert.ok(enter.day.trust < MAX_VALUE, '信頼が足りない（このテストの前提）');
 
   const d = runTicks(E.eventTick, o.last, { until: (r) => r.ev.done });
@@ -300,12 +300,12 @@ test('読み続けて距離0になった tick で onBook（phaseT 0・猫 onBook
   const doneTick = d.log[d.log.length - 1];
   for (const x of d.log.slice(0, -1)) {
     const label = `${x.t.toFixed(2)}秒`;
-    assert.equal(x.ev.phase, 'onBook', `phase（${label}）`);
-    assert.equal(x.cat.mode, 'onBook', `猫の様子（${label}）`);
+    assert.equal(x.ev.phase, 'peekBook', `phase（${label}）`);
+    assert.equal(x.cat.mode, 'peekBook', `猫の様子（${label}）`);
     assert.equal(x.cat.distance, 0, `距離（${label}）`);
     assert.deepEqual(x.cues, [], `cue（${label}）`);
   }
-  assert.ok(near(doneTick.t, R.onBookSec, TOL), `onBook の長さ ${doneTick.t}（期待 ${R.onBookSec}）`);
+  assert.ok(near(doneTick.t, R.peekBookSec, TOL), `peekBook の長さ ${doneTick.t}（期待 ${R.peekBookSec}）`);
   assert.equal(doneTick.ev.done, true);
   assert.equal(doneTick.ev.phase, 'out');
   assert.equal(doneTick.cat.mode, 'relax');
@@ -315,13 +315,13 @@ test('読み続けて距離0になった tick で onBook（phaseT 0・猫 onBook
   assert.equal(E.eventProp(doneTick.ev).phase, 'done');
 });
 
-test('本の上で onBookSec たったとき、canLap で信頼が MAX_VALUE なら、そのまま膝（cat.mode lap）で done', async () => {
+test('本をのぞき込んで peekBookSec たったとき、canLap で信頼が MAX_VALUE なら、そのまま膝（cat.mode lap）で done', async () => {
   const R = await loadRead();
   const E = await loadEvents();
-  // 本の上に乗ったごほうび（doneTrust）で、ちょうど MAX_VALUE に届く信頼から始める
+  // 本をのぞき込んだごほうび（doneTrust）で、ちょうど MAX_VALUE に届く信頼から始める
   const start = readStart(E.createEventState, { trust: MAX_VALUE - R.doneTrust, canLap: true });
-  const o = reachOnBook(E, start);
-  assert.equal(o.last.day.trust, MAX_VALUE, 'onBook に入ったとき信頼が MAX_VALUE（このテストの前提）');
+  const o = reachPeekBook(E, start);
+  assert.equal(o.last.day.trust, MAX_VALUE, 'peekBook に入ったとき信頼が MAX_VALUE（このテストの前提）');
   const d = runTicks(E.eventTick, o.last, { until: (r) => r.ev.done });
   assert.ok(d.reached, 'done にならないまま上限に達した');
   const doneTick = d.log[d.log.length - 1];
@@ -331,12 +331,12 @@ test('本の上で onBookSec たったとき、canLap で信頼が MAX_VALUE な
   assert.equal(doneTick.cat.distance, 0);
 });
 
-test('onBook 中はめくれない（ev そのまま・feedback null・mistake false）。done のあとの eventAct は null（めくる・なでる・まばたき）', async () => {
+test('peekBook 中はめくれない（ev そのまま・feedback null・mistake false）。done のあとの eventAct は null（めくる・なでる・まばたき）', async () => {
   const R = await loadRead();
   const E = await loadEvents();
-  const s = onBookMiddle(E, R);
+  const s = peekBookMiddle(E, R);
   const r = E.eventAct(PAGE, s.ev, s.cat, s.day, plain);
-  assert.ok(r, 'onBook：eventAct が null を返した');
+  assert.ok(r, 'peekBook：eventAct が null を返した');
   assert.deepEqual(r.ev, s.ev);
   assert.equal(r.feedback, null);
   assert.equal(r.mistake, false);
@@ -373,7 +373,7 @@ test("phase 'read' でなでる：applyAction を relax で呼んだのと同じ
   assert.equal(r.ev.pages, s.ev.pages);
 });
 
-// ---------------------------------------------------------------- 6. まばたきは stare。onBook・逃げている最中は何も起きない
+// ---------------------------------------------------------------- 6. まばたきは stare。peekBook・逃げている最中は何も起きない
 
 test("phase 'read' でまばたき：applyAction を relax で呼んだのと同じ day・feedback（stare）・mistake・cat。警戒 +missWariness×warinessMul、信頼そのまま、readLeft・pages そのまま", async () => {
   const R = await loadRead();
@@ -392,10 +392,10 @@ test("phase 'read' でまばたき：applyAction を relax で呼んだのと同
   assert.equal(r.ev.pages, s.ev.pages);
 });
 
-test('onBook 中になでる・まばたき：何も起きない（feedback null・mistake false・信頼と警戒そのまま・ev そのまま）', async () => {
+test('peekBook 中になでる・まばたき：何も起きない（feedback null・mistake false・信頼と警戒そのまま・ev そのまま）', async () => {
   const R = await loadRead();
   const E = await loadEvents();
-  const s = onBookMiddle(E, R);
+  const s = peekBookMiddle(E, R);
   for (const [label, action] of [['なでる', pet], ['まばたき', blink(1000)], ['目が合っていたまばたき', { type: 'blink', holdMs: 1000, sawLook: true }]]) {
     const r = E.eventAct(action, s.ev, s.cat, s.day, plain);
     assert.ok(r, `${label}：eventAct が null を返した`);
@@ -582,14 +582,14 @@ function playRead(scene, done, maxUpdates = 2000) {
   }
 }
 
-test("文章：CARDS['event:read'] は pause: true・title 'イベント：読書中'。EVENT_TEXT.read に wonder・onBook の文字列がある", async () => {
+test("文章：CARDS['event:read'] は pause: true・title 'イベント：読書中'。EVENT_TEXT.read に wonder・peekBook の文字列がある", async () => {
   const { CARDS } = await import('../src/data/texts.js');
   const card = CARDS['event:read'];
   assert.ok(card, "CARDS['event:read'] がない");
   assert.equal(card.pause, true, "CARDS['event:read'] は止めるカード（pause: true）");
   assert.equal(card.title, 'イベント：読書中');
   await readText('wonder');
-  await readText('onBook');
+  await readText('peekBook');
 });
 
 test('昼の画面：読書の日の始めに event:read の説明カード（pause）を1回だけ出す。同じプレイでもう一度読書の昼を始めても出さない', async () => {
@@ -690,14 +690,14 @@ test('昼の画面：読書以外の日（いつもの日・箱の日・鳥の�
   }
 });
 
-test("昼の画面：cue wonder・onBook で EVENT_TEXT.read の該当トーストを1回ずつ出す（wonder は phase read のとき、onBook は phase onBook のとき）", async () => {
+test("昼の画面：cue wonder・peekBook で EVENT_TEXT.read の該当トーストを1回ずつ出す（wonder は phase read のとき、peekBook は phase peekBook のとき）", async () => {
   await loadRead();
   const wonder = await readText('wonder');
-  const onBook = await readText('onBook');
+  const peekBook = await readText('peekBook');
   const { scene, toasts } = await readDayScene();
   const seen = [];
   const record = (n) => {
-    for (const t of toasts.slice(n)) if (t.text === wonder || t.text === onBook) seen.push({ text: t.text, phase: scene.view().prop?.phase });
+    for (const t of toasts.slice(n)) if (t.text === wonder || t.text === peekBook) seen.push({ text: t.text, phase: scene.view().prop?.phase });
   };
   // 1回めくって、読むのをやめるまで待つ
   scene.update(DT);
@@ -707,38 +707,38 @@ test("昼の画面：cue wonder・onBook で EVENT_TEXT.read の該当トース�
     scene.update(DT);
     record(n);
   }
-  // そこから本の上に乗るまで、めくり続ける
-  for (let i = 0; i < 2000 && !toasts.some((t) => t.text === onBook) && scene.state().day.timeLeft > 0; i++) {
+  // そこから本をのぞき込むまで、めくり続ける
+  for (let i = 0; i < 2000 && !toasts.some((t) => t.text === peekBook) && scene.state().day.timeLeft > 0; i++) {
     if (i % 20 === 0 && scene.view().prop?.phase === 'read') scene.pet(BOOK.x, BOOK.y);
     const n = toasts.length;
     scene.update(DT);
     record(n);
   }
-  assert.ok(scene.state().day.timeLeft > 0, '本の上に乗る前に時間切れになった（このテストの前提）');
+  assert.ok(scene.state().day.timeLeft > 0, '本をのぞき込む前に時間切れになった（このテストの前提）');
   const list = toasts.map((t) => t.text).join(' / ');
-  assert.deepEqual(seen, [{ text: wonder, phase: 'read' }, { text: onBook, phase: 'onBook' }], `トースト: ${list}`);
+  assert.deepEqual(seen, [{ text: wonder, phase: 'read' }, { text: peekBook, phase: 'peekBook' }], `トースト: ${list}`);
 });
 
-test('昼の画面：本の上で onBookSec たち、信頼が MAX_VALUE なら、そのまま膝（cat.mode lap）になり、いつもの膝の流れで onEnd が和解（lapped true）で1回', async () => {
+test('昼の画面：本をのぞき込んで peekBookSec たち、信頼が MAX_VALUE なら、そのまま膝（cat.mode lap）になり、いつもの膝の流れで onEnd が和解（lapped true）で1回', async () => {
   await loadRead();
   const { scene, ends } = await readDayScene();
-  playRead(scene, () => scene.view().prop?.phase === 'onBook');
-  assert.equal(scene.view().prop?.phase, 'onBook', '本の上に乗らないまま進めた（このテストの前提）');
-  assert.ok(scene.state().day.timeLeft > 0, '本の上に乗る前に時間切れになった（このテストの前提）');
+  playRead(scene, () => scene.view().prop?.phase === 'peekBook');
+  assert.equal(scene.view().prop?.phase, 'peekBook', '本をのぞき込まないまま進めた（このテストの前提）');
+  assert.ok(scene.state().day.timeLeft > 0, '本をのぞき込む前に時間切れになった（このテストの前提）');
   scene.trustMax();
   let modeAtDone = null;
   for (let i = 0; i < 2000 && ends.length === 0; i++) {
     scene.update(DT);
     if (modeAtDone === null && scene.view().prop?.phase === 'done') modeAtDone = scene.state().cat.mode;
   }
-  assert.equal(modeAtDone, 'lap', '本の上で onBookSec たったときの猫の様子');
+  assert.equal(modeAtDone, 'lap', '本をのぞき込んで peekBookSec たったときの猫の様子');
   assert.equal(ends.length, 1, 'onEnd の呼ばれた回数');
   assert.equal(ends[0].lapped, true);
   for (let i = 0; i < 40; i++) scene.update(DT);
   assert.equal(ends.length, 1, 'onEnd が2回以上呼ばれた');
 });
 
-test('昼の画面：本の上で onBookSec たっても信頼が足りなければ、cat.mode relax・距離0でいつもの日に戻る（日は終わらない）', async () => {
+test('昼の画面：本をのぞき込んで peekBookSec たっても信頼が足りなければ、cat.mode relax・距離0でいつもの日に戻る（日は終わらない）', async () => {
   await loadRead();
   const { scene, ends } = await readDayScene({ trust: 0 });
   playRead(scene, () => scene.view().prop?.phase === 'done');
@@ -803,13 +803,13 @@ test("描画：hitTestBook(x, y) がある。prop { kind: 'book', phase: 'read' 
   assert.equal(renderer.hitTestBook(TOP.x, TOP.y), false, '画面の上のほう');
 });
 
-test("描画：prop が null・箱・鳥の日、本の phase 'onBook'・'done' では、hitTestBook(180, 590) は false", async () => {
+test("描画：prop が null・箱・鳥の日、本の phase 'peekBook'・'done' では、hitTestBook(180, 590) は false", async () => {
   const P = await import('../src/data/params.js');
   const views = [
     ['prop が null の昼', { scene: 'day', wariness: 0, cat: { mode: 'relax', distance: 60 }, prop: null }],
     ['箱の日（hide）', { scene: 'day', wariness: 0, cat: { mode: 'relax', distance: P.EVENTS.box.boxDistance }, prop: { kind: 'parcel', phase: 'hide', phaseT: 0.5 } }],
     ['鳥の日（hunt）', { scene: 'day', wariness: 0, cat: { mode: 'backTurn', distance: P.EVENTS.bird.birdDistance }, prop: { kind: 'bird', phase: 'hunt', phaseT: 0.5 } }],
-    ["本の onBook", bookView('onBook', { mode: 'onBook', distance: 0 }, 5)],
+    ["本の peekBook", bookView('peekBook', { mode: 'peekBook', distance: 0 }, 5)],
     ["本の done", bookView('done', { mode: 'relax', distance: 0 }, 5)],
   ];
   for (const [label, view] of views) {
@@ -824,10 +824,10 @@ test("描画：prop { kind: 'book', phase: 'read', pages: 3 } で「3ページ�
   assert.ok(texts.includes('3ページ'), `「3ページ」がない: ${texts.join(' / ')}`);
 });
 
-test("描画：cat.mode 'onBook' と、prop { kind: 'book' } のどの phase（read・onBook・done）でも例外を出さない", () => {
+test("描画：cat.mode 'peekBook' と、prop { kind: 'book' } のどの phase（read・peekBook・done）でも例外を出さない", () => {
   const cases = [
     ['read', { mode: 'relax', distance: 60, walking: true }],
-    ['onBook', { mode: 'onBook', distance: 0 }],
+    ['peekBook', { mode: 'peekBook', distance: 0 }],
     ['done', { mode: 'relax', distance: 0 }],
   ];
   for (const [phase, cat] of cases) {
@@ -935,7 +935,7 @@ test('音：createSound の返り値に page（関数）があり、効果音 ON
   );
 });
 
-// ---------------------------------------------------------------- 不具合の再現：本の上（onBook）から降りると、1フレームで膝の上から床へ飛ぶ
+// ---------------------------------------------------------------- 不具合の再現：本をのぞき込む猫（peekBook）がいつもの日に戻るとき、1フレームで位置が跳ばない（以前、膝の上の姿で描いていたころは、膝の上から床へ飛んでいた）
 
 const FRAME = 1 / 60;
 
@@ -953,15 +953,15 @@ function drawFrames(r, view, t0, sec) {
 
 const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
-test('描画：本をのぞき込んでいる猫（onBook・距離0）が relax・距離0 に変わっても、位置は跳ばない（どのフレームでも前のフレームから2px以内）', () => {
-  const onBookView = bookView('onBook', { mode: 'onBook', distance: 0 }, 5);
+test('描画：本をのぞき込んでいる猫（peekBook・距離0）が relax・距離0 に変わっても、位置は跳ばない（どのフレームでも前のフレームから2px以内）', () => {
+  const peekBookView = bookView('peekBook', { mode: 'peekBook', distance: 0 }, 5);
   const relaxView = bookView('done', { mode: 'relax', distance: 0 }, 5);
   const r = createRenderer(textFrameCanvas().canvas);
-  const onFrames = drawFrames(r, onBookView, 1, 6);
-  const last = onFrames[onFrames.length - 1];
-  assert.ok(dist2(last, onFrames[onFrames.length - 2]) < 0.01, `のぞき込んでいる位置が落ち着いている（このテストの前提）: ${JSON.stringify(onFrames.slice(-2))}`);
+  const peekFrames = drawFrames(r, peekBookView, 1, 6);
+  const last = peekFrames[peekFrames.length - 1];
+  assert.ok(dist2(last, peekFrames[peekFrames.length - 2]) < 0.01, `のぞき込んでいる位置が落ち着いている（このテストの前提）: ${JSON.stringify(peekFrames.slice(-2))}`);
 
-  const t0 = 1 + onFrames.length * FRAME;
+  const t0 = 1 + peekFrames.length * FRAME;
   const offFrames = drawFrames(r, relaxView, t0, 1.5);
   const frames = [last, ...offFrames];
   for (let i = 1; i < frames.length; i++) {
@@ -970,7 +970,7 @@ test('描画：本をのぞき込んでいる猫（onBook・距離0）が relax�
   }
 });
 
-// ---------------------------------------------------------------- 本をのぞき込む（onBook）：膝の上には乗らず、膝の前の床の位置で描く。本は開いたまま
+// ---------------------------------------------------------------- 本をのぞき込む（peekBook）：膝の上には乗らず、膝の前の床の位置で描く。本は開いたまま
 
 // view を最初から sec 秒描いて、落ち着いた位置（最後のフレーム）を返す。落ち着いていなければ落とす
 function settledPosition(view, label, sec = 6) {
@@ -980,34 +980,34 @@ function settledPosition(view, label, sec = 6) {
   return p;
 }
 
-test('描画：cat { mode: onBook, distance: 0 }・本の phase onBook を何フレームか描くと、shownPosition() は relax・距離0 の床の位置と同じ（±1px）、膝の上の位置（lap）とは y が10以上離れている。shownCat().mode は lap でない', () => {
+test('描画：cat { mode: peekBook, distance: 0 }・本の phase peekBook を何フレームか描くと、shownPosition() は relax・距離0 の床の位置と同じ（±1px）、膝の上の位置（lap）とは y が10以上離れている。shownCat().mode は lap でない', () => {
   const floor = settledPosition(bookView('done', { mode: 'relax', distance: 0 }, 5), '床（relax・距離0）');
   const seat = settledPosition(bookView('done', { mode: 'lap', distance: 0 }, 5), '膝の上（lap）');
   const r = createRenderer(textFrameCanvas().canvas);
-  const frames = drawFrames(r, bookView('onBook', { mode: 'onBook', distance: 0 }, 5), 1, 6);
+  const frames = drawFrames(r, bookView('peekBook', { mode: 'peekBook', distance: 0 }, 5), 1, 6);
   const p = frames[frames.length - 1];
   assert.ok(Math.abs(p.x - floor.x) <= 1 && Math.abs(p.y - floor.y) <= 1, `のぞき込んでいる位置 ${JSON.stringify(p)}（床 ${JSON.stringify(floor)}）`);
   assert.ok(Math.abs(p.y - seat.y) >= 10, `のぞき込んでいる位置 ${JSON.stringify(p)} が膝の上 ${JSON.stringify(seat)} に近い`);
   assert.notEqual(r.shownCat().mode, 'lap', 'のぞき込んでいる猫を膝の姿で描いている');
 });
 
-test('描画：本の phase onBook の間も「Nページ」を描く（開いた本のまま）。phase done では描かない（閉じた本）', () => {
-  const onBook = drawView(bookView('onBook', { mode: 'onBook', distance: 0 }, 5)).texts;
-  assert.ok(onBook.includes('5ページ'), `onBook：「5ページ」がない: ${onBook.join(' / ')}`);
+test('描画：本の phase peekBook の間も「Nページ」を描く（開いた本のまま）。phase done では描かない（閉じた本）', () => {
+  const peekBook = drawView(bookView('peekBook', { mode: 'peekBook', distance: 0 }, 5)).texts;
+  assert.ok(peekBook.includes('5ページ'), `peekBook：「5ページ」がない: ${peekBook.join(' / ')}`);
   const done = drawView(bookView('done', { mode: 'relax', distance: 0 }, 5)).texts;
   assert.ok(!done.includes('5ページ'), `done：「5ページ」を描いている: ${done.join(' / ')}`);
 });
 
-test('描画：本をのぞき込んでいる猫（onBook・距離0）が lap に変わったら（膝に乗った）、最初のフレームで膝の上へ飛ばず、LAP_JUMP_SEC（0.5秒）かけて膝の上の位置に着く。shownCat().mode は lap', () => {
+test('描画：本をのぞき込んでいる猫（peekBook・距離0）が lap に変わったら（膝に乗った）、最初のフレームで膝の上へ飛ばず、LAP_JUMP_SEC（0.5秒）かけて膝の上の位置に着く。shownCat().mode は lap', () => {
   const seat = settledPosition(bookView('done', { mode: 'lap', distance: 0 }, 5), '膝の上（lap）');
   const r = createRenderer(textFrameCanvas().canvas);
-  const onFrames = drawFrames(r, bookView('onBook', { mode: 'onBook', distance: 0 }, 5), 1, 6);
-  const from = onFrames[onFrames.length - 1];
-  assert.ok(dist2(from, onFrames[onFrames.length - 2]) < 0.01, `のぞき込んでいる位置が落ち着いている（このテストの前提）: ${JSON.stringify(onFrames.slice(-2))}`);
+  const peekFrames = drawFrames(r, bookView('peekBook', { mode: 'peekBook', distance: 0 }, 5), 1, 6);
+  const from = peekFrames[peekFrames.length - 1];
+  assert.ok(dist2(from, peekFrames[peekFrames.length - 2]) < 0.01, `のぞき込んでいる位置が落ち着いている（このテストの前提）: ${JSON.stringify(peekFrames.slice(-2))}`);
   const gap = dist2(from, seat);
   assert.ok(Math.abs(from.y - seat.y) >= 10, `のぞき込んでいる位置 ${JSON.stringify(from)} と膝の上 ${JSON.stringify(seat)} が離れている（このテストの前提）`);
 
-  const t0 = 1 + onFrames.length * FRAME;
+  const t0 = 1 + peekFrames.length * FRAME;
   const lapFrames = drawFrames(r, bookView('done', { mode: 'lap', distance: 0 }, 5), t0, 1.5);
   const first = lapFrames[0];
   assert.ok(dist2(first, from) < gap / 2, `膝に乗った最初のフレームで ${dist2(first, from).toFixed(1)}px 動いた（${JSON.stringify(from)} → ${JSON.stringify(first)}、膝の上 ${JSON.stringify(seat)}）`);
@@ -1021,9 +1021,9 @@ test('描画：本をのぞき込んでいる猫（onBook・距離0）が lap �
   assert.equal(r.shownCat().mode, 'lap');
 });
 
-test('文章：EVENT_TEXT.read.onBook に「のぞき込」が入っている（本の上に乗るのではなく、本をのぞき込む）', async () => {
-  const onBook = await readText('onBook');
-  assert.ok(onBook.includes('のぞき込'), `EVENT_TEXT.read.onBook: ${onBook}`);
+test('文章：EVENT_TEXT.read.peekBook に「のぞき込」が入っている（膝に乗るのではなく、本をのぞき込む）', async () => {
+  const peekBook = await readText('peekBook');
+  assert.ok(peekBook.includes('のぞき込'), `EVENT_TEXT.read.peekBook: ${peekBook}`);
 });
 
 // ---------------------------------------------------------------- 不具合の再現：逃げている間・段ボールの中では readLeft が減らない
@@ -1072,9 +1072,9 @@ test('イベントの進行（不具合の再現）：前の晩の段ボール�
   assert.ok(near(zeroAt, R.readSec, TOL), `readLeft が 0 になった時刻 ${zeroAt}（期待 ${R.readSec}）`);
 });
 
-// ---------------------------------------------------------------- 不具合の再現：本の上にいる間に時間切れになると、onEnd の cat が onBook のまま
+// ---------------------------------------------------------------- 不具合の再現：本をのぞき込んでいる間に時間切れになると、onEnd の cat が peekBook のまま
 
-test('昼の画面（不具合の再現）：本の上（onBook）にいる間に時間切れになったら、onEnd の cat は mode relax・distance 0、lapped false', async () => {
+test('昼の画面（不具合の再現）：本をのぞき込んでいる（peekBook）間に時間切れになったら、onEnd の cat は mode relax・distance 0、lapped false', async () => {
   const R = await loadRead();
   const { scene, ends } = await readDayScene({ trust: 0 });
   // 本のそば（1回めくって近づく距離の2倍以下）まで読ませる
@@ -1085,30 +1085,30 @@ test('昼の画面（不具合の再現）：本の上（onBook）にいる間�
   for (let i = 0; i < Math.ceil((R.readSec + 0.5) / DT); i++) scene.update(DT);
   const d = scene.state().cat.distance;
   assert.ok(d > 0 && scene.view().prop?.phase === 'read', `読み終えて距離 ${d} で止まっている（このテストの前提）`);
-  // 残り時間が「歩く時間＋onBookSec の半分」になるまで待ってから、めくり続けて本の上に乗せる
-  const waitUntil = d / R.readSpeed + R.onBookSec / 2;
+  // 残り時間が「歩く時間＋peekBookSec の半分」になるまで待ってから、めくり続けて本をのぞき込ませる
+  const waitUntil = d / R.readSpeed + R.peekBookSec / 2;
   for (let i = 0; i < 2000 && scene.state().day.timeLeft > waitUntil; i++) scene.update(DT);
   assert.ok(scene.state().day.timeLeft > 0, '待っている間に時間切れになった（このテストの前提）');
   playRead(scene, () => scene.view().prop?.phase !== 'read' || ends.length > 0);
-  assert.equal(scene.view().prop?.phase, 'onBook', '本の上に乗らない（このテストの前提）');
+  assert.equal(scene.view().prop?.phase, 'peekBook', '本をのぞき込まない（このテストの前提）');
   const left = scene.state().day.timeLeft;
-  assert.ok(left > 0 && left < R.onBookSec, `本の上に乗ったときの残り時間 ${left} が 0〜onBookSec の間（このテストの前提）`);
+  assert.ok(left > 0 && left < R.peekBookSec, `本をのぞき込み始めたときの残り時間 ${left} が 0〜peekBookSec の間（このテストの前提）`);
   let phaseBeforeEnd = null;
   for (let i = 0; i < 2000 && ends.length === 0; i++) {
     phaseBeforeEnd = scene.view().prop?.phase;
     scene.update(DT);
   }
   assert.equal(ends.length, 1, 'onEnd の呼ばれた回数');
-  assert.equal(phaseBeforeEnd, 'onBook', '時間切れの直前に本の上にいる（このテストの前提）');
+  assert.equal(phaseBeforeEnd, 'peekBook', '時間切れの直前に本をのぞき込んでいる（このテストの前提）');
   assert.equal(scene.state().day.timeLeft, 0, '時間切れで終わった（このテストの前提）');
   assert.equal(ends[0].lapped, false);
   assert.equal(ends[0].cat.mode, 'relax', `onEnd の cat.mode が ${ends[0].cat.mode}`);
   assert.equal(ends[0].cat.distance, 0);
 });
 
-// ---------------------------------------------------------------- 本の上から膝に乗ったときも、いつもの膝と同じ演出
+// ---------------------------------------------------------------- 本をのぞき込んだあと膝に乗ったときも、いつもの膝と同じ演出
 
-test('昼の画面：読書の日、本の上から信頼100で膝に乗ったとき（イベントの tick で lap）も、hud.show(false)・input.setBlinkEnabled(false) が呼ばれ、LAP_TEXT のトーストが出る', async () => {
+test('昼の画面：読書の日、本をのぞき込んだあと信頼100で膝に乗ったとき（イベントの tick で lap）も、hud.show(false)・input.setBlinkEnabled(false) が呼ばれ、LAP_TEXT のトーストが出る', async () => {
   await loadRead();
   const { createDayScene } = await import('../src/scenes/dayScene.js');
   const { createGame } = await import('../src/game/progression.js');
@@ -1128,9 +1128,9 @@ test('昼の画面：読書の日、本の上から信頼100で膝に乗った�
   const ends = [];
   const scene = createDayScene({ session, overlay, hud, renderer, input, sound, rng: fixedRng(0.5), onEnd: (r) => ends.push(r) });
 
-  playRead(scene, () => scene.view().prop?.phase === 'onBook');
-  assert.equal(scene.view().prop?.phase, 'onBook', '本の上に乗らないまま進めた（このテストの前提）');
-  assert.ok(scene.state().day.timeLeft > 0, '本の上に乗る前に時間切れになった（このテストの前提）');
+  playRead(scene, () => scene.view().prop?.phase === 'peekBook');
+  assert.equal(scene.view().prop?.phase, 'peekBook', '本をのぞき込まないまま進めた（このテストの前提）');
+  assert.ok(scene.state().day.timeLeft > 0, '本をのぞき込む前に時間切れになった（このテストの前提）');
   scene.trustMax();
   let lapCalls = null;
   let lapToasts = null;
@@ -1144,32 +1144,32 @@ test('昼の画面：読書の日、本の上から信頼100で膝に乗った�
     }
   }
   assert.ok(lapCalls, '膝に乗らないまま進めた（このテストの前提）');
-  assert.equal(scene.view().prop?.phase, 'done', '本の上から膝に乗った（このテストの前提）');
+  assert.equal(scene.view().prop?.phase, 'done', '本をのぞき込んだあと膝に乗った（このテストの前提）');
   assert.deepEqual(ends, [], '膝に乗った瞬間に日が終わった（このテストの前提）');
   assert.ok(lapCalls.some(([name, v]) => name === 'hud.show' && v === false), `膝に乗った update で hud.show(false) が呼ばれていない: ${JSON.stringify(lapCalls)}`);
   assert.ok(lapCalls.some(([name, v]) => name === 'input.setBlinkEnabled' && v === false), `膝に乗った update で input.setBlinkEnabled(false) が呼ばれていない: ${JSON.stringify(lapCalls)}`);
   assert.ok(lapToasts.includes(withName(LAP_TEXT, 'たま')), `膝に乗った update のトースト: ${lapToasts.join(' / ')}`);
 });
 
-// ---------------------------------------------------------------- 膝に乗る信頼（day.lapTrust）。本の上から降りるときも、その日の lapTrust で膝に乗るかを決める
+// ---------------------------------------------------------------- 膝に乗る信頼（day.lapTrust）。本をのぞき込むのをやめるときも、その日の lapTrust で膝に乗るかを決める
 
-// 膝の前（距離0）から始めて、最初の tick で本の上に乗せ、onBookSec たって降りる（done）tick まで進める。
-// 警戒を高くして、落ち着きの分の信頼が入らないようにする（本の上に乗ったごほうび doneTrust だけが入る）
-function lapTrustOnBook(E, trust) {
+// 膝の前（距離0）から始めて、最初の tick で本をのぞき込ませ、peekBookSec たってのぞき込むのをやめる（done）tick まで進める。
+// 警戒を高くして、落ち着きの分の信頼が入らないようにする（本をのぞき込んだごほうび doneTrust だけが入る）
+function lapTrustPeekBook(E, trust) {
   assert.equal(typeof DAYS[2].lapTrust, 'number', '3日目の DAYS に lapTrust がない（このテストの前提）');
   const start = readStart(E.createEventState, { canLap: true, lapTrust: DAYS[2].lapTrust, trust, wariness: MAX_VALUE }, { distance: 0 });
   const o = runTicks(E.eventTick, start, { maxSec: DT });
-  assert.equal(o.last.ev.phase, 'onBook', '最初の tick で本の上に乗っていない（このテストの前提）');
+  assert.equal(o.last.ev.phase, 'peekBook', '最初の tick で本をのぞき込んでいない（このテストの前提）');
   const d = runTicks(E.eventTick, o.last, { until: (r) => r.ev.done });
   assert.ok(d.reached, 'done にならないまま上限に達した（このテストの前提）');
   return d.log[d.log.length - 1];
 }
 
-test('本の上で onBookSec たったとき、canLap・day.lapTrust 85 で信頼 85 なら、そのまま膝（cat.mode lap）で done', async () => {
+test('本をのぞき込んで peekBookSec たったとき、canLap・day.lapTrust 85 で信頼 85 なら、そのまま膝（cat.mode lap）で done', async () => {
   const R = await loadRead();
   const E = await loadEvents();
   const L = DAYS[2].lapTrust;
-  const doneTick = lapTrustOnBook(E, L - R.doneTrust);
+  const doneTick = lapTrustPeekBook(E, L - R.doneTrust);
   assert.equal(doneTick.day.trust, L, 'done の tick の信頼が lapTrust ちょうど（このテストの前提）');
   assert.equal(doneTick.ev.done, true);
   assert.equal(doneTick.ev.phase, 'out');
@@ -1177,11 +1177,11 @@ test('本の上で onBookSec たったとき、canLap・day.lapTrust 85 で信�
   assert.equal(doneTick.cat.distance, 0);
 });
 
-test('本の上で onBookSec たったとき、day.lapTrust 85 で信頼が lapTrust 未満（84.9）なら、くつろぎ（relax）に戻って done', async () => {
+test('本をのぞき込んで peekBookSec たったとき、day.lapTrust 85 で信頼が lapTrust 未満（84.9）なら、くつろぎ（relax）に戻って done', async () => {
   const R = await loadRead();
   const E = await loadEvents();
   const L = DAYS[2].lapTrust;
-  const doneTick = lapTrustOnBook(E, L - R.doneTrust - 0.1);
+  const doneTick = lapTrustPeekBook(E, L - R.doneTrust - 0.1);
   assert.ok(Math.abs(doneTick.day.trust - (L - 0.1)) < 1e-9, `done の tick の信頼 ${doneTick.day.trust} が lapTrust − 0.1 でない（このテストの前提）`);
   assert.equal(doneTick.ev.done, true);
   assert.equal(doneTick.ev.phase, 'out');
@@ -1190,7 +1190,7 @@ test('本の上で onBookSec たったとき、day.lapTrust 85 で信頼が lapT
 });
 
 // ---------------------------------------------------------------- 不具合の再現：本を連打していると、本が閉じたあとのタップが猫へのタッチになり、逃げてミスになる
-// 猫が本の上にいる間と、読書が終わって（done）から tapGuardSec の間は、開いた本の範囲（inBookArea）のタップを猫へのタッチにしない
+// 猫が本をのぞき込んでいる間と、読書が終わって（done）から tapGuardSec の間は、開いた本の範囲（inBookArea）のタップを猫へのタッチにしない
 
 // readDayScene と同じ作りで、偽の renderer に inBookArea を足したもの。hits.area を書き換えると inBookArea の答えが変わる
 async function guardDayScene({ trust = 0, area = true, cat = true } = {}) {
@@ -1243,7 +1243,7 @@ function tap(g, x = BOOK.x, y = BOOK.y) {
   return { effects: g.effects.slice(n), mistakesBefore, mistakesAfter: g.scene.state().day.mistakes };
 }
 
-test('不具合の再現：読書の日、本の上が終わって done になった直後（tapGuardSec 未満）に、inBookArea も hitTestCat も true の場所をタップしても、ミスにならず猫は逃げない。paw の効果だけ出る', async () => {
+test('不具合の再現：読書の日、のぞき込みが終わって done になった直後（tapGuardSec 未満）に、inBookArea も hitTestCat も true の場所をタップしても、ミスにならず猫は逃げない。paw の効果だけ出る', async () => {
   await loadRead();
   const g = await guardDayScene({ area: true, cat: true });
   reachReadDone(g.scene);
@@ -1265,15 +1265,15 @@ test('読書が done になってから tapGuardSec 以上たったタップは�
   assert.ok(t.effects.some((e) => e.type === 'reach'), `タップの効果: ${JSON.stringify(t.effects)}`);
 });
 
-test('本の上（onBook）の間に inBookArea が true の場所をタップすると、paw の効果だけ出て、reach は出ず、ミスにならない', async () => {
+test('本をのぞき込んでいる（peekBook）間に inBookArea が true の場所をタップすると、paw の効果だけ出て、reach は出ず、ミスにならない', async () => {
   await loadRead();
   const g = await guardDayScene({ area: true, cat: true });
-  playRead(g.scene, () => g.scene.view().prop?.phase === 'onBook');
-  assert.equal(g.scene.view().prop?.phase, 'onBook', '本の上に乗らないまま進めた（このテストの前提）');
+  playRead(g.scene, () => g.scene.view().prop?.phase === 'peekBook');
+  assert.equal(g.scene.view().prop?.phase, 'peekBook', '本をのぞき込まないまま進めた（このテストの前提）');
   const t = tap(g);
   assert.deepEqual(t.effects, [{ type: 'paw', data: { x: BOOK.x, y: BOOK.y } }], 'タップの効果');
   assert.equal(t.mistakesAfter, t.mistakesBefore, 'ミスになった');
-  assert.equal(g.scene.view().prop?.phase, 'onBook', 'タップで本の上から降りた');
+  assert.equal(g.scene.view().prop?.phase, 'peekBook', 'タップでのぞき込むのをやめた');
 });
 
 test('inBookArea が false の場所（猫に当たる）は、読書が done になった直後でも今までどおりなでる（くつろいでいる猫は逃げてミス）', async () => {

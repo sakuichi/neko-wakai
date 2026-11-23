@@ -38,7 +38,7 @@ flowchart TD
     BRAIN -->|"CatState（walking を含む）, DayState, enteredMode, endured（やり過ごせた様子。なければ null）"| DAY
 
     DAY -->|"イベントの日（DayState.event）：EventState, CatState, DayState, Personality, dt, rng"| EVT["イベントの進行。id で切り替える（箱が届いた：近づく→箱が置かれる→もぐる⇄顔を出す→出てくる／窓の外に鳥：近づく→背中を向けて鳥が来る→狩り→鳥が去る→振り向く、を2回／読書中：本をめくって読んでいる間だけ近づく→膝の前で本をのぞき込む→やめる、信頼が lapTrust 以上ならそのまま膝）。なでる・まばたきは、猫の様子を読み替えて rules に任せる（eventAct）。前の晩の段ボールの間（boxLockLeft）は待ってから始める。終わったら done、昼の画面はいつもの tick に戻る<br/>src/game/events.js"]
-    EVT -->|"EventState, CatState, DayState, cues（箱：drop・hid・peek・watched・out／鳥：hunt・understood・left／読書：wonder・onBook）／ActionResult"| DAY
+    EVT -->|"EventState, CatState, DayState, cues（箱：drop・hid・peek・watched・out／鳥：hunt・understood・left／読書：wonder・peekBook）／ActionResult"| DAY
     EVT -->|"ambient（残り時間・警戒の自然な減り）"| BRAIN
     EVT -->|"applyAction（look・inBox・backTurn・relax などに読み替えて）・isShy（箱で、ツンの間は見送れたら数える）"| RULES
     DATA -->|"EVENTS・EVENT_DAYS"| EVT
@@ -72,7 +72,7 @@ flowchart TD
 
     DAY -->|"View {cat, wariness, blinkHoldMs, lapTime, dayTime（その日の進み具合 0〜1）, shy（ツンの間か）, prop（イベントの小道具）}"| RENDER["猫・部屋・膝の描画（Canvas。お腹見せの手前の足は胴体に重ねる）・毛色・性格の仕草（ツンデレはツンの間、見るときも目をそらす）・見つめる合図（チラッ）・歩く姿と蛇行する道すじ・膝に跳び乗る・タイトルに戻るとき／夜に帰っていくときは猫がその場で消え、タイトルの位置／次の日の昼のスタート位置に現れる（フェード）・ページを開いた直後は猫をはじめからその場面の位置に置く・まばたきゲージ・足あと・我慢できたときの「ほっ」（addEffect('relief')。窓の外に鳥で、見守れて鳥が去ったとき（cue 'understood'・'left'）と、箱でツンの間に見送れたとき（cue 'watched'）も）・ビビりの「ビクビク」（耳を伏せている間と addEffect('timid')）<br/>src/render/renderer.js"]
     MAIN -->|"coat, personality, face（顔の形：輪郭4種×耳3種。FACE_SHAPES・EAR_SIZES）"| RENDER
-    RENDER -->|"View.prop（kind, phase, phaseT）。parcel：箱は猫が止まる位置に置いてその日のあいだ動かさず、猫が出て手前に来たら猫の奥に描く。bird：窓の外（部屋の窓の切り抜きの中）に枝・鳥・ガラスのつやを描き、狩りの間は猫の横に「カカカ」。book：膝の上に開いた本（めくる動き・ページ数。猫がのぞき込んでいる間も開いたまま）、本をのぞき込む猫（onBook）は膝の前に座って首をかしげた姿で描き（膝には乗せない）、そのあとは閉じた本を右手に"| PROPS["イベントの小道具：通販の箱（ガムテープ・宛名ラベル・ワレモノ）・詰め物の紙・紙くず・「ドサッ」「？」「カサカサ」／窓の外の枝・小鳥／開いた本・閉じた本<br/>src/render/props.js"]
+    RENDER -->|"View.prop（kind, phase, phaseT）。parcel：箱は猫が止まる位置に置いてその日のあいだ動かさず、猫が出て手前に来たら猫の奥に描く。bird：窓の外（部屋の窓の切り抜きの中）に枝・鳥・ガラスのつやを描き、狩りの間は猫の横に「カカカ」。book：膝の上に開いた本（めくる動き・ページ数。猫がのぞき込んでいる間も開いたまま）、本をのぞき込む猫（peekBook）は膝の前に座って首をかしげた姿で描き（膝には乗せない）、そのあとは閉じた本を右手に"| PROPS["イベントの小道具：通販の箱（ガムテープ・宛名ラベル・ワレモノ）・詰め物の紙・紙くず・「ドサッ」「？」「カサカサ」／窓の外の枝・小鳥／開いた本・閉じた本<br/>src/render/props.js"]
     RENDER -->|"dayTime（タイトル・名前付けは朝）, 夜かどうか"| LIGHT["時間帯の景色：朝→昼→夕方→夜の空の色・太陽／月・部屋にかける薄い色（猫は染めない）・床の日だまり・スタンドライトの明るさ<br/>src/render/daylight.js（daylightAt）"]
     LIGHT -->|"Daylight {phase, skyTop, skyBottom, hill, cloud, tint, lamp, sun, patch}"| RENDER
     DATA -->|"DAYLIGHT（時間帯の区切り）"| LIGHT
@@ -149,10 +149,10 @@ stateDiagram-v2
 | GameState | `day`, `trust`, `personality`, `coat`（毛色）, `face`（顔の形 `{ shape, ears }`）, `catName`（名前）, `nightChoice`, `mistakes`, `seenCards`（表示済みの説明）, `seed`, `events`（日ごとのイベント。添字は日−1、なければ null）, `dere`・`handsOk`（ツンデレがデレた・ビビりの手が平気になったか。一度 true になったら戻らない。ツンのない性格の dere、手がこわくない性格の handsOk は、1日目から true） | `src/main.js` の `session.game`（更新は `progression.js` が返す） |
 | Session | `game`（GameState）, `misses`（猫の様子ごとの失敗回数。ヒント用） | `src/main.js` |
 | DayState | `dayNumber`, `trust`, `wariness`, `timeLeft`, `trustRate`（その日の DAYS の trustMul。1〜2日目は ×1.2。おやつの翌日はさらに ×0.85）, `lapTrust`（膝に乗る信頼。DAYS の lapTrust、なければ100。3日目は85）, `boxLockLeft`, `floorBonus`（おやつの日に距離の下限を近くする分）, `mistakes`, `actions`, `signs`, `canLap`, `approachMul`, `event`（その日のイベント。なければ null）, `dere`・`handsOk`（startDay が GameState と信頼から決め、昼の間に境目を越えたら dayScene が true にする。デバッグで性格を切り替えたら、dayScene が新しい性格と今の信頼で決め直す） | `src/scenes/dayScene.js` |
-| CatState | `mode`（relax／look／tailUp／tailFlick／belly／backTurn／rub／fakeRub／purr／flee／inBox／lap。読書中だけ onBook（膝の前で本をのぞき込む。日が終わるときは relax として渡す））, `distance`, `modeTimeLeft`, `walking`（くつろぎで歩いて近づいている間 true。描画で歩く姿にする）。夜の画面の猫だけ `hidden`（帰っていて見えない。`nightCatPose` が付け、描画でその場で消す） | `src/scenes/dayScene.js`（更新は `catBrain.js` / `rules.js` が返す） |
+| CatState | `mode`（relax／look／tailUp／tailFlick／belly／backTurn／rub／fakeRub／purr／flee／inBox／lap。読書中だけ peekBook（膝の前で本をのぞき込む。日が終わるときは relax として渡す））, `distance`, `modeTimeLeft`, `walking`（くつろぎで歩いて近づいている間 true。描画で歩く姿にする）。夜の画面の猫だけ `hidden`（帰っていて見えない。`nightCatPose` が付け、描画でその場で消す） | `src/scenes/dayScene.js`（更新は `catBrain.js` / `rules.js` が返す） |
 | Action | `{ type: 'pet' }` / `{ type: 'blink', holdMs, sawLook }` / `{ type: 'page' }`（読書中に本をタップ） | `src/ui/input.js` が作り、`sawLook` と `page` は `src/scenes/dayScene.js` が付ける・作る |
 | View | `{ scene, cat, coat, face, personality, wariness, closeup, blinkHoldMs, lapTime, endingId, dayTime, shy, prop }`（dayTime・shy・prop は昼の画面だけ。prop はイベントの小道具。dayTime はその日の進み具合 0〜1、shy はツンデレのツンの間か） | 各画面の `view()` と `src/main.js` が作り、`src/render/renderer.js` が描く |
-| EventState | `id`（box／bird／read）, `phase`（箱：approach／arrive／hop／hide／peek／happy／out。鳥：approach／arrive／hunt／leave／turn／happy／shy／out。読書：read／onBook／out）, `phaseT`（いまの phase の経過秒）, `blinks`（通じたまばたきの回数。箱では、ツンの間に見送れた回数も足す）, `done`（終わったら true。いつもの日の動きに戻る）。箱だけ `hideFor`（今回もぐる長さ）、鳥だけ `round`（鳥が来て去った回数。触って邪魔した回も数える）・`watched`（狩りを最後まで見守れた回数。0 から 1 になる回に、わかってくれたごほうび）・`huntFor`（今回の狩りの長さ）。読書だけ `readLeft`（ページをめくってから、まだ読んでいる残り秒）・`pages`（めくったページ数）・`wondered`（読むのをやめて「……？」となったか） | `src/game/events.js`（昼の画面が持つ） |
+| EventState | `id`（box／bird／read）, `phase`（箱：approach／arrive／hop／hide／peek／happy／out。鳥：approach／arrive／hunt／leave／turn／happy／shy／out。読書：read／peekBook／out）, `phaseT`（いまの phase の経過秒）, `blinks`（通じたまばたきの回数。箱では、ツンの間に見送れた回数も足す）, `done`（終わったら true。いつもの日の動きに戻る）。箱だけ `hideFor`（今回もぐる長さ）、鳥だけ `round`（鳥が来て去った回数。触って邪魔した回も数える）・`watched`（狩りを最後まで見守れた回数。0 から 1 になる回に、わかってくれたごほうび）・`huntFor`（今回の狩りの長さ）。読書だけ `readLeft`（ページをめくってから、まだ読んでいる残り秒）・`pages`（めくったページ数）・`wondered`（読むのをやめて「……？」となったか） | `src/game/events.js`（昼の画面が持つ） |
 | ActionResult | `{ cat, day, feedback: 'flee' \| 'kick' \| 'hide' \| 'stare' \| 'blinkBack' \| 'blinkAway' \| 'purr' \| 'timid' \| 'tooFar' \| null, mistake }` | `src/game/rules.js` が返す |
 | DayResult | `{ lapped, trust, mistakes, dere, handsOk, cat }`（cat は昼の終わりの `{mode, distance, walking}`。progression は使わず、main.js が夜の画面に渡す） | `src/scenes/dayScene.js` が作る |
 | NightChoice | `'treat' \| 'box' \| 'nothing'` | `src/scenes/nightScene.js` が作る |

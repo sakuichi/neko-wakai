@@ -27,7 +27,7 @@ export function createEventState(id) {
  * @returns {{ev, cat, day, cues: string[]}} cues：この tick で起きたこと
  *   箱：'drop' 箱が置かれた / 'hid' もぐった / 'peek' 顔を出した / 'watched' ツンの間に、まばたきせずに見送れた / 'out' 出てきた
  *   鳥：'hunt' 狩りを始めた / 'understood' 初めて見守れて、鳥が去った（わかってくれた） / 'left' 2回目以降に見守れて、鳥が去った
- *   読書：'wonder' 初めて読むのをやめた（……？） / 'onBook' 膝の前まで来て、本をのぞき込んできた
+ *   読書：'wonder' 初めて読むのをやめた（……？） / 'peekBook' 膝の前まで来て、本をのぞき込んできた
  */
 export function eventTick(ev, cat, day, personality, dt, rng) {
   const a = ambient(day, dt);
@@ -188,7 +188,7 @@ function birdTick(e, c, d, personality, dt, rng, calm) {
   }
 }
 
-// 読書中：読んでいる（ページをめくってから readSec の）間だけ、いつもの距離の下限を気にせず近づく。膝の前（距離0）まで来たら、本をのぞき込む（onBook。膝には乗らない）
+// 読書中：読んでいる（ページをめくってから readSec の）間だけ、いつもの距離の下限を気にせず近づく。膝の前（距離0）まで来たら、本をのぞき込む（peekBook。膝には乗らない）
 // reading：この tick のはじめに読んでいたか（readLeft は eventTick で減らしてある）
 function readTick(e, c, d, personality, dt, rng, calm, reading) {
   const P = EVENTS.read;
@@ -208,13 +208,13 @@ function readTick(e, c, d, personality, dt, rng, calm, reading) {
       }
     }
     if (c.distance <= 0) {
-      e = { ...e, phase: 'onBook', phaseT: 0 };
+      e = { ...e, phase: 'peekBook', phaseT: 0 };
       d = { ...d, trust: clamp(d.trust + P.doneTrust * d.trustRate) };
       c.walking = false;
-      cues.push('onBook');
+      cues.push('peekBook');
     }
-  } else if (e.phase === 'onBook') {
-    if (e.phaseT >= P.onBookSec) {
+  } else if (e.phase === 'peekBook') {
+    if (e.phaseT >= P.peekBookSec) {
       // のぞき込むのをやめる。信頼が膝に乗る信頼（ふつうは100）なら、そのまま膝に乗って和解（いつもの膝の流れ）
       e = { ...e, phase: 'out', phaseT: 0, done: true };
       const lap = d.canLap && d.trust >= (d.lapTrust ?? MAX_VALUE);
@@ -223,8 +223,8 @@ function readTick(e, c, d, personality, dt, rng, calm, reading) {
       return { ev: e, cat: c, day: d, cues };
     }
   }
-  if (e.phase === 'onBook') {
-    c.mode = 'onBook';
+  if (e.phase === 'peekBook') {
+    c.mode = 'peekBook';
     c.distance = 0;
   }
   return { ev: e, cat: c, day: d, cues };
@@ -254,8 +254,8 @@ export function eventAct(action, ev, cat, day, personality) {
 
 // 読書中：読んでいる間の猫は、くつろいでいるのと同じ（触ると逃げてミス、まばたきは「じっと見つめる」）。本をのぞき込んでいる間は何も起きない
 function readAct(action, ev, cat, day, personality) {
-  const r = applyAction(action, { ...cat, mode: ev.phase === 'onBook' ? 'lap' : 'relax' }, day, personality);
-  if (ev.phase === 'onBook') return { ev, cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
+  const r = applyAction(action, { ...cat, mode: ev.phase === 'peekBook' ? 'lap' : 'relax' }, day, personality);
+  if (ev.phase === 'peekBook') return { ev, cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
   return { ev, cat: r.cat, day: r.day, feedback: r.feedback, mistake: r.mistake };
 }
 

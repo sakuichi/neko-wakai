@@ -95,8 +95,8 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
       mistakes: day.mistakes,
       dere: day.dere,
       handsOk: day.handsOk,
-      // 本をのぞき込む姿（onBook）は読書中の昼だけの姿。夜の画面には、膝の前でくつろいでいる姿として渡す
-      cat: { mode: cat.mode === 'onBook' ? 'relax' : cat.mode, distance: cat.distance, walking: !!cat.walking },
+      // 本をのぞき込む姿（peekBook）は読書中の昼だけの姿。夜の画面には、膝の前でくつろいでいる姿として渡す
+      cat: { mode: cat.mode === 'peekBook' ? 'relax' : cat.mode, distance: cat.distance, walking: !!cat.walking },
     });
   }
 
@@ -251,7 +251,7 @@ export function createDayScene({ session, overlay, hud, renderer, input, sound, 
         return;
       }
       // 猫が本をのぞき込んでいる間と、やめた直後は、本のあった場所のタップを猫へのタッチにしない（連打していた指で触ってしまわないように）
-      const guarding = ev?.id === 'read' && (ev.done ? elapsed < bookGuardUntil : ev.phase === 'onBook');
+      const guarding = ev?.id === 'read' && (ev.done ? elapsed < bookGuardUntil : ev.phase === 'peekBook');
       if (guarding && renderer.inBookArea(x, y)) {
         renderer.addEffect('paw', { x, y });
         return;

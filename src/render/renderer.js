@@ -241,7 +241,7 @@ export function createRenderer(canvas) {
     COAT = COATS[coatKey] ?? COATS.chatora;
     const faceKey = fadingOut ? a.fade.face : view.face;
     FACE = faceParams(faceKey);
-    // 読書中に本をのぞき込んでいる猫（onBook）は、膝には乗せず、膝の前（距離0の床）で描く（膝に乗るのは和解のときだけ）
+    // 読書中に本をのぞき込んでいる猫（peekBook）は、膝には乗せず、膝の前（距離0の床）で描く（膝に乗るのは和解のときだけ）
     const cat = fadingOut ? a.fade.pose : poseFor(view);
     // 消えている間は、前の画面の猫の見た目（アップ・寝姿の動き・性格の仕草）のまま描く
     const look = fadingOut
@@ -852,7 +852,7 @@ function drawCat(ctx, mode, k) {
       // 近づいている間は歩く。止まったら香箱座り
       if (k.walking) return walk(ctx, k, breath, personalize(mode, k, {}));
       return loaf(ctx, k, breath, 'sleep', personalize(mode, k, {}).ears);
-    case 'onBook':
+    case 'peekBook':
       // 読書中：膝の前に座って、首をかしげて本をのぞき込む（「チラッ」と見分けがつくよう、目は小さいまま・合図は出さない）
       return sit({ eyes: 'dot', tail: 'sway', tilt: 0.24 + Math.sin(k.t * 1.2) * 0.05 });
     case 'look':
@@ -1495,10 +1495,10 @@ const CLOSED_BOOK_AT = { x: 286, y: 566, angle: 0.22 };
 // ページをめくる動きの長さ
 const FLIP_SEC = 0.35;
 
-// 読んでいる間と、猫が本をのぞき込んでいる間（onBook。ページはめくれない）は、膝の上に開いた本。終わったら閉じて右手に持つ
+// 読んでいる間と、猫が本をのぞき込んでいる間（peekBook。ページはめくれない）は、膝の上に開いた本。終わったら閉じて右手に持つ
 function drawBook(ctx, prop, t) {
   ctx.save();
-  if (prop.phase === 'read' || prop.phase === 'onBook') {
+  if (prop.phase === 'read' || prop.phase === 'peekBook') {
     ctx.translate(BOOK_AT.x, BOOK_AT.y);
     drawOpenBook(ctx, prop.phase === 'read' && prop.flipAt != null ? (t - prop.flipAt) / FLIP_SEC : -1);
     ctx.restore();
