@@ -38,10 +38,10 @@ flowchart TD
     END -->|"makeImage（画像を作る関数）・post・xUrl（「シェア」を押したとき）"| SHAREPANEL
     DATA -->|"SHARE・SHARE_TEXT"| SHARECARD
     DATA -->|"SHARE（画像の大きさ・枠）"| SHAREIMG
-    DATA -->|"SHARE_TEXT・SHARE.fileName"| SHAREPANEL
-    SHAREIMG -->|"PNG の data URL／null"| SHAREPANEL["シェア画面（画像・Xに投稿・画像を保存・コピー・とじる）。ボタンを押したときだけ外へ出る<br/>src/ui/sharePanel.js"]
+    DATA -->|"SHARE_TEXT・SHARE.fileName・SHARE.copyWaitSec"| SHAREPANEL
+    SHAREIMG -->|"PNG の data URL／null"| SHAREPANEL["シェア画面（画像・Xに投稿・画像を保存・コピー・とじる）。ボタンを押したときだけ外へ出る。出かたは端末で変える（スマホの「Xに投稿」＝共有メニューに画像と文／PC＝画像をコピーしてからX／iPhoneの「画像を保存」＝共有メニューに画像。使えなければ、文だけのXとダウンロード）<br/>src/ui/sharePanel.js"]
     SHARECARD -->|"投稿文, XのURL"| SHAREPANEL
-    SHAREPANEL -->|"押したときだけ"| SHAREOUT["Xの投稿画面（新しいタブ）／画像の保存／クリップボード"]
+    SHAREPANEL -->|"押したときだけ"| SHAREOUT["共有メニュー（画像・文）／Xの投稿画面（新しいタブ）／画像の保存／クリップボード（文・画像）"]
 
     INPUT["入力変換（タップ・クリック・キー）<br/>src/ui/input.js"] -->|"Action {type: pet / blink, holdMs}"| DAY
     DAY -->|"blink に sawLook（押している間に目が合ったか）を付ける"| DAY
@@ -222,6 +222,7 @@ stateDiagram-v2
 - 時間帯の景色：`tests/daylight.test.js` は、朝・昼・夕方・夜の名前と空の色、なめらかに変わること、部屋にかける色が薄いこと（0〜0.15）、スタンドライトが夕方からつくこと、太陽と月が窓の中にあることを確かめる
 - 紙芝居：`tests/story.test.js` は、イントロが何回目でも出てスキップで名前付けに進むこと（bundle() を偽の画面で起動して確かめる）、猫がいない庭に影を描かないこと、紙芝居の送り方（自動で進む秒数・タップ待ち・出てすぐのタップを無視・スキップ）と onDone が1回だけなこと、通い猫の「もうすぐ／まだ遠い」の境目（信頼70）、和解と通い猫のエピローグの流れ（夕方→夜、昼の最後の位置から窓へ歩いて消える）、結果画面の背景、枝がいつも（夜も）描かれることを確かめる
 - シェア：`tests/share.test.js` は、画像の文と投稿文、XのURLの変換、猫の名前が投稿文に入らないこと、押すまで何も起きず押した回だけ働くこと、コピー・X・画像の失敗、文字が枠に収まること、画像を作ってもゲームの描画が変わらないことを確かめる
+- シェアに画像を付ける：`tests/shareSheet.test.js` は、開いただけでは共有・コピーが起きないこと、スマホでは画像と文を1回だけ共有メニューに渡すこと、渡す文とファイル名に猫の名前が入らないこと、iPhoneの保存は画像だけを渡すこと、PCは画像をコピーしてからXを開くこと、使えない・やめた・失敗した・終わらないときの戻り道、連打と途中で閉じたときを確かめる
 - 公開の準備：`tests/publish.test.js` は、`?debug=1` のときだけデバッグパネルが出ること、空の枠を隠すこと、投稿文とリンクに debug が入らないこと、リンク用の情報（OGP）と `SHARE.url` がそろっていること、`ogp.png`・`icon.png` の大きさ、「カカカ」がどの顔・どの立ち位置でも頭と重ならないこと、`tools/ogp/ogp.bundle.js` が最新かを確かめる
 - 公開用のファイル：`tests/site.test.js` は、公開するのが決めた6つだけなこと、元のファイルと中身が同じなこと（限定公開の検索よけの1行を除く）、`game.js` が古い・ファイルが足りない・余計なものがあるときは何も書かずに止まること、Git・通信・削除をしないことを、一時フォルダで確かめる
 - 効果音：`tests/sound.test.js` は、効果音 OFF では「にゃーん」を鳴らさないこと、準備に失敗しても一度だけ知らせて例外を出さないことを確かめる

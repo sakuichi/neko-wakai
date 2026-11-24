@@ -209,6 +209,10 @@ __modules['src/data/params.js'] = (() => {
     url: 'https://sakuichi.github.io/neko-wakai/',
     xIntent: 'https://x.com/intent/post',
     fileName: 'neko-wakai.png',
+    // PC：画像のコピーが終わらなくても、これだけ待ったらXを開く（秒）
+    copyWaitSec: 1,
+    // スマホ：共有メニューがこれだけ終わらないときにまた押したら、使えないものとして、文だけのX・ダウンロードに切り替える（秒）
+    sheetWaitSec: 3,
     // 画像の大きさ（4:5）と、その中の猫の絵の枠（角の丸み r）
     image: { w: 1080, h: 1350 },
     picture: { x: 80, y: 340, w: 920, h: 690, r: 48 },
@@ -2536,10 +2540,13 @@ __modules['src/data/texts.js'] = (() => {
     copy: 'コピー',
     close: 'とじる',
     hint: '画像は長押しでも保存できます',
+    hintPc: '「Xに投稿」のあと、貼り付け（Ctrl+V／⌘V）で画像が付きます',
     alt: 'シェアする画像',
     copied: '文をコピーしました',
     copyFailed: 'コピーできませんでした',
     xFailed: 'Xが開かないときは、「コピー」を使ってください',
+    xPaste: '画像をコピーしました。Xの投稿欄で貼り付けてください',
+    xNoImage: '画像は付いていません。「画像を保存」してから付けてください',
     saved: '保存できないときは、画像を長押ししてください',
     saveFailed: '画像を保存できませんでした',
     imageFailed: '画像を作れませんでした',
