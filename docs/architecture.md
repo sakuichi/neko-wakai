@@ -124,6 +124,19 @@ flowchart LR
     DATA5["公開 URL SHARE.url<br/>src/data/params.js"] -.->|"同じ URL を書く（テストで確かめる）"| HTML3
 ```
 
+### 公開（限定公開・告知）
+
+```mermaid
+flowchart LR
+    HTML4["画面の土台・リンク用の情報<br/>index.html"] --> SITE["公開用のファイルを作る（Git・通信・削除はしない。おかしければ何も書かずに止まる。index.html は最後に書く）<br/>tools/site.js（npm run site）"]
+    GAME4["ゲーム本体（生成物）<br/>game.js"] --> SITE
+    ASSET4["見た目・絵・アイコン<br/>style.css<br/>ogp.png<br/>icon.png"] --> SITE
+    BUILD4["src/ から作った game.js の中身<br/>tools/build.js（bundle）"] -->|"game.js が最新か確かめる"| SITE
+    SITE -->|"5ファイルと空の .nojekyll（限定公開の間は index.html に noindex を足す）"| DIST["公開用フォルダ<br/>dist/（Git に入れない）"]
+    DIST -->|"承認を得てから、手で push"| PAGES["公開専用のブランチ<br/>gh-pages"]
+    PAGES -->|"GitHub Pages"| WEB["公開ページ（SHARE.url）"]
+```
+
 ### ねこ手帳（第3弾：思い出・図鑑・称号）
 
 ```mermaid
@@ -210,5 +223,6 @@ stateDiagram-v2
 - 紙芝居：`tests/story.test.js` は、イントロが何回目でも出てスキップで名前付けに進むこと（bundle() を偽の画面で起動して確かめる）、猫がいない庭に影を描かないこと、紙芝居の送り方（自動で進む秒数・タップ待ち・出てすぐのタップを無視・スキップ）と onDone が1回だけなこと、通い猫の「もうすぐ／まだ遠い」の境目（信頼70）、和解と通い猫のエピローグの流れ（夕方→夜、昼の最後の位置から窓へ歩いて消える）、結果画面の背景、枝がいつも（夜も）描かれることを確かめる
 - シェア：`tests/share.test.js` は、画像の文と投稿文、XのURLの変換、猫の名前が投稿文に入らないこと、押すまで何も起きず押した回だけ働くこと、コピー・X・画像の失敗、文字が枠に収まること、画像を作ってもゲームの描画が変わらないことを確かめる
 - 公開の準備：`tests/publish.test.js` は、`?debug=1` のときだけデバッグパネルが出ること、空の枠を隠すこと、投稿文とリンクに debug が入らないこと、リンク用の情報（OGP）と `SHARE.url` がそろっていること、`ogp.png`・`icon.png` の大きさ、「カカカ」がどの顔・どの立ち位置でも頭と重ならないこと、`tools/ogp/ogp.bundle.js` が最新かを確かめる
+- 公開用のファイル：`tests/site.test.js` は、公開するのが決めた6つだけなこと、元のファイルと中身が同じなこと（限定公開の検索よけの1行を除く）、`game.js` が古い・ファイルが足りない・余計なものがあるときは何も書かずに止まること、Git・通信・削除をしないことを、一時フォルダで確かめる
 - 効果音：`tests/sound.test.js` は、効果音 OFF では「にゃーん」を鳴らさないこと、準備に失敗しても一度だけ知らせて例外を出さないことを確かめる
 - 画面の確認：`index.html` をダブルクリックで開く（デバッグパネルを使うときは、開いたあとアドレスの最後に `?debug=1` を付ける）
