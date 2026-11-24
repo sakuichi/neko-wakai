@@ -1,5 +1,6 @@
 import { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, PERSONALITY_TIPS, NOTEBOOK_TEXT, TITLES, withName } from '../data/texts.js';
 import { PERSONALITIES } from '../data/params.js';
+import { endingView } from './storySlides.js';
 
 // saved: ねこ手帳に思い出を残せたか。newTitles: 今回新しく手に入れた称号の id（src/game/records.js）
 export function createEndingScene({ screenEl, session, endingId, onRetry, saved = true, newTitles = [] }) {
@@ -65,7 +66,7 @@ export function createEndingScene({ screenEl, session, endingId, onRetry, saved 
     update(dt) {
       t += dt;
     },
-    // 和解した場合は、膝の上で眠り続ける
-    view: () => ({ scene: 'ending', endingId, lapTime: 10 + t }),
+    // 和解した場合は、夜の膝の上で眠り続ける。通い猫は、朝の庭に座っている（src/scenes/storySlides.js）
+    view: () => ({ scene: 'ending', endingId, ...endingView(endingId, t) }),
   };
 }

@@ -115,23 +115,27 @@ export function drawPropText(ctx, text, x, y, size, fit = 1) {
   ctx.restore();
 }
 
+// 窓の外の枝の色（夜は暗くする）
+export const BRANCH_COLOR = { day: '#8a6748', night: '#4a3f52' };
+const LEAF_COLOR = { day: '#9cc58a', night: '#55665e' };
+
 /**
- * 窓の外の木の枝と葉（窓の外に鳥の日）。窓（renderer の drawRoom。x 36〜168, y 76〜194）の座標でそのまま描く。
- * 窓の形で切り抜いた中に描くので、はみ出した分は見えない
+ * 窓の外の木の枝と葉（いつも見えている。鳥の日は、ここに鳥がとまる）。窓（renderer の drawRoom。x -4〜236, y 84〜338）の座標でそのまま描く。
+ * 窓の形で切り抜いた中に描くので、はみ出した分は見えない。画面の左の外から、左の戸の8割くらいまで伸びる
  */
-export function drawBranch(ctx) {
+export function drawBranch(ctx, night = false) {
   ctx.save();
-  ctx.strokeStyle = '#8a6748';
+  ctx.strokeStyle = night ? BRANCH_COLOR.night : BRANCH_COLOR.day;
   ctx.lineCap = 'round';
   ctx.lineWidth = 6;
   ctx.beginPath();
-  ctx.moveTo(20, 176);
-  ctx.quadraticCurveTo(80, 166, 150, 172);
+  ctx.moveTo(-20, 180);
+  ctx.quadraticCurveTo(30, 168, 92, 170);
   ctx.stroke();
   ctx.lineWidth = 3;
-  line(ctx, 70, 170, 84, 154);
-  ctx.fillStyle = '#9cc58a';
-  for (const [x, y] of [[86, 151], [52, 168], [128, 166], [100, 175]]) {
+  line(ctx, 40, 172, 52, 156);
+  ctx.fillStyle = night ? LEAF_COLOR.night : LEAF_COLOR.day;
+  for (const [x, y] of [[54, 153], [22, 172], [88, 166], [74, 175]]) {
     ctx.beginPath();
     ctx.ellipse(x, y, 7, 4, -0.4, 0, Math.PI * 2);
     ctx.fill();

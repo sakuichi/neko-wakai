@@ -182,7 +182,27 @@ __modules['src/data/params.js'] = (() => {
     kijitora: 'bibiri',
     kuro: 'bibiri',
   };
-  return { MAX_VALUE, MAX_DAY, RULES, EVENT_DAYS, EVENTS, DAYS, DAYLIGHT, FACES, NIGHT, PERSONALITIES, DEFAULT_PERSONALITY, COAT_PERSONALITY };
+
+  // 紙芝居（イントロ・エピローグ。src/scenes/storyScene.js・storySlides.js）
+  // slideSec・longSlideSec：イントロ1枚目・2枚目（文が長い）の秒数。wipeSec：場面の切り替えで、覆う・戻すそれぞれの秒数
+  // tapIgnoreSec：1枚が出てすぐのタップは無視する秒数。hintAfterSec：タップ待ちの枚で「タップで次へ」を出すまでの秒数
+  // nearTrust：通い猫で「膝に乗ってくれる日も、もうすぐかも」になる最後の信頼（以上）
+  // morning：イントロと、通い猫の次の日の明るさ（朝）。introWindowOpen：イントロ2枚目の窓の開き（少しだけ）
+  // dusk：和解の1枚目の秒数と、夕方になるまでの秒数
+  // leave：通い猫の1枚目。窓を開ける→窓の前まで歩く→振り返る→出ていく（消える）の秒数と、1枚目の秒数
+  const STORY = {
+    slideSec: 3,
+    longSlideSec: 3.6,
+    wipeSec: 0.3,
+    tapIgnoreSec: 0.4,
+    hintAfterSec: 1.2,
+    nearTrust: 70,
+    morning: 0.05,
+    introWindowOpen: 0.45,
+    dusk: { sec: 4.5, toEveningSec: 3.5 },
+    leave: { openSec: 0.6, walkSec: 2.8, lookBackSec: 1.2, outSec: 0.8, sec: 6.4 },
+  };
+  return { MAX_VALUE, MAX_DAY, RULES, EVENT_DAYS, EVENTS, DAYS, DAYLIGHT, FACES, NIGHT, PERSONALITIES, DEFAULT_PERSONALITY, COAT_PERSONALITY, STORY };
 })();
 
 // ---- src/game/rules.js
@@ -474,7 +494,7 @@ __modules['src/render/daylight.js'] = (() => {
   // 昼は 朝 → 昼 → 夕方 となめらかに変わり、夜は夜の景色（夜の画面）。区切りは src/data/params.js の DAYLIGHT
   const { DAYLIGHT } = __modules['src/data/params.js'];
 
-  // 窓の中の座標（窓は x 36〜168・y 76〜194。src/render/renderer.js の drawRoom）
+  // 窓の中の座標（窓は x -4〜236・y 84〜338、空は y 250 まで。src/render/renderer.js の drawRoom）
   const LOOKS = {
     morning: {
       skyTop: '#bfe0f2', skyBottom: '#fde3cf', hill: '#a9cfa0', cloud: 0.4,
@@ -676,23 +696,27 @@ __modules['src/render/props.js'] = (() => {
     ctx.restore();
   }
 
+  // 窓の外の枝の色（夜は暗くする）
+  const BRANCH_COLOR = { day: '#8a6748', night: '#4a3f52' };
+  const LEAF_COLOR = { day: '#9cc58a', night: '#55665e' };
+
   /**
-   * 窓の外の木の枝と葉（窓の外に鳥の日）。窓（renderer の drawRoom。x 36〜168, y 76〜194）の座標でそのまま描く。
-   * 窓の形で切り抜いた中に描くので、はみ出した分は見えない
+   * 窓の外の木の枝と葉（いつも見えている。鳥の日は、ここに鳥がとまる）。窓（renderer の drawRoom。x -4〜236, y 84〜338）の座標でそのまま描く。
+   * 窓の形で切り抜いた中に描くので、はみ出した分は見えない。画面の左の外から、左の戸の8割くらいまで伸びる
    */
-  function drawBranch(ctx) {
+  function drawBranch(ctx, night = false) {
     ctx.save();
-    ctx.strokeStyle = '#8a6748';
+    ctx.strokeStyle = night ? BRANCH_COLOR.night : BRANCH_COLOR.day;
     ctx.lineCap = 'round';
     ctx.lineWidth = 6;
     ctx.beginPath();
-    ctx.moveTo(20, 176);
-    ctx.quadraticCurveTo(80, 166, 150, 172);
+    ctx.moveTo(-20, 180);
+    ctx.quadraticCurveTo(30, 168, 92, 170);
     ctx.stroke();
     ctx.lineWidth = 3;
-    line(ctx, 70, 170, 84, 154);
-    ctx.fillStyle = '#9cc58a';
-    for (const [x, y] of [[86, 151], [52, 168], [128, 166], [100, 175]]) {
+    line(ctx, 40, 172, 52, 156);
+    ctx.fillStyle = night ? LEAF_COLOR.night : LEAF_COLOR.day;
+    for (const [x, y] of [[54, 153], [22, 172], [88, 166], [74, 175]]) {
       ctx.beginPath();
       ctx.ellipse(x, y, 7, 4, -0.4, 0, Math.PI * 2);
       ctx.fill();
@@ -823,7 +847,7 @@ __modules['src/render/props.js'] = (() => {
     ctx.stroke();
     ctx.restore();
   }
-  return { drawParcel, drawPaperBits, drawPropText, drawBranch, drawBird, drawOpenBook, drawClosedBook };
+  return { drawParcel, drawPaperBits, drawPropText, BRANCH_COLOR, drawBranch, drawBird, drawOpenBook, drawClosedBook };
 })();
 
 // ---- src/render/renderer.js
@@ -1077,7 +1101,10 @@ __modules['src/render/renderer.js'] = (() => {
       const look = fadingOut
         ? a.fade.look
         : { closeup: !!view.closeup, lapT: view.lapTime ?? 0, personality: view.personality, wariness: view.wariness ?? 0, shy: !!view.shy };
-      a.last = { pose: cat, coat: coatKey, face: faceKey, look };
+      // 紙芝居（イントロ・エピローグ）と結果画面では、猫を描く位置を直接決める（view.catAt { x, y, s, alpha, outside }。src/scenes/storySlides.js）。
+      // 消えている間は、前の画面で描いていた位置のまま
+      const at = fadingOut ? a.fade.at : !look.closeup ? view.catAt : null;
+      a.last = { pose: cat, coat: coatKey, face: faceKey, look, at };
       a.shown = { alpha, coat: coatKey, face: faceKey, mode: cat.mode };
       if (cat.mode !== a.lastMode) {
         a.lastMode = cat.mode;
@@ -1104,24 +1131,12 @@ __modules['src/render/renderer.js'] = (() => {
       else if (view.scene === 'title' || view.scene === 'name') a.dayTime = 0;
       // イベントの小道具の状態を先に進める（窓の外の鳥は、部屋といっしょに描く）
       const prop = updateProp(view, t);
-      drawRoom(ctx, daylightAt(a.dayTime, view.scene === 'night'), prop?.kind === 'bird' ? (g) => drawWindowBird(g, prop, t) : null);
-      // なでようと手を伸ばしている間は、左手を膝から離す（腕が3本に見えないように）
-      const reaching = a.effects.some((e) => e.type === 'reach' && t - e.t0 < REACH_SEC);
-      const lap = () => {
-        if (!look.closeup) drawLap(ctx, { leftHand: !reaching });
-      };
-
-      const p = look.closeup ? CLOSEUP : catPosition(a.shownDistance);
+      const p = look.closeup ? CLOSEUP : at ? { x: at.x, y: at.y, s: at.s } : catPosition(a.shownDistance);
       const dx = a.shownP ? p.x - a.shownP.x : 0;
       const facingTo = cat.walking && Math.abs(dx) > 0.02 ? Math.sign(dx) : 0;
       a.facing += (facingTo - a.facing) * clamp01(dt * 6);
       a.shownP = p;
-      // 膝に乗るまでは、猫は膝の奥（膝を手前に描く）。跳び乗ったら膝の上（猫を手前に描く）
-      const onLap = cat.mode === 'lap' && a.lapBlend > 0.6;
-      if (onLap) lap();
-      // イベントの小道具：猫より奥に置くもの（猫が箱から出たあとの空の箱）を先に描く
-      if (prop && propBehind(prop, cat)) drawProp(ctx, prop, t, p);
-      withAlpha(alpha, (g) => {
+      const paintCat = () => withAlpha(alpha * (at?.alpha ?? 1), (g) => {
         g.save();
         g.translate(p.x, p.y);
         g.scale(p.s, p.s);
@@ -1142,6 +1157,22 @@ __modules['src/render/renderer.js'] = (() => {
         drawEffects(g, t, p.s, look);
         g.restore();
       });
+      // 庭にいる猫（outside）は、窓の切り抜きの中、ガラスより奥に描く。view.night なら夜（エピローグ・結果画面）
+      drawRoom(ctx, daylightAt(a.dayTime, view.scene === 'night' || !!view.night), prop?.kind === 'bird' ? (g) => drawWindowBird(g, prop, t) : null, {
+        open: view.windowOpen ?? 0,
+        garden: at?.outside ? paintCat : null,
+      });
+      // なでようと手を伸ばしている間は、左手を膝から離す（腕が3本に見えないように）
+      const reaching = a.effects.some((e) => e.type === 'reach' && t - e.t0 < REACH_SEC);
+      const lap = () => {
+        if (!look.closeup) drawLap(ctx, { leftHand: !reaching });
+      };
+      // 膝に乗るまでは、猫は膝の奥（膝を手前に描く）。跳び乗ったら膝の上（猫を手前に描く）
+      const onLap = cat.mode === 'lap' && a.lapBlend > 0.6;
+      if (onLap) lap();
+      // イベントの小道具：猫より奥に置くもの（猫が箱から出たあとの空の箱）を先に描く
+      if (prop && propBehind(prop, cat)) drawProp(ctx, prop, t, p);
+      if (!at?.outside) paintCat();
       // 猫の手前に置くもの（猫が入っている箱）
       if (prop && !propBehind(prop, cat)) drawProp(ctx, prop, t, p);
       if (!onLap) lap();
@@ -1193,6 +1224,7 @@ __modules['src/render/renderer.js'] = (() => {
     function poseFor(view) {
       if (view.scene === 'title') return { mode: 'relax', distance: 55 };
       if (view.scene === 'ending') {
+        if (view.cat) return view.cat;
         return view.endingId === 'visitor' ? { mode: 'tailUp', distance: 55 } : { mode: 'lap', distance: 0 };
       }
       if (view.cat) return view.cat;
@@ -1347,8 +1379,10 @@ __modules['src/render/renderer.js'] = (() => {
     const shownPosition = () => a.shownP;
     // 直前に描いた猫の濃さ・毛色・顔・姿勢 { alpha, coat, face, mode }
     const shownCat = () => a.shown;
+    // いまの明るさ（昼の進み具合 0〜1）。エピローグで、そこから夕方へ進めるため
+    const shownDayTime = () => a.dayTime;
 
-    return { resize, toLogical, hitTestCat, hitTestBook, inBookArea, addEffect, draw, shownPosition, shownCat };
+    return { resize, toLogical, hitTestCat, hitTestBook, inBookArea, addEffect, draw, shownPosition, shownCat, shownDayTime };
   }
 
   // ---------------------------------------------------------------- 部屋（ベタ塗り）
@@ -1386,36 +1420,59 @@ __modules['src/render/renderer.js'] = (() => {
     }
   }
 
+  // 床まである掃き出し窓（1階。外は庭）。x -4〜236・y 84〜338。左端は画面の外に少しはみ出す
+  const WIN = { x: -4, y: 84, w: 240, h: 254 };
+  // 左の戸を開けたときに、右へずらす幅（open = 1 のとき）
+  const WIN_SLIDE = 84;
+  // 窓の外の、空と庭（生け垣）の境目
+  const HORIZON = 250;
+  // 床に置いたものの影
+  const floorShadow = (night) => (night ? 'rgba(0, 0, 0, 0.14)' : 'rgba(170, 120, 72, 0.2)');
+
   // light: 時間帯の景色（src/render/daylight.js の daylightAt）。outside：窓の外に描き足すもの（窓の形で切り抜いた中に、景色のあとで描く）
-  function drawRoom(ctx, light, outside = null) {
+  // win: { open（窓の開き 0〜1。左の戸を右へずらす）, garden（庭にいる猫を描く関数。ガラスより奥に描く） }。遊んでいる間の窓は閉めておく
+  function drawRoom(ctx, light, outside = null, win = {}) {
     const night = light.phase === 'night';
     ctx.fillStyle = night ? '#454160' : '#f7ead8';
     ctx.fillRect(0, 0, W, 345);
 
     // 窓とカーテン
+    const shift = clamp01(win.open ?? 0) * WIN_SLIDE;
+    const mid = WIN.x + WIN.w / 2;
     ctx.save();
-    roundRect(ctx, 36, 76, 132, 118, 10);
+    roundRect(ctx, WIN.x, WIN.y, WIN.w, WIN.h, 8);
     ctx.save();
     ctx.clip();
     drawWindowView(ctx, light);
     outside?.(ctx);
+    win.garden?.(ctx);
+    // ガラス（うっすら白く、つやの線）。開けたところ（左の戸をずらしたすき間）にはガラスがない
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
+    ctx.fillRect(WIN.x + shift, WIN.y, mid + 2 - WIN.x, WIN.h);
+    ctx.fillRect(mid - 2, WIN.y, WIN.x + WIN.w - mid + 2, WIN.h);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = 3;
+    line(ctx, WIN.x + 26 + shift, WIN.y + 50, WIN.x + 46 + shift, WIN.y + 24);
+    line(ctx, mid + 40, WIN.y + 220, mid + 62, WIN.y + 192);
     ctx.restore();
     // 景色を描いたので、窓の形をもう一度なぞって枠を描く
-    roundRect(ctx, 36, 76, 132, 118, 10);
+    roundRect(ctx, WIN.x, WIN.y, WIN.w, WIN.h, 8);
     ctx.lineWidth = 6;
     ctx.strokeStyle = '#fffdf7';
     ctx.stroke();
+    // 2枚の引き戸の枠（左の戸は、開けると右へずれて右の戸の奥に重なる）
     ctx.lineWidth = 4;
-    line(ctx, 102, 78, 102, 192);
-    line(ctx, 38, 135, 166, 135);
+    ctx.strokeStyle = night ? '#d8d0e0' : '#fffdf7';
+    ctx.strokeRect(WIN.x + 2 + shift, WIN.y + 2, mid - WIN.x, WIN.h - 4);
+    ctx.strokeRect(mid - 2, WIN.y + 2, WIN.x + WIN.w - mid, WIN.h - 4);
     ctx.fillStyle = night ? '#9b7a8c' : '#f5c8bf';
     for (const side of [0, 1]) {
-      const x0 = side ? 160 : 24;
+      const x0 = side ? WIN.x + WIN.w - 8 : WIN.x - 12;
       ctx.beginPath();
-      ctx.moveTo(x0, 66);
-      ctx.lineTo(x0 + 20, 66);
-      ctx.quadraticCurveTo(x0 + (side ? 2 : 18), 140, x0 + (side ? 14 : 6), 204);
-      ctx.lineTo(x0 + (side ? 20 : 0), 204);
+      ctx.moveTo(x0, WIN.y - 10);
+      ctx.lineTo(x0 + 20, WIN.y - 10);
+      ctx.quadraticCurveTo(x0 + (side ? 2 : 18), 200, x0 + (side ? 14 : 6), 344);
+      ctx.lineTo(x0 + (side ? 20 : 0), 344);
       ctx.closePath();
       ctx.fill();
     }
@@ -1423,14 +1480,14 @@ __modules['src/render/renderer.js'] = (() => {
 
     // 壁の額（肉球）
     ctx.save();
-    roundRect(ctx, 240, 96, 72, 58, 8);
+    roundRect(ctx, 266, 96, 72, 58, 8);
     ctx.fillStyle = '#fffdf7';
     ctx.fill();
     ctx.lineWidth = 3;
     ctx.strokeStyle = '#d0a57a';
     ctx.stroke();
-    ellipse(ctx, 276, 132, 10, 8, '#f4b6c2');
-    for (const [dx, dy] of [[-12, -10], [-4, -16], [4, -16], [12, -10]]) ellipse(ctx, 276 + dx, 132 + dy, 4, 4.5, '#f4b6c2');
+    ellipse(ctx, 302, 132, 10, 8, '#f4b6c2');
+    for (const [dx, dy] of [[-12, -10], [-4, -16], [4, -16], [12, -10]]) ellipse(ctx, 302 + dx, 132 + dy, 4, 4.5, '#f4b6c2');
     ctx.restore();
 
     // 床
@@ -1447,11 +1504,13 @@ __modules['src/render/renderer.js'] = (() => {
     // 窓から床に差す日だまり（朝は右へ長く、昼は短く、夕方は左へ長く）
     const sp = light.patch;
     if (sp.alpha > 0) {
+      const x0 = WIN.x + 10;
+      const x1 = WIN.x + WIN.w - 10;
       ctx.beginPath();
-      ctx.moveTo(46, 347);
-      ctx.lineTo(158, 347);
-      ctx.lineTo(158 + sp.skew + sp.length * 0.25, 347 + sp.length);
-      ctx.lineTo(46 + sp.skew - sp.length * 0.25, 347 + sp.length);
+      ctx.moveTo(x0, 347);
+      ctx.lineTo(x1, 347);
+      ctx.lineTo(x1 + sp.skew + sp.length * 0.25, 347 + sp.length);
+      ctx.lineTo(x0 + sp.skew - sp.length * 0.25, 347 + sp.length);
       ctx.closePath();
       ctx.fillStyle = rgba(sp.color, sp.alpha);
       ctx.fill();
@@ -1461,16 +1520,18 @@ __modules['src/render/renderer.js'] = (() => {
     ellipse(ctx, 185, 520, 150, 62, night ? '#86677a' : '#f7d4c6');
     ellipse(ctx, 185, 520, 124, 48, null, night ? '#9b7d8e' : '#fae4da', 0, 3);
 
-    // 植木鉢
-    for (const [dx, rot] of [[-8, -0.5], [0, 0], [8, 0.5]]) ellipse(ctx, 318 + dx, 296, 8, 22, '#8dbb7f', null, rot);
+    // 植木鉢（壁ぎわから少し手前の床に置く）
+    ellipse(ctx, PLANT_X, PLANT_FLOOR, 22, 5, floorShadow(night));
+    for (const [dx, rot] of [[-8, -0.5], [0, 0], [8, 0.5]]) ellipse(ctx, PLANT_X + dx, PLANT_FLOOR - 46, 8, 22, '#8dbb7f', null, rot);
     ctx.save();
-    roundRect(ctx, 302, 308, 32, 34, 6);
+    roundRect(ctx, PLANT_X - 16, PLANT_FLOOR - 34, 32, 34, 6);
     ctx.fillStyle = '#dd9469';
     ctx.fill();
     ctx.restore();
 
-    drawStandLight(ctx, light.lamp);
+    drawStandLight(ctx, light.lamp, night);
     // 部屋全体にかける薄い色（朝はやわらかく、夕方は橙色）。猫はこのあとに描くので、猫の色は染めない
+    // （庭にいる猫（win.garden）だけは窓の外の景色の一部なので、景色といっしょに染まる）
     if (light.tint.alpha > 0) {
       ctx.fillStyle = rgba(light.tint.color, light.tint.alpha);
       ctx.fillRect(0, 0, W, H);
@@ -1478,20 +1539,22 @@ __modules['src/render/renderer.js'] = (() => {
     drawLampGlow(ctx, light.lamp);
   }
 
-  // 窓の外：空（上から下へ色を変えた帯）・遠くの丘・雲・太陽（夜は月と星）
+  // 窓の外：空（上から下へ色を変えた帯）・雲・太陽（夜は月と星）・1階から見た庭（奥に生け垣、手前に芝生）・木の枝
   function drawWindowView(ctx, light) {
+    const night = light.phase === 'night';
     const BANDS = 5;
+    const band = (HORIZON - WIN.y) / BANDS;
     for (let i = 0; i < BANDS; i++) {
       ctx.fillStyle = mixColor(light.skyTop, light.skyBottom, i / (BANDS - 1));
-      ctx.fillRect(36, 76 + (118 / BANDS) * i, 132, 118 / BANDS + 1);
+      ctx.fillRect(WIN.x, WIN.y + band * i, WIN.w, band + 1);
     }
     const s = light.sun;
     if (s.kind === 'moon') {
       for (const [x, y] of [[58, 92], [80, 112], [150, 150], [64, 150], [104, 88]]) ellipse(ctx, x, y, 1.6, 1.6, '#fdf6d8');
       ellipse(ctx, s.x, s.y, 11, 11, s.color);
       // 欠けた部分は、月の高さの空の帯と同じ色で塗る
-      const band = Math.min(BANDS - 1, Math.max(0, Math.floor((s.y - 3 - 76) / (118 / BANDS))));
-      ellipse(ctx, s.x + 5, s.y - 3, 9, 9, mixColor(light.skyTop, light.skyBottom, band / (BANDS - 1)));
+      const at = Math.min(BANDS - 1, Math.max(0, Math.floor((s.y - 3 - WIN.y) / band)));
+      ellipse(ctx, s.x + 5, s.y - 3, 9, 9, mixColor(light.skyTop, light.skyBottom, at / (BANDS - 1)));
     } else {
       ellipse(ctx, s.x, s.y, 13, 13, s.color);
     }
@@ -1504,26 +1567,38 @@ __modules['src/render/renderer.js'] = (() => {
       }
       ctx.restore();
     }
-    // 遠くの丘（窓の下のほう）
-    ellipse(ctx, 70, 200, 60, 22, light.hill);
-    ellipse(ctx, 150, 204, 56, 18, light.hill);
+    const lawn = mixColor(light.hill, '#ffffff', night ? 0.05 : 0.22);
+    ctx.fillStyle = lawn;
+    ctx.fillRect(WIN.x, 262, WIN.w, 80);
+    ctx.fillStyle = light.hill;
+    ctx.fillRect(WIN.x, 244, WIN.w, 22);
+    for (let x = WIN.x - 6; x <= WIN.x + WIN.w + 8; x += 18) ellipse(ctx, x, 246, 12, 10, light.hill);
+    // 庭の木の枝は、いつも見えている（鳥の日は、ここに鳥がとまる）
+    drawBranch(ctx, night);
   }
 
-  // スタンドライトの位置（額の下。猫が近づいてくる道すじの後ろに柱が立たないよう、右に寄せる）
-  const LAMP_X = 262;
+  // スタンドライトの位置（額の下。猫が近づいてくる道すじの後ろに柱が立たないよう、右に寄せる）。
+  // 植木鉢と同じく、壁ぎわから少し手前の床に置く。LAMP_Y：かさの下のふち、LAMP_FLOOR：床に着くところ
+  const LAMP_X = 280;
+  const LAMP_Y = 254;
+  const LAMP_FLOOR = 366;
+  // 植木鉢の位置（ライトの右）と、床に着くところ
+  const PLANT_X = 334;
+  const PLANT_FLOOR = 372;
 
   // 部屋の奥のスタンドライト。lamp: 明るさ 0〜1（0 は消えている）
-  function drawStandLight(ctx, lamp) {
+  function drawStandLight(ctx, lamp, night) {
     ctx.save();
+    ellipse(ctx, LAMP_X, LAMP_FLOOR + 2, 18, 4, floorShadow(night));
     ctx.lineWidth = 4;
     ctx.strokeStyle = '#b08c6a';
-    line(ctx, LAMP_X, 222, LAMP_X, 336);
-    ellipse(ctx, LAMP_X, 338, 14, 4, '#b08c6a');
+    line(ctx, LAMP_X, LAMP_Y - 4, LAMP_X, LAMP_FLOOR - 2);
+    ellipse(ctx, LAMP_X, LAMP_FLOOR, 14, 4, '#b08c6a');
     ctx.beginPath();
-    ctx.moveTo(LAMP_X - 16, 202);
-    ctx.lineTo(LAMP_X + 16, 202);
-    ctx.lineTo(LAMP_X + 24, 226);
-    ctx.lineTo(LAMP_X - 24, 226);
+    ctx.moveTo(LAMP_X - 16, LAMP_Y - 24);
+    ctx.lineTo(LAMP_X + 16, LAMP_Y - 24);
+    ctx.lineTo(LAMP_X + 24, LAMP_Y);
+    ctx.lineTo(LAMP_X - 24, LAMP_Y);
     ctx.closePath();
     ctx.fillStyle = mixColor('#f3e3c8', '#fff4c2', lamp);
     ctx.fill();
@@ -1536,8 +1611,8 @@ __modules['src/render/renderer.js'] = (() => {
   // スタンドライトの明かり：かさの周りと床を、暖かい色でほんのり明るくする（ベタ塗りの輪を重ねる）
   function drawLampGlow(ctx, lamp) {
     if (lamp <= 0) return;
-    for (let r = 120; r >= 30; r -= 15) ellipse(ctx, LAMP_X, 226, r, r * 0.8, rgba('#ffd98a', 0.035 * lamp));
-    ellipse(ctx, LAMP_X, 342, 70, 14, rgba('#ffd98a', 0.16 * lamp));
+    for (let r = 120; r >= 30; r -= 15) ellipse(ctx, LAMP_X, LAMP_Y, r, r * 0.8, rgba('#ffd98a', 0.035 * lamp));
+    ellipse(ctx, LAMP_X, LAMP_FLOOR + 4, 70, 14, rgba('#ffd98a', 0.16 * lamp));
   }
 
   // 画面手前の、プレイヤーの膝（正座しているのを上から見たところ）。
@@ -1685,6 +1760,9 @@ __modules['src/render/renderer.js'] = (() => {
       case 'peekBook':
         // 読書中：膝の前に座って、首をかしげて本をのぞき込む（「チラッ」と見分けがつくよう、目は小さいまま・合図は出さない）
         return sit({ eyes: 'dot', tail: 'sway', tilt: 0.24 + Math.sin(k.t * 1.2) * 0.05 });
+      case 'sit':
+        // 紙芝居・結果画面：庭や窓辺に座って、こっちを見ている（「チラッ」の合図は出さない）
+        return sit({ eyes: 'dot', tail: 'sway', tilt: Math.sin(k.t * 1.2) * 0.06 });
       case 'look':
         sit({ eyes: 'dotBig', tail: 'sway', tilt: Math.sin(k.t * 1.5) * 0.07 });
         // 「チラッ」は昼の駆け引きの合図。名前を付けるときのアップでは出さない
@@ -1700,6 +1778,13 @@ __modules['src/render/renderer.js'] = (() => {
         return belly(ctx, k, breath);
       case 'backTurn':
         return backView(ctx, k, breath);
+      case 'walkAway': {
+        // 通い猫のエピローグ：後ろ姿のまま、ちょこちょこ歩いて窓へ向かう
+        const step = k.t * 9;
+        ctx.translate(0, -Math.abs(Math.sin(step)) * 3);
+        ctx.rotate(Math.sin(step) * 0.04);
+        return backView(ctx, k, breath);
+      }
       case 'rub':
         ctx.rotate(Math.sin(k.t * 3) * 0.06);
         return sit({ eyes: 'happy', tail: 'up', tilt: 0.3 + Math.sin(k.t * 3) * 0.1 });
@@ -2262,20 +2347,21 @@ __modules['src/render/renderer.js'] = (() => {
     }
   }
 
-  // 窓の外の鳥：枝にとまる位置。鳥は窓の外にいるので、ガラス越しに小さめに描く
-  const BIRD_PERCH = { x: 122, y: 156 };
+  // 窓の外の鳥：枝にとまる位置（枝の先のほう。src/render/props.js の drawBranch）。鳥は窓の外にいるので、ガラス越しに小さめに描く
+  const BIRD_PERCH = { x: 62, y: 158 };
   const BIRD_SCALE = 0.8;
-  // 鳥が窓のほうへ飛び去る向き（leaveSec でこれだけ動く）
-  const BIRD_AWAY = { x: 70, y: -60 };
+  // 鳥が飛んでくるところ（画面の左の外）
+  const BIRD_FROM_X = -30;
+  // 鳥が飛び去る向き（leaveSec でこれだけ動く。窓の上の外まで出ていく）
+  const BIRD_AWAY = { x: 130, y: -100 };
   // 鳥がいる phase（ここから別の phase に変わったら、飛び去る）
   const BIRD_THERE = ['arrive', 'hunt', 'leave'];
   // 「カカカ」は、KAKA_SEC ごとに KAKA_ON 秒だけ出す（小刻みに鳴いては止む）
   const KAKA_SEC = 1.4;
   const KAKA_ON = 0.9;
 
-  // 窓の外（drawRoom の outside）：枝はその日のあいだずっと。鳥は、飛んできて、とまって、飛び去る。最後にガラスのつやを重ねる
+  // 窓の外（drawRoom の outside）：鳥は、飛んできて、とまって、飛び去る。枝といつものガラスは drawRoom が描く
   function drawWindowBird(ctx, prop, t) {
-    drawBranch(ctx);
     const B = EVENTS.bird;
     const u = t - prop.start;
     let at = null;
@@ -2287,7 +2373,7 @@ __modules['src/render/renderer.js'] = (() => {
     if (prop.phase === 'arrive') {
       // 左から弧を描いて飛んできて、枝にとまる
       const k = clamp01(u / B.arriveSec);
-      at = { x: 10 + (BIRD_PERCH.x - 10) * k, y: BIRD_PERCH.y - 6 - Math.sin(k * Math.PI) * 36 + k * 6 };
+      at = { x: BIRD_FROM_X + (BIRD_PERCH.x - BIRD_FROM_X) * k, y: BIRD_PERCH.y - 6 - Math.sin(k * Math.PI) * 36 + k * 6 };
       flying = k < 1;
     } else if (prop.phase === 'hunt') {
       // 枝の上で、ちょんちょんと動く
@@ -2307,15 +2393,6 @@ __modules['src/render/renderer.js'] = (() => {
       drawBird(ctx, t, flying);
       ctx.restore();
     }
-    // ガラスのつや（鳥と枝がガラスの向こうにあるように見せる）
-    ctx.save();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
-    ctx.fillRect(36, 76, 132, 118);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.lineWidth = 3;
-    line(ctx, 48, 120, 66, 96);
-    line(ctx, 112, 184, 128, 160);
-    ctx.restore();
   }
 
   // 読書中の本：開いた本の真ん中（膝の上）と、その範囲（当たり判定にも使う）。閉じた本は右手に持つ
@@ -2870,7 +2947,19 @@ __modules['src/data/texts.js'] = (() => {
     off: 'BGM OFF',
     aria: (label) => `BGM：${label}（タップで次の曲）`,
   };
-  return { withName, TITLE, DAY_TITLES, NAME_TEXT, TUTORIAL, CARDS, HINTS, FEEDBACK, DERE_TEXT, TIMID_GONE_TEXT, EVENT_TEXT, LAP_TEXT, NIGHT_TEXT, ENDINGS, ENDING_UI, COAT_LABELS, PERSONALITY_TIPS, COAT_LORE, NOTEBOOK_TEXT, TITLES, PAUSE_TEXT, SOUND_LABEL, BGM_TEXT };
+  // 紙芝居（イントロ・エピローグ。src/scenes/storySlides.js）。\n で改行する
+  const STORY_TEXT = {
+    intro: ['ある日から、庭に猫が来るようになった。', '窓を少し開けておいたら、\n部屋の隅まで入ってくるようになった。'],
+    lap: ['そのまま、日が暮れるまで眠っていた。', 'その日から、{name}は\nうちの子になった。'],
+    visitor: ['日が暮れると、{name}は窓から帰っていった。', '次の日も、{name}は遊びに来た。'],
+    near: '膝に乗ってくれる日も、もうすぐかも。',
+    far: '膝に乗ってくれる日は、まだ遠そう。',
+    next: 'タップで次へ',
+    skip: 'スキップ',
+    // デバッグでエピローグをその場から見るとき、まだ名前がなければこの名前にする
+    debugName: 'みかん',
+  };
+  return { withName, TITLE, DAY_TITLES, NAME_TEXT, TUTORIAL, CARDS, HINTS, FEEDBACK, DERE_TEXT, TIMID_GONE_TEXT, EVENT_TEXT, LAP_TEXT, NIGHT_TEXT, ENDINGS, ENDING_UI, COAT_LABELS, PERSONALITY_TIPS, COAT_LORE, NOTEBOOK_TEXT, TITLES, PAUSE_TEXT, SOUND_LABEL, BGM_TEXT, STORY_TEXT };
 })();
 
 // ---- src/game/catBrain.js
@@ -2994,7 +3083,8 @@ __modules['src/ui/debugPanel.js'] = (() => {
   // イベントの日の固定（値は 'イベント:日'。空ならランダム）
   const EVENT_OPTIONS = [['', 'ランダム'], ['box:4', '箱が届いた（4日目）'], ['bird:4', '窓の外に鳥（4日目）'], ['read:4', '読書中（4日目）']];
 
-  function createDebugPanel(el, { onPersonality, onCoat, onFace, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords, onEvent }) {
+  // extra: そのほかのボタン [[文字, 押したときの関数], ...]（イントロ・エピローグをその場から見る）
+  function createDebugPanel(el, { onPersonality, onCoat, onFace, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords, onEvent, extra = [] }) {
     const details = document.createElement('details');
     // スマホ幅ではゲーム画面に重なるので、折りたたんだ状態で始める
     details.open = window.innerWidth >= 800;
@@ -3042,7 +3132,7 @@ __modules['src/ui/debugPanel.js'] = (() => {
     details.append(eventRow);
 
     const buttons = document.createElement('div');
-    for (const [text, fn] of [['次の日へ', onSkipDay], ['信頼MAX', onTrustMax], ['最初から', onReset], ['記録を消す', onClearRecords]]) {
+    for (const [text, fn] of [['次の日へ', onSkipDay], ['信頼MAX', onTrustMax], ['最初から', onReset], ['記録を消す', onClearRecords], ...extra]) {
       const b = document.createElement('button');
       b.type = 'button';
       b.textContent = text;
@@ -4569,7 +4659,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
   const { PERSONALITIES, MAX_VALUE, DAYS, EVENTS } = __modules['src/data/params.js'];
   const { CARDS, TUTORIAL, FEEDBACK, DAY_TITLES, HINTS, LAP_TEXT, DERE_TEXT, TIMID_GONE_TEXT, EVENT_TEXT, withName } = __modules['src/data/texts.js'];
 
-  // 膝に乗ってから結果画面に移るまでの演出時間（ふみふみ → ゴロゴロ → 寝る）
+  // 膝に乗ってから結果画面（エピローグ）に移るまでの演出時間（ふみふみ → ゴロゴロ → 寝る）。エピローグは、この続きから膝の猫を描く（src/scenes/storySlides.js）
   const LAP_SHOW_SEC = 6.5;
   // 膝の上でゴロゴロが始まる時刻（src/render/renderer.js の onLap と合わせる）
   const LAP_PURR_AT = 2.6;
@@ -4853,7 +4943,7 @@ __modules['src/scenes/dayScene.js'] = (() => {
       }),
     };
   }
-  return { soundsFor, createDayScene };
+  return { LAP_SHOW_SEC, soundsFor, createDayScene };
 })();
 
 // ---- src/scenes/nightScene.js
@@ -4907,10 +4997,110 @@ __modules['src/scenes/nightScene.js'] = (() => {
   return { NIGHT_FADE_SEC, nightCatPose, createNightScene };
 })();
 
+// ---- src/scenes/storySlides.js
+__modules['src/scenes/storySlides.js'] = (() => {
+  // 紙芝居（イントロ・エピローグ）の中身。src/scenes/storyScene.js に渡す slides を作る（純粋関数）
+  // Slide: { text, sec（この秒数で自動で次へ）, waitTap（true ならタップを待つ）, view(t) → 描画に渡す View の一部 }
+  // View の一部：cat（姿勢）, catAt（猫を描く位置 { x, y, s, alpha, outside（庭にいる＝窓のガラスより奥に描く） }）,
+  // windowOpen（窓の開き 0〜1）, dayTime（明るさ 0 朝〜1 夕方）, night（夜）, lapTime（膝に乗ってからの秒数）
+  const { STORY, MAX_VALUE } = __modules['src/data/params.js'];
+  const { STORY_TEXT, withName } = __modules['src/data/texts.js'];
+  const { LAP_SHOW_SEC } = __modules['src/scenes/dayScene.js'];
+
+  // 庭（窓の外、芝生の上）に座っている猫
+  const GARDEN = { x: 100, y: 326, s: 0.42, outside: true };
+  // 部屋の隅（いつもの昼のスタートあたり）
+  const CORNER = { x: 214, y: 372, s: 0.55 };
+  // 開けた窓の前（左の戸をずらしたすき間の前）
+  const DOOR = { x: 46, y: 352, s: 0.52 };
+  // 窓から出ていった先（ここへ向かいながら消える）
+  const OUT = { x: 22, y: 340, s: 0.48 };
+  // 昼の最後の位置がわからないとき（デバッグで途中から見るときなど）は、部屋の真ん中あたりから歩き出す
+  const FALLBACK_FROM = { x: 200, y: 450, s: 0.75 };
+  const MORNING = STORY.morning;
+
+  const lerp = (a, b, u) => a + (b - a) * u;
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+  const between = (from, to, u) => ({ x: lerp(from.x, to.x, u), y: lerp(from.y, to.y, u), s: lerp(from.s, to.s, u) });
+  const cat = (mode, distance = MAX_VALUE) => ({ mode, distance });
+  const sitAt = (at) => ({ cat: cat('sit'), catAt: at });
+
+  function introSlides() {
+    return [
+      { text: STORY_TEXT.intro[0], sec: STORY.slideSec, waitTap: false, view: () => ({ dayTime: MORNING, ...sitAt(GARDEN) }) },
+      {
+        text: STORY_TEXT.intro[1],
+        sec: STORY.longSlideSec,
+        waitTap: false,
+        view: () => ({ dayTime: MORNING, windowOpen: STORY.introWindowOpen, cat: cat('relax'), catAt: CORNER }),
+      },
+    ];
+  }
+
+  // from：昼の最後に猫を描いた位置 { x, y, s }（なければ null）。dayTime：昼の最後の明るさ
+  function epilogueSlides({ endingId, trust, name, from, dayTime = 1 }) {
+    return endingId === 'visitor' ? visitorSlides(trust, name, from ?? FALLBACK_FROM) : lapSlides(name, dayTime);
+  }
+
+  // 和解：膝で眠ったまま夕方になり、夜になる
+  function lapSlides(name, dayTime) {
+    const D = STORY.dusk;
+    return [
+      {
+        text: withName(STORY_TEXT.lap[0], name),
+        sec: D.sec,
+        waitTap: false,
+        view: (t) => ({ cat: cat('lap', 0), lapTime: LAP_SHOW_SEC + t, dayTime: lerp(dayTime, 1, clamp01(t / D.toEveningSec)) }),
+      },
+      {
+        text: withName(STORY_TEXT.lap[1], name),
+        waitTap: true,
+        view: (t) => ({ cat: cat('lap', 0), lapTime: LAP_SHOW_SEC + D.sec + t, night: true }),
+      },
+    ];
+  }
+
+  // 通い猫：窓を開ける → 窓の前まで後ろ姿で歩く → 振り返る → 出ていく。次の朝、また庭に来ている
+  function visitorSlides(trust, name, start) {
+    const L = STORY.leave;
+    const walkEnd = L.openSec + L.walkSec;
+    const lookEnd = walkEnd + L.lookBackSec;
+    return [
+      {
+        text: withName(STORY_TEXT.visitor[0], name),
+        sec: L.sec,
+        waitTap: false,
+        view: (t) => {
+          const base = { dayTime: 1, windowOpen: clamp01(t / L.openSec) };
+          if (t < L.openSec) return { ...base, ...sitAt({ x: start.x, y: start.y, s: start.s }) };
+          if (t < walkEnd) return { ...base, cat: cat('walkAway'), catAt: between(start, DOOR, (t - L.openSec) / L.walkSec) };
+          if (t < lookEnd) return { ...base, ...sitAt(DOOR) };
+          // 出ていき終わったら、計算の誤差を残さず、ちょうど見えなくする
+          const u = t >= lookEnd + L.outSec ? 1 : clamp01((t - lookEnd) / L.outSec);
+          return { ...base, cat: cat('walkAway'), catAt: { ...between(DOOR, OUT, u), alpha: 1 - u } };
+        },
+      },
+      {
+        text: `${withName(STORY_TEXT.visitor[1], name)}\n${trust >= STORY.nearTrust ? STORY_TEXT.near : STORY_TEXT.far}`,
+        waitTap: true,
+        view: () => ({ dayTime: MORNING, ...sitAt(GARDEN) }),
+      },
+    ];
+  }
+
+  // 結果画面の背景：通い猫は朝の庭に座っている。和解は、夜の膝の上で眠り続ける
+  function endingView(endingId, t) {
+    if (endingId === 'visitor') return { dayTime: MORNING, ...sitAt(GARDEN) };
+    return { cat: cat('lap', 0), lapTime: LAP_SHOW_SEC + STORY.dusk.sec + t, night: true };
+  }
+  return { introSlides, epilogueSlides, endingView };
+})();
+
 // ---- src/scenes/endingScene.js
 __modules['src/scenes/endingScene.js'] = (() => {
   const { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, PERSONALITY_TIPS, NOTEBOOK_TEXT, TITLES, withName } = __modules['src/data/texts.js'];
   const { PERSONALITIES } = __modules['src/data/params.js'];
+  const { endingView } = __modules['src/scenes/storySlides.js'];
 
   // saved: ねこ手帳に思い出を残せたか。newTitles: 今回新しく手に入れた称号の id（src/game/records.js）
   function createEndingScene({ screenEl, session, endingId, onRetry, saved = true, newTitles = [] }) {
@@ -4976,8 +5166,8 @@ __modules['src/scenes/endingScene.js'] = (() => {
       update(dt) {
         t += dt;
       },
-      // 和解した場合は、膝の上で眠り続ける
-      view: () => ({ scene: 'ending', endingId, lapTime: 10 + t }),
+      // 和解した場合は、夜の膝の上で眠り続ける。通い猫は、朝の庭に座っている（src/scenes/storySlides.js）
+      view: () => ({ scene: 'ending', endingId, ...endingView(endingId, t) }),
     };
   }
   return { createEndingScene };
@@ -5238,6 +5428,130 @@ __modules['src/scenes/notebookScene.js'] = (() => {
   return { createNotebookScene };
 })();
 
+// ---- src/scenes/storyScene.js
+__modules['src/scenes/storyScene.js'] = (() => {
+  // 紙芝居（イントロ・エピローグ）。1枚ずつ、文章と部屋の絵（slides[i].view）を出す。中身は src/scenes/storySlides.js
+  // slides: [{ text, sec（この秒数で自動で次へ）, waitTap（true ならタップを待つ）, view(t) }]
+  // タップで次へ（出てすぐ STORY.tapIgnoreSec 未満のタップは無視）。skip が true なら「スキップ」ボタンを出す。
+  // 枚を変えるときは、画面をクリーム色で覆ってから切り替え、戻す（wipeSec ずつ）。fadeIn なら覆った状態から始める。
+  // onDone は、最後の枚から進んだとき（スキップを含む）に1回だけ呼ぶ。stop() で途中でやめたら呼ばない（覆いも片付ける）
+  const { STORY } = __modules['src/data/params.js'];
+  const { STORY_TEXT } = __modules['src/data/texts.js'];
+
+  function createStoryScene({ screenEl, name, slides, onDone, skip = false, fadeIn = false }) {
+    const W = STORY.wipeSec;
+    let i = 0;
+    let t = 0;
+    let done = false;
+    // 切り替え中：{ t（経過秒）, to（切り替え先の枚の番号。slides.length なら終わり）, switched（覆いきって切り替えたか） }
+    let wipe = fadeIn ? { t: W, to: 0, switched: true } : null;
+
+    const node = document.createElement('div');
+    node.className = 'story';
+    // 文章の枠（文と「タップで次へ」）
+    const box = document.createElement('div');
+    box.className = 'story-box';
+    const caption = document.createElement('p');
+    caption.className = 'story-caption';
+    const hint = document.createElement('div');
+    hint.className = 'story-hint';
+    hint.textContent = STORY_TEXT.next;
+    box.append(caption, hint);
+    node.append(box);
+    if (skip) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'story-skip';
+      b.textContent = STORY_TEXT.skip;
+      b.addEventListener('pointerdown', (e) => {
+        // 下の紙芝居のタップ（次へ）にはしない
+        e.stopPropagation();
+        skipToEnd();
+      });
+      // キーボード（Enter・Space）でも押せるように。指やマウスの click（detail 1 以上）は数えない
+      // （前の画面をタップして、指を離したときの click が、ここに届くことがあるため）
+      b.addEventListener('click', (e) => {
+        if (e.detail === 0) skipToEnd();
+      });
+      node.append(b);
+    }
+    node.addEventListener('pointerdown', () => {
+      if (t >= STORY.tapIgnoreSec) go(i + 1);
+    });
+    screenEl.replaceChildren(node);
+    // 覆いは画面全体（#screen の外）に置く。次の場面に移ったあとも、ふわっと戻すため
+    const wipeEl = document.createElement('div');
+    wipeEl.className = 'story-wipe';
+    wipeEl.style.opacity = fadeIn ? '1' : '0';
+    screenEl.parentElement.append(wipeEl);
+    show();
+
+    function show() {
+      caption.textContent = slides[i].text;
+      hint.hidden = true;
+    }
+
+    // 切り替えを始める（終わったあとと、切り替えの途中は受け付けない）
+    function go(next) {
+      if (done || wipe) return;
+      wipe = { t: 0, to: next, switched: false };
+    }
+
+    // スキップ：切り替えの途中でも効かせる。覆っている途中なら行き先を終わりに変え、戻している途中なら、いまの濃さから覆い直す
+    function skipToEnd() {
+      if (done) return;
+      if (wipe && !wipe.switched) wipe.to = slides.length;
+      else wipe = { t: wipe ? 2 * W - wipe.t : 0, to: slides.length, switched: false };
+    }
+
+    function finish() {
+      done = true;
+      wipeEl.style.opacity = '1';
+      onDone();
+      // 次の場面の上で、覆いをふわっと消す
+      wipeEl.style.transition = `opacity ${W}s`;
+      requestAnimationFrame(() => {
+        wipeEl.style.opacity = '0';
+      });
+      // 覆いが消えきるのを待ってから取り除く（余裕をみて2倍待つ）
+      setTimeout(() => wipeEl.remove(), W * 2000);
+    }
+
+    return {
+      name,
+      update(dt) {
+        if (done) return;
+        t += dt;
+        if (wipe) {
+          wipe.t += dt;
+          if (!wipe.switched && wipe.t >= W) {
+            wipe.switched = true;
+            if (wipe.to >= slides.length) {
+              finish();
+              return;
+            }
+            i = wipe.to;
+            t = 0;
+            show();
+          }
+          wipeEl.style.opacity = String(wipe.t < W ? wipe.t / W : Math.max(0, 2 - wipe.t / W));
+          if (wipe.t >= 2 * W) wipe = null;
+        }
+        const s = slides[i];
+        if (!s.waitTap && t >= s.sec) go(i + 1);
+        hint.hidden = !(s.waitTap && t >= STORY.hintAfterSec);
+      },
+      view: () => ({ scene: name, ...slides[i].view(t) }),
+      // 途中でやめる（デバッグで別の場面に移るとき）。onDone は呼ばない
+      stop() {
+        done = true;
+        wipeEl.remove();
+      },
+    };
+  }
+  return { createStoryScene };
+})();
+
 // ---- src/ui/recordStore.js
 __modules['src/ui/recordStore.js'] = (() => {
   // ねこ手帳の記録の保存。保存はこの端末の中だけ（外部には送らない）。
@@ -5295,9 +5609,11 @@ __modules['src/main.js'] = (() => {
   const { createNightScene } = __modules['src/scenes/nightScene.js'];
   const { createEndingScene } = __modules['src/scenes/endingScene.js'];
   const { createNotebookScene } = __modules['src/scenes/notebookScene.js'];
+  const { createStoryScene } = __modules['src/scenes/storyScene.js'];
+  const { introSlides, epilogueSlides } = __modules['src/scenes/storySlides.js'];
   const { addEnding, emptyRecords } = __modules['src/game/records.js'];
   const { loadRecords, saveRecords, clearRecords } = __modules['src/ui/recordStore.js'];
-  const { SOUND_LABEL, PAUSE_TEXT } = __modules['src/data/texts.js'];
+  const { SOUND_LABEL, PAUSE_TEXT, STORY_TEXT } = __modules['src/data/texts.js'];
 
   // 試作中はデバッグパネルを常に表示する。本番では ?debug=1 のときだけ表示する
   const PROTOTYPE = true;
@@ -5382,11 +5698,17 @@ __modules['src/main.js'] = (() => {
 
   // タイトルの画面だけを出す（ねこ手帳から戻るときは、次の猫を選び直さない）
   function showTitle() {
-    scene = createTitleScene({ screenEl, onStart: goName, onNotebook: goNotebook });
+    scene = createTitleScene({ screenEl, onStart: goIntro, onNotebook: goNotebook });
   }
 
   function goNotebook() {
     scene = createNotebookScene({ screenEl, records, onBack: showTitle });
+  }
+
+  // タイトルのあとの紙芝居（毎回出す。スキップできる）
+  function goIntro() {
+    bgmBtn.hidden = false;
+    scene = createStoryScene({ screenEl, name: 'intro', slides: introSlides(), skip: true, fadeIn: true, onDone: goName });
   }
 
   function goName() {
@@ -5414,7 +5736,7 @@ __modules['src/main.js'] = (() => {
         const r = finishDay(session.game, result);
         session.game = r.game;
         if (r.next === 'night') goNight(result.cat);
-        else goEnding(r.endingId);
+        else goEpilogue(r.endingId);
       },
     });
   }
@@ -5430,7 +5752,9 @@ __modules['src/main.js'] = (() => {
     });
   }
 
-  function goEnding(endingId) {
+  // 結果画面の前の紙芝居。思い出は、ここで先に残しておく（紙芝居の途中でページを閉じても消えないように）
+  // from：昼の最後に猫を描いた位置（通い猫は、そこから窓へ歩き出す）
+  function goEpilogue(endingId, from = renderer.shownPosition()) {
     overlay.clear();
     pauseBtn.hidden = true;
     pauseMenu.close();
@@ -5439,7 +5763,32 @@ __modules['src/main.js'] = (() => {
     const r = addEnding(records, { name: g.catName, coat: g.coat, face: g.face, personality: g.personality, endingId, day: g.day, mistakes: g.mistakes, date: today() });
     records = r.records;
     const saved = saveRecords(records);
-    scene = createEndingScene({ screenEl, session, endingId, onRetry: goTitle, saved, newTitles: r.newTitles });
+    const slides = epilogueSlides({ endingId, trust: g.trust, name: g.catName, from, dayTime: renderer.shownDayTime() });
+    scene = createStoryScene({ screenEl, name: 'epilogue', slides, onDone: () => goEnding(endingId, saved, r.newTitles) });
+  }
+
+  function goEnding(endingId, saved, newTitles) {
+    scene = createEndingScene({ screenEl, session, endingId, onRetry: goTitle, saved, newTitles });
+  }
+
+  // デバッグ：いまの場面をやめて、イントロやエピローグをその場から見る
+  function debugStop() {
+    scene.stop?.();
+    overlay.clear();
+    hud.show(false);
+    input.setBlinkEnabled(false);
+    pauseBtn.hidden = true;
+    pauseMenu.close();
+    screenEl.replaceChildren();
+  }
+  function debugEpilogue(endingId, trust) {
+    debugStop();
+    const g = session.game;
+    // 日数はエンディングに合わせる（待てる人間は4〜5日目、通い猫は7日目）
+    session.game = { ...g, catName: g.catName || STORY_TEXT.debugName, day: endingId === 'visitor' ? 7 : 4, trust };
+    bgmBtn.hidden = false;
+    // 名前付けのアップなどから始めても、部屋の真ん中あたりから歩き出す
+    goEpilogue(endingId, null);
   }
 
   // この端末の日付 'YYYY-MM-DD'
@@ -5475,6 +5824,8 @@ __modules['src/main.js'] = (() => {
         session.game = { ...session.game, events: newEvents() };
       },
       onReset() {
+        // 紙芝居の途中なら、覆いも片付ける
+        scene.stop?.();
         screenEl.replaceChildren();
         goTitle();
       },
@@ -5485,6 +5836,13 @@ __modules['src/main.js'] = (() => {
         clearRecords();
         records = emptyRecords();
       },
+      // エピローグのボタンは、ねこ手帳に思い出を1つ残す（ふつうに遊んだときと同じ）
+      extra: [
+        ['イントロ', () => { debugStop(); goIntro(); }],
+        ['和解の結末', () => debugEpilogue('patient', 100)],
+        ['通い猫（もうすぐ）', () => debugEpilogue('visitor', 80)],
+        ['通い猫（まだ遠い）', () => debugEpilogue('visitor', 30)],
+      ],
     });
   }
 

@@ -175,3 +175,23 @@ export const COAT_PERSONALITY = {
   kijitora: 'bibiri',
   kuro: 'bibiri',
 };
+
+// 紙芝居（イントロ・エピローグ。src/scenes/storyScene.js・storySlides.js）
+// slideSec・longSlideSec：イントロ1枚目・2枚目（文が長い）の秒数。wipeSec：場面の切り替えで、覆う・戻すそれぞれの秒数
+// tapIgnoreSec：1枚が出てすぐのタップは無視する秒数。hintAfterSec：タップ待ちの枚で「タップで次へ」を出すまでの秒数
+// nearTrust：通い猫で「膝に乗ってくれる日も、もうすぐかも」になる最後の信頼（以上）
+// morning：イントロと、通い猫の次の日の明るさ（朝）。introWindowOpen：イントロ2枚目の窓の開き（少しだけ）
+// dusk：和解の1枚目の秒数と、夕方になるまでの秒数
+// leave：通い猫の1枚目。窓を開ける→窓の前まで歩く→振り返る→出ていく（消える）の秒数と、1枚目の秒数
+export const STORY = {
+  slideSec: 3,
+  longSlideSec: 3.6,
+  wipeSec: 0.3,
+  tapIgnoreSec: 0.4,
+  hintAfterSec: 1.2,
+  nearTrust: 70,
+  morning: 0.05,
+  introWindowOpen: 0.45,
+  dusk: { sec: 4.5, toEveningSec: 3.5 },
+  leave: { openSec: 0.6, walkSec: 2.8, lookBackSec: 1.2, outSec: 0.8, sec: 6.4 },
+};

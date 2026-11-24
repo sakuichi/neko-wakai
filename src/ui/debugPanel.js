@@ -11,7 +11,8 @@ const EAR_LABELS = { small: '小', normal: '中', big: '大' };
 // イベントの日の固定（値は 'イベント:日'。空ならランダム）
 const EVENT_OPTIONS = [['', 'ランダム'], ['box:4', '箱が届いた（4日目）'], ['bird:4', '窓の外に鳥（4日目）'], ['read:4', '読書中（4日目）']];
 
-export function createDebugPanel(el, { onPersonality, onCoat, onFace, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords, onEvent }) {
+// extra: そのほかのボタン [[文字, 押したときの関数], ...]（イントロ・エピローグをその場から見る）
+export function createDebugPanel(el, { onPersonality, onCoat, onFace, onSkipDay, onTrustMax, onReset, onSpeed, onClearRecords, onEvent, extra = [] }) {
   const details = document.createElement('details');
   // スマホ幅ではゲーム画面に重なるので、折りたたんだ状態で始める
   details.open = window.innerWidth >= 800;
@@ -59,7 +60,7 @@ export function createDebugPanel(el, { onPersonality, onCoat, onFace, onSkipDay,
   details.append(eventRow);
 
   const buttons = document.createElement('div');
-  for (const [text, fn] of [['次の日へ', onSkipDay], ['信頼MAX', onTrustMax], ['最初から', onReset], ['記録を消す', onClearRecords]]) {
+  for (const [text, fn] of [['次の日へ', onSkipDay], ['信頼MAX', onTrustMax], ['最初から', onReset], ['記録を消す', onClearRecords], ...extra]) {
     const b = document.createElement('button');
     b.type = 'button';
     b.textContent = text;

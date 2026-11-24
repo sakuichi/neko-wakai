@@ -247,7 +247,10 @@ export function createRenderer(canvas) {
     const look = fadingOut
       ? a.fade.look
       : { closeup: !!view.closeup, lapT: view.lapTime ?? 0, personality: view.personality, wariness: view.wariness ?? 0, shy: !!view.shy };
-    a.last = { pose: cat, coat: coatKey, face: faceKey, look };
+    // 紙芝居（イントロ・エピローグ）と結果画面では、猫を描く位置を直接決める（view.catAt { x, y, s, alpha, outside }。src/scenes/storySlides.js）。
+    // 消えている間は、前の画面で描いていた位置のまま
+    const at = fadingOut ? a.fade.at : !look.closeup ? view.catAt : null;
+    a.last = { pose: cat, coat: coatKey, face: faceKey, look, at };
     a.shown = { alpha, coat: coatKey, face: faceKey, mode: cat.mode };
     if (cat.mode !== a.lastMode) {
       a.lastMode = cat.mode;
@@ -274,24 +277,12 @@ export function createRenderer(canvas) {
     else if (view.scene === 'title' || view.scene === 'name') a.dayTime = 0;
     // イベントの小道具の状態を先に進める（窓の外の鳥は、部屋といっしょに描く）
     const prop = updateProp(view, t);
-    drawRoom(ctx, daylightAt(a.dayTime, view.scene === 'night'), prop?.kind === 'bird' ? (g) => drawWindowBird(g, prop, t) : null);
-    // なでようと手を伸ばしている間は、左手を膝から離す（腕が3本に見えないように）
-    const reaching = a.effects.some((e) => e.type === 'reach' && t - e.t0 < REACH_SEC);
-    const lap = () => {
-      if (!look.closeup) drawLap(ctx, { leftHand: !reaching });
-    };
-
-    const p = look.closeup ? CLOSEUP : catPosition(a.shownDistance);
+    const p = look.closeup ? CLOSEUP : at ? { x: at.x, y: at.y, s: at.s } : catPosition(a.shownDistance);
     const dx = a.shownP ? p.x - a.shownP.x : 0;
     const facingTo = cat.walking && Math.abs(dx) > 0.02 ? Math.sign(dx) : 0;
     a.facing += (facingTo - a.facing) * clamp01(dt * 6);
     a.shownP = p;
-    // 膝に乗るまでは、猫は膝の奥（膝を手前に描く）。跳び乗ったら膝の上（猫を手前に描く）
-    const onLap = cat.mode === 'lap' && a.lapBlend > 0.6;
-    if (onLap) lap();
-    // イベントの小道具：猫より奥に置くもの（猫が箱から出たあとの空の箱）を先に描く
-    if (prop && propBehind(prop, cat)) drawProp(ctx, prop, t, p);
-    withAlpha(alpha, (g) => {
+    const paintCat = () => withAlpha(alpha * (at?.alpha ?? 1), (g) => {
       g.save();
       g.translate(p.x, p.y);
       g.scale(p.s, p.s);
@@ -312,6 +303,22 @@ export function createRenderer(canvas) {
       drawEffects(g, t, p.s, look);
       g.restore();
     });
+    // 庭にいる猫（outside）は、窓の切り抜きの中、ガラスより奥に描く。view.night なら夜（エピローグ・結果画面）
+    drawRoom(ctx, daylightAt(a.dayTime, view.scene === 'night' || !!view.night), prop?.kind === 'bird' ? (g) => drawWindowBird(g, prop, t) : null, {
+      open: view.windowOpen ?? 0,
+      garden: at?.outside ? paintCat : null,
+    });
+    // なでようと手を伸ばしている間は、左手を膝から離す（腕が3本に見えないように）
+    const reaching = a.effects.some((e) => e.type === 'reach' && t - e.t0 < REACH_SEC);
+    const lap = () => {
+      if (!look.closeup) drawLap(ctx, { leftHand: !reaching });
+    };
+    // 膝に乗るまでは、猫は膝の奥（膝を手前に描く）。跳び乗ったら膝の上（猫を手前に描く）
+    const onLap = cat.mode === 'lap' && a.lapBlend > 0.6;
+    if (onLap) lap();
+    // イベントの小道具：猫より奥に置くもの（猫が箱から出たあとの空の箱）を先に描く
+    if (prop && propBehind(prop, cat)) drawProp(ctx, prop, t, p);
+    if (!at?.outside) paintCat();
     // 猫の手前に置くもの（猫が入っている箱）
     if (prop && !propBehind(prop, cat)) drawProp(ctx, prop, t, p);
     if (!onLap) lap();
@@ -363,6 +370,7 @@ export function createRenderer(canvas) {
   function poseFor(view) {
     if (view.scene === 'title') return { mode: 'relax', distance: 55 };
     if (view.scene === 'ending') {
+      if (view.cat) return view.cat;
       return view.endingId === 'visitor' ? { mode: 'tailUp', distance: 55 } : { mode: 'lap', distance: 0 };
     }
     if (view.cat) return view.cat;
@@ -517,8 +525,10 @@ export function createRenderer(canvas) {
   const shownPosition = () => a.shownP;
   // 直前に描いた猫の濃さ・毛色・顔・姿勢 { alpha, coat, face, mode }
   const shownCat = () => a.shown;
+  // いまの明るさ（昼の進み具合 0〜1）。エピローグで、そこから夕方へ進めるため
+  const shownDayTime = () => a.dayTime;
 
-  return { resize, toLogical, hitTestCat, hitTestBook, inBookArea, addEffect, draw, shownPosition, shownCat };
+  return { resize, toLogical, hitTestCat, hitTestBook, inBookArea, addEffect, draw, shownPosition, shownCat, shownDayTime };
 }
 
 // ---------------------------------------------------------------- 部屋（ベタ塗り）
@@ -556,36 +566,59 @@ export function drawCatPortrait(canvas, coat, { silhouette = false, face = DEFAU
   }
 }
 
+// 床まである掃き出し窓（1階。外は庭）。x -4〜236・y 84〜338。左端は画面の外に少しはみ出す
+const WIN = { x: -4, y: 84, w: 240, h: 254 };
+// 左の戸を開けたときに、右へずらす幅（open = 1 のとき）
+const WIN_SLIDE = 84;
+// 窓の外の、空と庭（生け垣）の境目
+const HORIZON = 250;
+// 床に置いたものの影
+const floorShadow = (night) => (night ? 'rgba(0, 0, 0, 0.14)' : 'rgba(170, 120, 72, 0.2)');
+
 // light: 時間帯の景色（src/render/daylight.js の daylightAt）。outside：窓の外に描き足すもの（窓の形で切り抜いた中に、景色のあとで描く）
-function drawRoom(ctx, light, outside = null) {
+// win: { open（窓の開き 0〜1。左の戸を右へずらす）, garden（庭にいる猫を描く関数。ガラスより奥に描く） }。遊んでいる間の窓は閉めておく
+function drawRoom(ctx, light, outside = null, win = {}) {
   const night = light.phase === 'night';
   ctx.fillStyle = night ? '#454160' : '#f7ead8';
   ctx.fillRect(0, 0, W, 345);
 
   // 窓とカーテン
+  const shift = clamp01(win.open ?? 0) * WIN_SLIDE;
+  const mid = WIN.x + WIN.w / 2;
   ctx.save();
-  roundRect(ctx, 36, 76, 132, 118, 10);
+  roundRect(ctx, WIN.x, WIN.y, WIN.w, WIN.h, 8);
   ctx.save();
   ctx.clip();
   drawWindowView(ctx, light);
   outside?.(ctx);
+  win.garden?.(ctx);
+  // ガラス（うっすら白く、つやの線）。開けたところ（左の戸をずらしたすき間）にはガラスがない
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
+  ctx.fillRect(WIN.x + shift, WIN.y, mid + 2 - WIN.x, WIN.h);
+  ctx.fillRect(mid - 2, WIN.y, WIN.x + WIN.w - mid + 2, WIN.h);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+  ctx.lineWidth = 3;
+  line(ctx, WIN.x + 26 + shift, WIN.y + 50, WIN.x + 46 + shift, WIN.y + 24);
+  line(ctx, mid + 40, WIN.y + 220, mid + 62, WIN.y + 192);
   ctx.restore();
   // 景色を描いたので、窓の形をもう一度なぞって枠を描く
-  roundRect(ctx, 36, 76, 132, 118, 10);
+  roundRect(ctx, WIN.x, WIN.y, WIN.w, WIN.h, 8);
   ctx.lineWidth = 6;
   ctx.strokeStyle = '#fffdf7';
   ctx.stroke();
+  // 2枚の引き戸の枠（左の戸は、開けると右へずれて右の戸の奥に重なる）
   ctx.lineWidth = 4;
-  line(ctx, 102, 78, 102, 192);
-  line(ctx, 38, 135, 166, 135);
+  ctx.strokeStyle = night ? '#d8d0e0' : '#fffdf7';
+  ctx.strokeRect(WIN.x + 2 + shift, WIN.y + 2, mid - WIN.x, WIN.h - 4);
+  ctx.strokeRect(mid - 2, WIN.y + 2, WIN.x + WIN.w - mid, WIN.h - 4);
   ctx.fillStyle = night ? '#9b7a8c' : '#f5c8bf';
   for (const side of [0, 1]) {
-    const x0 = side ? 160 : 24;
+    const x0 = side ? WIN.x + WIN.w - 8 : WIN.x - 12;
     ctx.beginPath();
-    ctx.moveTo(x0, 66);
-    ctx.lineTo(x0 + 20, 66);
-    ctx.quadraticCurveTo(x0 + (side ? 2 : 18), 140, x0 + (side ? 14 : 6), 204);
-    ctx.lineTo(x0 + (side ? 20 : 0), 204);
+    ctx.moveTo(x0, WIN.y - 10);
+    ctx.lineTo(x0 + 20, WIN.y - 10);
+    ctx.quadraticCurveTo(x0 + (side ? 2 : 18), 200, x0 + (side ? 14 : 6), 344);
+    ctx.lineTo(x0 + (side ? 20 : 0), 344);
     ctx.closePath();
     ctx.fill();
   }
@@ -593,14 +626,14 @@ function drawRoom(ctx, light, outside = null) {
 
   // 壁の額（肉球）
   ctx.save();
-  roundRect(ctx, 240, 96, 72, 58, 8);
+  roundRect(ctx, 266, 96, 72, 58, 8);
   ctx.fillStyle = '#fffdf7';
   ctx.fill();
   ctx.lineWidth = 3;
   ctx.strokeStyle = '#d0a57a';
   ctx.stroke();
-  ellipse(ctx, 276, 132, 10, 8, '#f4b6c2');
-  for (const [dx, dy] of [[-12, -10], [-4, -16], [4, -16], [12, -10]]) ellipse(ctx, 276 + dx, 132 + dy, 4, 4.5, '#f4b6c2');
+  ellipse(ctx, 302, 132, 10, 8, '#f4b6c2');
+  for (const [dx, dy] of [[-12, -10], [-4, -16], [4, -16], [12, -10]]) ellipse(ctx, 302 + dx, 132 + dy, 4, 4.5, '#f4b6c2');
   ctx.restore();
 
   // 床
@@ -617,11 +650,13 @@ function drawRoom(ctx, light, outside = null) {
   // 窓から床に差す日だまり（朝は右へ長く、昼は短く、夕方は左へ長く）
   const sp = light.patch;
   if (sp.alpha > 0) {
+    const x0 = WIN.x + 10;
+    const x1 = WIN.x + WIN.w - 10;
     ctx.beginPath();
-    ctx.moveTo(46, 347);
-    ctx.lineTo(158, 347);
-    ctx.lineTo(158 + sp.skew + sp.length * 0.25, 347 + sp.length);
-    ctx.lineTo(46 + sp.skew - sp.length * 0.25, 347 + sp.length);
+    ctx.moveTo(x0, 347);
+    ctx.lineTo(x1, 347);
+    ctx.lineTo(x1 + sp.skew + sp.length * 0.25, 347 + sp.length);
+    ctx.lineTo(x0 + sp.skew - sp.length * 0.25, 347 + sp.length);
     ctx.closePath();
     ctx.fillStyle = rgba(sp.color, sp.alpha);
     ctx.fill();
@@ -631,16 +666,18 @@ function drawRoom(ctx, light, outside = null) {
   ellipse(ctx, 185, 520, 150, 62, night ? '#86677a' : '#f7d4c6');
   ellipse(ctx, 185, 520, 124, 48, null, night ? '#9b7d8e' : '#fae4da', 0, 3);
 
-  // 植木鉢
-  for (const [dx, rot] of [[-8, -0.5], [0, 0], [8, 0.5]]) ellipse(ctx, 318 + dx, 296, 8, 22, '#8dbb7f', null, rot);
+  // 植木鉢（壁ぎわから少し手前の床に置く）
+  ellipse(ctx, PLANT_X, PLANT_FLOOR, 22, 5, floorShadow(night));
+  for (const [dx, rot] of [[-8, -0.5], [0, 0], [8, 0.5]]) ellipse(ctx, PLANT_X + dx, PLANT_FLOOR - 46, 8, 22, '#8dbb7f', null, rot);
   ctx.save();
-  roundRect(ctx, 302, 308, 32, 34, 6);
+  roundRect(ctx, PLANT_X - 16, PLANT_FLOOR - 34, 32, 34, 6);
   ctx.fillStyle = '#dd9469';
   ctx.fill();
   ctx.restore();
 
-  drawStandLight(ctx, light.lamp);
+  drawStandLight(ctx, light.lamp, night);
   // 部屋全体にかける薄い色（朝はやわらかく、夕方は橙色）。猫はこのあとに描くので、猫の色は染めない
+  // （庭にいる猫（win.garden）だけは窓の外の景色の一部なので、景色といっしょに染まる）
   if (light.tint.alpha > 0) {
     ctx.fillStyle = rgba(light.tint.color, light.tint.alpha);
     ctx.fillRect(0, 0, W, H);
@@ -648,20 +685,22 @@ function drawRoom(ctx, light, outside = null) {
   drawLampGlow(ctx, light.lamp);
 }
 
-// 窓の外：空（上から下へ色を変えた帯）・遠くの丘・雲・太陽（夜は月と星）
+// 窓の外：空（上から下へ色を変えた帯）・雲・太陽（夜は月と星）・1階から見た庭（奥に生け垣、手前に芝生）・木の枝
 function drawWindowView(ctx, light) {
+  const night = light.phase === 'night';
   const BANDS = 5;
+  const band = (HORIZON - WIN.y) / BANDS;
   for (let i = 0; i < BANDS; i++) {
     ctx.fillStyle = mixColor(light.skyTop, light.skyBottom, i / (BANDS - 1));
-    ctx.fillRect(36, 76 + (118 / BANDS) * i, 132, 118 / BANDS + 1);
+    ctx.fillRect(WIN.x, WIN.y + band * i, WIN.w, band + 1);
   }
   const s = light.sun;
   if (s.kind === 'moon') {
     for (const [x, y] of [[58, 92], [80, 112], [150, 150], [64, 150], [104, 88]]) ellipse(ctx, x, y, 1.6, 1.6, '#fdf6d8');
     ellipse(ctx, s.x, s.y, 11, 11, s.color);
     // 欠けた部分は、月の高さの空の帯と同じ色で塗る
-    const band = Math.min(BANDS - 1, Math.max(0, Math.floor((s.y - 3 - 76) / (118 / BANDS))));
-    ellipse(ctx, s.x + 5, s.y - 3, 9, 9, mixColor(light.skyTop, light.skyBottom, band / (BANDS - 1)));
+    const at = Math.min(BANDS - 1, Math.max(0, Math.floor((s.y - 3 - WIN.y) / band)));
+    ellipse(ctx, s.x + 5, s.y - 3, 9, 9, mixColor(light.skyTop, light.skyBottom, at / (BANDS - 1)));
   } else {
     ellipse(ctx, s.x, s.y, 13, 13, s.color);
   }
@@ -674,26 +713,38 @@ function drawWindowView(ctx, light) {
     }
     ctx.restore();
   }
-  // 遠くの丘（窓の下のほう）
-  ellipse(ctx, 70, 200, 60, 22, light.hill);
-  ellipse(ctx, 150, 204, 56, 18, light.hill);
+  const lawn = mixColor(light.hill, '#ffffff', night ? 0.05 : 0.22);
+  ctx.fillStyle = lawn;
+  ctx.fillRect(WIN.x, 262, WIN.w, 80);
+  ctx.fillStyle = light.hill;
+  ctx.fillRect(WIN.x, 244, WIN.w, 22);
+  for (let x = WIN.x - 6; x <= WIN.x + WIN.w + 8; x += 18) ellipse(ctx, x, 246, 12, 10, light.hill);
+  // 庭の木の枝は、いつも見えている（鳥の日は、ここに鳥がとまる）
+  drawBranch(ctx, night);
 }
 
-// スタンドライトの位置（額の下。猫が近づいてくる道すじの後ろに柱が立たないよう、右に寄せる）
-const LAMP_X = 262;
+// スタンドライトの位置（額の下。猫が近づいてくる道すじの後ろに柱が立たないよう、右に寄せる）。
+// 植木鉢と同じく、壁ぎわから少し手前の床に置く。LAMP_Y：かさの下のふち、LAMP_FLOOR：床に着くところ
+const LAMP_X = 280;
+const LAMP_Y = 254;
+const LAMP_FLOOR = 366;
+// 植木鉢の位置（ライトの右）と、床に着くところ
+const PLANT_X = 334;
+const PLANT_FLOOR = 372;
 
 // 部屋の奥のスタンドライト。lamp: 明るさ 0〜1（0 は消えている）
-function drawStandLight(ctx, lamp) {
+function drawStandLight(ctx, lamp, night) {
   ctx.save();
+  ellipse(ctx, LAMP_X, LAMP_FLOOR + 2, 18, 4, floorShadow(night));
   ctx.lineWidth = 4;
   ctx.strokeStyle = '#b08c6a';
-  line(ctx, LAMP_X, 222, LAMP_X, 336);
-  ellipse(ctx, LAMP_X, 338, 14, 4, '#b08c6a');
+  line(ctx, LAMP_X, LAMP_Y - 4, LAMP_X, LAMP_FLOOR - 2);
+  ellipse(ctx, LAMP_X, LAMP_FLOOR, 14, 4, '#b08c6a');
   ctx.beginPath();
-  ctx.moveTo(LAMP_X - 16, 202);
-  ctx.lineTo(LAMP_X + 16, 202);
-  ctx.lineTo(LAMP_X + 24, 226);
-  ctx.lineTo(LAMP_X - 24, 226);
+  ctx.moveTo(LAMP_X - 16, LAMP_Y - 24);
+  ctx.lineTo(LAMP_X + 16, LAMP_Y - 24);
+  ctx.lineTo(LAMP_X + 24, LAMP_Y);
+  ctx.lineTo(LAMP_X - 24, LAMP_Y);
   ctx.closePath();
   ctx.fillStyle = mixColor('#f3e3c8', '#fff4c2', lamp);
   ctx.fill();
@@ -706,8 +757,8 @@ function drawStandLight(ctx, lamp) {
 // スタンドライトの明かり：かさの周りと床を、暖かい色でほんのり明るくする（ベタ塗りの輪を重ねる）
 function drawLampGlow(ctx, lamp) {
   if (lamp <= 0) return;
-  for (let r = 120; r >= 30; r -= 15) ellipse(ctx, LAMP_X, 226, r, r * 0.8, rgba('#ffd98a', 0.035 * lamp));
-  ellipse(ctx, LAMP_X, 342, 70, 14, rgba('#ffd98a', 0.16 * lamp));
+  for (let r = 120; r >= 30; r -= 15) ellipse(ctx, LAMP_X, LAMP_Y, r, r * 0.8, rgba('#ffd98a', 0.035 * lamp));
+  ellipse(ctx, LAMP_X, LAMP_FLOOR + 4, 70, 14, rgba('#ffd98a', 0.16 * lamp));
 }
 
 // 画面手前の、プレイヤーの膝（正座しているのを上から見たところ）。
@@ -855,6 +906,9 @@ function drawCat(ctx, mode, k) {
     case 'peekBook':
       // 読書中：膝の前に座って、首をかしげて本をのぞき込む（「チラッ」と見分けがつくよう、目は小さいまま・合図は出さない）
       return sit({ eyes: 'dot', tail: 'sway', tilt: 0.24 + Math.sin(k.t * 1.2) * 0.05 });
+    case 'sit':
+      // 紙芝居・結果画面：庭や窓辺に座って、こっちを見ている（「チラッ」の合図は出さない）
+      return sit({ eyes: 'dot', tail: 'sway', tilt: Math.sin(k.t * 1.2) * 0.06 });
     case 'look':
       sit({ eyes: 'dotBig', tail: 'sway', tilt: Math.sin(k.t * 1.5) * 0.07 });
       // 「チラッ」は昼の駆け引きの合図。名前を付けるときのアップでは出さない
@@ -870,6 +924,13 @@ function drawCat(ctx, mode, k) {
       return belly(ctx, k, breath);
     case 'backTurn':
       return backView(ctx, k, breath);
+    case 'walkAway': {
+      // 通い猫のエピローグ：後ろ姿のまま、ちょこちょこ歩いて窓へ向かう
+      const step = k.t * 9;
+      ctx.translate(0, -Math.abs(Math.sin(step)) * 3);
+      ctx.rotate(Math.sin(step) * 0.04);
+      return backView(ctx, k, breath);
+    }
     case 'rub':
       ctx.rotate(Math.sin(k.t * 3) * 0.06);
       return sit({ eyes: 'happy', tail: 'up', tilt: 0.3 + Math.sin(k.t * 3) * 0.1 });
@@ -1432,20 +1493,21 @@ function drawProp(ctx, prop, t, p) {
   }
 }
 
-// 窓の外の鳥：枝にとまる位置。鳥は窓の外にいるので、ガラス越しに小さめに描く
-const BIRD_PERCH = { x: 122, y: 156 };
+// 窓の外の鳥：枝にとまる位置（枝の先のほう。src/render/props.js の drawBranch）。鳥は窓の外にいるので、ガラス越しに小さめに描く
+const BIRD_PERCH = { x: 62, y: 158 };
 const BIRD_SCALE = 0.8;
-// 鳥が窓のほうへ飛び去る向き（leaveSec でこれだけ動く）
-const BIRD_AWAY = { x: 70, y: -60 };
+// 鳥が飛んでくるところ（画面の左の外）
+const BIRD_FROM_X = -30;
+// 鳥が飛び去る向き（leaveSec でこれだけ動く。窓の上の外まで出ていく）
+const BIRD_AWAY = { x: 130, y: -100 };
 // 鳥がいる phase（ここから別の phase に変わったら、飛び去る）
 const BIRD_THERE = ['arrive', 'hunt', 'leave'];
 // 「カカカ」は、KAKA_SEC ごとに KAKA_ON 秒だけ出す（小刻みに鳴いては止む）
 const KAKA_SEC = 1.4;
 const KAKA_ON = 0.9;
 
-// 窓の外（drawRoom の outside）：枝はその日のあいだずっと。鳥は、飛んできて、とまって、飛び去る。最後にガラスのつやを重ねる
+// 窓の外（drawRoom の outside）：鳥は、飛んできて、とまって、飛び去る。枝といつものガラスは drawRoom が描く
 function drawWindowBird(ctx, prop, t) {
-  drawBranch(ctx);
   const B = EVENTS.bird;
   const u = t - prop.start;
   let at = null;
@@ -1457,7 +1519,7 @@ function drawWindowBird(ctx, prop, t) {
   if (prop.phase === 'arrive') {
     // 左から弧を描いて飛んできて、枝にとまる
     const k = clamp01(u / B.arriveSec);
-    at = { x: 10 + (BIRD_PERCH.x - 10) * k, y: BIRD_PERCH.y - 6 - Math.sin(k * Math.PI) * 36 + k * 6 };
+    at = { x: BIRD_FROM_X + (BIRD_PERCH.x - BIRD_FROM_X) * k, y: BIRD_PERCH.y - 6 - Math.sin(k * Math.PI) * 36 + k * 6 };
     flying = k < 1;
   } else if (prop.phase === 'hunt') {
     // 枝の上で、ちょんちょんと動く
@@ -1477,15 +1539,6 @@ function drawWindowBird(ctx, prop, t) {
     drawBird(ctx, t, flying);
     ctx.restore();
   }
-  // ガラスのつや（鳥と枝がガラスの向こうにあるように見せる）
-  ctx.save();
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
-  ctx.fillRect(36, 76, 132, 118);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-  ctx.lineWidth = 3;
-  line(ctx, 48, 120, 66, 96);
-  line(ctx, 112, 184, 128, 160);
-  ctx.restore();
 }
 
 // 読書中の本：開いた本の真ん中（膝の上）と、その範囲（当たり判定にも使う）。閉じた本は右手に持つ

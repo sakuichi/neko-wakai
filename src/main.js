@@ -16,9 +16,11 @@ import { createDayScene } from './scenes/dayScene.js';
 import { createNightScene } from './scenes/nightScene.js';
 import { createEndingScene } from './scenes/endingScene.js';
 import { createNotebookScene } from './scenes/notebookScene.js';
+import { createStoryScene } from './scenes/storyScene.js';
+import { introSlides, epilogueSlides } from './scenes/storySlides.js';
 import { addEnding, emptyRecords } from './game/records.js';
 import { loadRecords, saveRecords, clearRecords } from './ui/recordStore.js';
-import { SOUND_LABEL, PAUSE_TEXT } from './data/texts.js';
+import { SOUND_LABEL, PAUSE_TEXT, STORY_TEXT } from './data/texts.js';
 
 // 試作中はデバッグパネルを常に表示する。本番では ?debug=1 のときだけ表示する
 const PROTOTYPE = true;
@@ -103,11 +105,17 @@ function goTitle() {
 
 // タイトルの画面だけを出す（ねこ手帳から戻るときは、次の猫を選び直さない）
 function showTitle() {
-  scene = createTitleScene({ screenEl, onStart: goName, onNotebook: goNotebook });
+  scene = createTitleScene({ screenEl, onStart: goIntro, onNotebook: goNotebook });
 }
 
 function goNotebook() {
   scene = createNotebookScene({ screenEl, records, onBack: showTitle });
+}
+
+// タイトルのあとの紙芝居（毎回出す。スキップできる）
+function goIntro() {
+  bgmBtn.hidden = false;
+  scene = createStoryScene({ screenEl, name: 'intro', slides: introSlides(), skip: true, fadeIn: true, onDone: goName });
 }
 
 function goName() {
@@ -135,7 +143,7 @@ function goDay() {
       const r = finishDay(session.game, result);
       session.game = r.game;
       if (r.next === 'night') goNight(result.cat);
-      else goEnding(r.endingId);
+      else goEpilogue(r.endingId);
     },
   });
 }
@@ -151,7 +159,9 @@ function goNight(lastCat) {
   });
 }
 
-function goEnding(endingId) {
+// 結果画面の前の紙芝居。思い出は、ここで先に残しておく（紙芝居の途中でページを閉じても消えないように）
+// from：昼の最後に猫を描いた位置（通い猫は、そこから窓へ歩き出す）
+function goEpilogue(endingId, from = renderer.shownPosition()) {
   overlay.clear();
   pauseBtn.hidden = true;
   pauseMenu.close();
@@ -160,7 +170,32 @@ function goEnding(endingId) {
   const r = addEnding(records, { name: g.catName, coat: g.coat, face: g.face, personality: g.personality, endingId, day: g.day, mistakes: g.mistakes, date: today() });
   records = r.records;
   const saved = saveRecords(records);
-  scene = createEndingScene({ screenEl, session, endingId, onRetry: goTitle, saved, newTitles: r.newTitles });
+  const slides = epilogueSlides({ endingId, trust: g.trust, name: g.catName, from, dayTime: renderer.shownDayTime() });
+  scene = createStoryScene({ screenEl, name: 'epilogue', slides, onDone: () => goEnding(endingId, saved, r.newTitles) });
+}
+
+function goEnding(endingId, saved, newTitles) {
+  scene = createEndingScene({ screenEl, session, endingId, onRetry: goTitle, saved, newTitles });
+}
+
+// デバッグ：いまの場面をやめて、イントロやエピローグをその場から見る
+function debugStop() {
+  scene.stop?.();
+  overlay.clear();
+  hud.show(false);
+  input.setBlinkEnabled(false);
+  pauseBtn.hidden = true;
+  pauseMenu.close();
+  screenEl.replaceChildren();
+}
+function debugEpilogue(endingId, trust) {
+  debugStop();
+  const g = session.game;
+  // 日数はエンディングに合わせる（待てる人間は4〜5日目、通い猫は7日目）
+  session.game = { ...g, catName: g.catName || STORY_TEXT.debugName, day: endingId === 'visitor' ? 7 : 4, trust };
+  bgmBtn.hidden = false;
+  // 名前付けのアップなどから始めても、部屋の真ん中あたりから歩き出す
+  goEpilogue(endingId, null);
 }
 
 // この端末の日付 'YYYY-MM-DD'
@@ -196,6 +231,8 @@ if (SHOW_DEBUG) {
       session.game = { ...session.game, events: newEvents() };
     },
     onReset() {
+      // 紙芝居の途中なら、覆いも片付ける
+      scene.stop?.();
       screenEl.replaceChildren();
       goTitle();
     },
@@ -206,6 +243,13 @@ if (SHOW_DEBUG) {
       clearRecords();
       records = emptyRecords();
     },
+    // エピローグのボタンは、ねこ手帳に思い出を1つ残す（ふつうに遊んだときと同じ）
+    extra: [
+      ['イントロ', () => { debugStop(); goIntro(); }],
+      ['和解の結末', () => debugEpilogue('patient', 100)],
+      ['通い猫（もうすぐ）', () => debugEpilogue('visitor', 80)],
+      ['通い猫（まだ遠い）', () => debugEpilogue('visitor', 30)],
+    ],
   });
 }
 

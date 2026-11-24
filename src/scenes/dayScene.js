@@ -6,8 +6,8 @@ import { createEventState, eventTick, eventAct, eventProp } from '../game/events
 import { PERSONALITIES, MAX_VALUE, DAYS, EVENTS } from '../data/params.js';
 import { CARDS, TUTORIAL, FEEDBACK, DAY_TITLES, HINTS, LAP_TEXT, DERE_TEXT, TIMID_GONE_TEXT, EVENT_TEXT, withName } from '../data/texts.js';
 
-// 膝に乗ってから結果画面に移るまでの演出時間（ふみふみ → ゴロゴロ → 寝る）
-const LAP_SHOW_SEC = 6.5;
+// 膝に乗ってから結果画面（エピローグ）に移るまでの演出時間（ふみふみ → ゴロゴロ → 寝る）。エピローグは、この続きから膝の猫を描く（src/scenes/storySlides.js）
+export const LAP_SHOW_SEC = 6.5;
 // 膝の上でゴロゴロが始まる時刻（src/render/renderer.js の onLap と合わせる）
 const LAP_PURR_AT = 2.6;
 // 同じ様子でこの回数失敗したら、ヒントを出す

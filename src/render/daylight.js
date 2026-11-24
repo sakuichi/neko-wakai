@@ -2,7 +2,7 @@
 // 昼は 朝 → 昼 → 夕方 となめらかに変わり、夜は夜の景色（夜の画面）。区切りは src/data/params.js の DAYLIGHT
 import { DAYLIGHT } from '../data/params.js';
 
-// 窓の中の座標（窓は x 36〜168・y 76〜194。src/render/renderer.js の drawRoom）
+// 窓の中の座標（窓は x -4〜236・y 84〜338、空は y 250 まで。src/render/renderer.js の drawRoom）
 const LOOKS = {
   morning: {
     skyTop: '#bfe0f2', skyBottom: '#fde3cf', hill: '#a9cfa0', cloud: 0.4,
