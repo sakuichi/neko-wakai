@@ -428,9 +428,9 @@
 - GitHub Pages で公開する（静的ファイルのみで動く）。公開専用のブランチ `gh-pages` に、遊ぶのに必要な `index.html`・`style.css`・`game.js`・`ogp.png`・`icon.png` と、空の `.nojekyll` だけを置く（仕様書・試作・テストは置かない）。`main` を更新しても公開ページは変わらない
 - 公開の手順（公開する・公開ページを更新するときは、毎回、承認を得てから）：
   1. `npm run site` で `dist/` に公開用のファイルを作る（`dist/` は Git に入れない）。`game.js` が古い・ファイルが足りない・`dist/` に余計なものがあるときは、何も書かずに止まる。書き込みが途中で失敗したときは「途中で失敗」と出るので、その `dist/` は使わない。成功の表示と、限定公開用／告知用の別を確かめる（`npm run site --public` のように `--` を忘れると、限定公開用になる）
-  2. リポジトリの外の別フォルダ（`git worktree`）に `gh-pages` を開き、`.nojekyll` を含む6つを写してコミットする（改行を変えないよう `core.autocrlf=false`）。作業フォルダで `git add -A` はしない
+  2. 作業フォルダを切り替えず、`dist/` の6つ（`.nojekyll` を含む）を Git に直接登録して `gh-pages` のコミットを作る：`git hash-object -w --no-filters` で1つずつ登録 → `git mktree` → `git commit-tree`（2回目からは `-p gh-pages` で前のコミットにつなぐ。履歴は書き換えない）→ `git update-ref refs/heads/gh-pages`
   3. push の前に、`git ls-tree -r gh-pages` がちょうど6件で、それぞれのハッシュが `git hash-object --no-filters dist/…` と同じことを確かめてから、`gh-pages` だけを push する
-  4. 初回だけ、GitHub Pages を `gh-pages` の直下で有効にする
+  4. 公開後に、5つのファイルが `dist/` と同じ中身で開けること、仕様書などのURLが開けない（404）ことを確かめる（GitHub Pages は、はじめて `gh-pages` を push したとき自動で有効になった。`gh-pages` の直下・https のみ）
 - 限定公開の間は、公開用の `index.html` にだけ検索よけの1行（`noindex`）を入れる。告知のときは `npm run site -- --public` で作り直して外す。URL を知っていれば誰でも開ける（パスワードはかけられない）
 - 止めるとき：GitHub Pages を無効にする（GitHub のブランチや、開いた人の端末などには残る）
 - `index.html` をダブルクリックするだけでも動く。`src/` を変更したら `npm run build` で `game.js` を作り直す（作り直し忘れはテストで検出する）
