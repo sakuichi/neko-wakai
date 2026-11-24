@@ -1,6 +1,6 @@
-# 処理フロー：ネコと和解せよ（試作）
+# 処理フロー：ネコと和解せよ
 
-> 状態：**試作実装済み（検収待ち）**。構成が変わったら必ず更新する。
+> 状態：**本体実装済み（公開前）**。構成が変わったら必ず更新する。
 
 ## 方針
 
@@ -98,7 +98,8 @@ flowchart TD
     MAIN -->|"open（一時停止ボタン・ほかのアプリやタブに切り替えたとき。昼と夜だけ）。開いている間は scene.update を呼ばず、なでる・まばたきも通さない（whilePlaying）。開くときに押しかけのまばたきを取り消す（input.cancelHold）。やめるときは昼の画面を stop（予約していたトーストも出さない）"| PAUSE
     DATA -->|"PAUSE_TEXT"| PAUSE
 
-    DEBUG["デバッグパネル<br/>src/ui/debugPanel.js"] -->|"personality / coat / face / event（イベントの日の固定） / skipDay / trustMax / reset / speed / clearRecords / extra（イントロ・和解の結末・通い猫（もうすぐ／まだ遠い）をその場から見る）"| MAIN
+    HTML -->|"アドレスの ?debug=1（このときだけデバッグパネルを作る。作らないときは空の枠も CSS で隠す）"| MAIN
+    DEBUG["デバッグパネル（?debug=1 のときだけ）<br/>src/ui/debugPanel.js"] -->|"personality / coat / face / event（イベントの日の固定） / skipDay / trustMax / reset / speed / clearRecords / extra（イントロ・和解の結末・通い猫（もうすぐ／まだ遠い）をその場から見る）"| MAIN
     MAIN -->|"固定した personality / coat（なければ null）"| PROG
     PROG -->|"chooseCat：毛色で性格が決まる（COAT_PERSONALITY）／chooseFace：顔の形は毛色と関係なくランダム（FACES）"| MAIN
     PROG -->|"chooseEvents：イベントを4〜6日目に1つずつ（EVENT_DAYS）。デバッグでは日を固定できる"| MAIN
@@ -106,6 +107,21 @@ flowchart TD
 
     RNG["シード付き乱数<br/>src/util/rng.js"] -->|"rng()"| BRAIN
     RNG -->|"rng()"| PROG
+```
+
+### リンク用の絵とアイコン（ゲームには含めない）
+
+```mermaid
+flowchart LR
+    RENDER3["猫・部屋の描画<br/>src/render/renderer.js（createRenderer・drawCatPortrait）"] -->|"猫と部屋の絵"| OGPTOOL["絵を書き出す道具<br/>tools/ogp/index.html<br/>tools/ogp/ogp.js"]
+    DATA4["題名 TITLE<br/>src/data/texts.js"] --> OGPTOOL
+    BUILD3["tools/build.js（OGP）"] -->|"ogp.js を1つにまとめる"| OGPBUNDLE["tools/ogp/ogp.bundle.js"]
+    OGPBUNDLE -->|"読み込む"| OGPTOOL
+    OGPTOOL -->|"1200×630（手で保存して置く）"| OGPIMG["リンク用の絵<br/>ogp.png"]
+    OGPTOOL -->|"180×180（手で保存して置く）"| ICON["アイコン<br/>icon.png"]
+    OGPIMG -->|"画像の URL"| HTML3["説明・リンク用の情報・アイコン<br/>index.html"]
+    ICON -->|"タブ・ホーム画面のアイコン"| HTML3
+    DATA5["公開 URL SHARE.url<br/>src/data/params.js"] -.->|"同じ URL を書く（テストで確かめる）"| HTML3
 ```
 
 ### ねこ手帳（第3弾：思い出・図鑑・称号）
@@ -193,5 +209,6 @@ stateDiagram-v2
 - 時間帯の景色：`tests/daylight.test.js` は、朝・昼・夕方・夜の名前と空の色、なめらかに変わること、部屋にかける色が薄いこと（0〜0.15）、スタンドライトが夕方からつくこと、太陽と月が窓の中にあることを確かめる
 - 紙芝居：`tests/story.test.js` は、イントロが何回目でも出てスキップで名前付けに進むこと（bundle() を偽の画面で起動して確かめる）、猫がいない庭に影を描かないこと、紙芝居の送り方（自動で進む秒数・タップ待ち・出てすぐのタップを無視・スキップ）と onDone が1回だけなこと、通い猫の「もうすぐ／まだ遠い」の境目（信頼70）、和解と通い猫のエピローグの流れ（夕方→夜、昼の最後の位置から窓へ歩いて消える）、結果画面の背景、枝がいつも（夜も）描かれることを確かめる
 - シェア：`tests/share.test.js` は、画像の文と投稿文、XのURLの変換、猫の名前が投稿文に入らないこと、押すまで何も起きず押した回だけ働くこと、コピー・X・画像の失敗、文字が枠に収まること、画像を作ってもゲームの描画が変わらないことを確かめる
+- 公開の準備：`tests/publish.test.js` は、`?debug=1` のときだけデバッグパネルが出ること、空の枠を隠すこと、投稿文とリンクに debug が入らないこと、リンク用の情報（OGP）と `SHARE.url` がそろっていること、`ogp.png`・`icon.png` の大きさ、「カカカ」がどの顔・どの立ち位置でも頭と重ならないこと、`tools/ogp/ogp.bundle.js` が最新かを確かめる
 - 効果音：`tests/sound.test.js` は、効果音 OFF では「にゃーん」を鳴らさないこと、準備に失敗しても一度だけ知らせて例外を出さないことを確かめる
-- 画面の確認：`index.html` をダブルクリックで開く
+- 画面の確認：`index.html` をダブルクリックで開く（デバッグパネルを使うときは、開いたあとアドレスの最後に `?debug=1` を付ける）

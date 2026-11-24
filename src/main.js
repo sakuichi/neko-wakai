@@ -22,9 +22,8 @@ import { addEnding, emptyRecords } from './game/records.js';
 import { loadRecords, saveRecords, clearRecords } from './ui/recordStore.js';
 import { SOUND_LABEL, PAUSE_TEXT, STORY_TEXT } from './data/texts.js';
 
-// 試作中はデバッグパネルを常に表示する。本番では ?debug=1 のときだけ表示する
-const PROTOTYPE = true;
-const SHOW_DEBUG = PROTOTYPE || new URLSearchParams(location.search).has('debug');
+// デバッグパネルは、アドレスに ?debug=1 を付けて開いたときだけ表示する
+const SHOW_DEBUG = new URLSearchParams(location.search).get('debug') === '1';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('stage');
@@ -81,7 +80,7 @@ function newEvents() {
 const session = { game: createGame({ events: newEvents() }), misses: {} };
 let rng = createRng(session.game.seed);
 let scene;
-// 試作中はデバッグパネルで性格・毛色を固定できる（null ならランダム。性格は毛色で決まる）
+// デバッグパネルで性格・毛色を固定できる（null ならランダム。性格は毛色で決まる）
 let fixedPersonality = null;
 let fixedCoat = null;
 // 顔の形も固定できる（null ならランダム）

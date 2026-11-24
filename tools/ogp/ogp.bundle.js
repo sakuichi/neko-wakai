@@ -1,0 +1,2688 @@
+// このファイルは tools/build.js が src/ から自動生成する。直接編集しない（npm run build）。
+(() => {
+'use strict';
+const __modules = {};
+
+// ---- src/data/params.js
+__modules['src/data/params.js'] = (() => {
+  // ゲームの数値はすべてここに置く。調整はこのファイルだけで行う。
+  // 値の意味は docs/spec.md の 4〜9章を参照。
+
+  const MAX_VALUE = 100;
+  const MAX_DAY = 7;
+
+  const RULES = {
+    // 待っている間、警戒は1秒ごとにこれだけ下がる
+    warinessDecayPerSec: 5,
+    // 警戒がこれ未満のとき、猫は近づき、落ち着いて一緒にいる分だけ信頼が増える
+    calmThreshold: 30,
+    // 待つだけで和解できないように、低めにしている（難易度の調整。docs/spec.md 6.0）
+    calmTrustPerSec: 0.18,
+    // 背中を向けて座っている間、1秒ごとに増える信頼
+    backTurnTrustPerSec: 0.8,
+    // 触ると失敗するサイン（お腹見せ・しっぽパタパタ・気まぐれすりすり）を、触らずにやり過ごせたら増える信頼
+    patienceTrust: 2,
+
+    // 距離の下限は「100 − 信頼 − この値」。信頼が低くても、ある程度までは近づいてくる
+    distanceFloorOffset: 30,
+    // 下限に着いて座った猫が、また歩き出すまでの余裕（下限がこれだけ下がったら歩く）。
+    // 毎フレーム少しずつ寄ると、止まったまま足踏みして見えるので、まとめて歩かせる（信頼 0.25/秒 なら約16秒ごと。我慢やまばたきで信頼が増えると、すぐ歩く）
+    walkResumeGap: 4,
+
+    // missWariness: 目が合っていないのにゆっくりまばたきしたときの警戒（連打対策）
+    // shyPenalty: ツンの間（信頼が性格の shyUntil 未満）にまばたきしたとき、照れて減る信頼
+    // far: 猫までの距離が from より遠いと、まばたきの効きが下がる（距離100で min 倍。そのあいだは直線）
+    blink: { minHoldMs: 500, maxHoldMs: 2000, trust: 6, missWariness: 8, shyPenalty: 3, far: { from: 50, min: 0.5 } },
+
+    pet: {
+      rubTrust: 10,
+      tailUpTrust: 5,
+      tailUpReach: 40,
+      relaxWariness: 20,
+      tailFlickWariness: 30,
+      bellyWariness: 40,
+      fakeRubWariness: 30,
+    },
+
+    // すり寄り（とそのフェイント）は、この距離以下でしか出ない
+    rubMaxDistance: 30,
+    // すり寄りを放っておくと、猫はこれだけ離れる
+    rubIgnoredDistance: 10,
+
+    // 焦って触った（ミス）ときに減る信頼。焦らない人ほど早く仲良くなれるように（trustRate はかけない）。焦ってばかりだと通い猫になるくらい重くしている
+    mistakeTrust: 15,
+
+    fleeDistance: 25,
+    fleeSec: 1,
+    purrSec: 2,
+
+    // 猫の様子ごとの継続時間 [最短, 最長] 秒
+    modeSec: {
+      relax: [3, 5],
+      look: [2.5, 3],
+      tailUp: [2, 3],
+      tailFlick: [2, 3],
+      belly: [2, 3],
+      backTurn: [3, 4],
+      rub: [2, 2],
+      fakeRub: [2, 2],
+    },
+    // 不機嫌なほど、しっぽパタパタが出やすくなる（重み × (1 + 警戒 / この値)）
+    tailFlickWarinessScale: 50,
+  };
+
+  const DAY3_SIGNS = ['relax', 'look', 'tailUp', 'tailFlick', 'belly', 'backTurn', 'rub'];
+  // 4日目からは、すり寄りに見せかけたフェイントが加わる
+  const LATE_SIGNS = [...DAY3_SIGNS, 'fakeRub'];
+
+  // イベントの日（7章）。ゲームの始めに、イベントをこの日のどれかに1つずつ割り当てる（src/game/progression.js の chooseEvents）
+  const EVENT_DAYS = [4, 5, 6];
+
+  // イベントごとの数値（進め方は src/game/events.js）
+  const EVENTS = {
+    // 箱が届いた：猫が箱の位置（boxDistance）まで来ると箱が置かれ、もぐる。もぐる長さは hideSec の範囲、顔を出すのは peekSec。
+    // 顔を出したときに blinksToFinish 回まばたきが通じると、箱から出てくる（ごほうび doneTrust）。箱の中で触られたら afterPetHideSec は顔を出さない
+    // ツンの間（まばたきに照れる）は、顔を出したときに、まばたきせずに見送れたら1回と数える
+    // 箱から出てくるのが遅いと、その日のうちに膝まで来られず、和解が1日遅れやすい。出てくるまでを20秒台に収めている（docs/spec.md 7章）
+    box: { boxDistance: 45, arriveSec: 1.6, hopSec: 0.6, hideSec: [2, 3.5], peekSec: 2.8, happySec: 2, afterPetHideSec: 5, blinksToFinish: 2, doneTrust: 8 },
+    // 窓の外に鳥：猫が窓の前（birdDistance）まで来ると背中を向け、鳥が来る（arriveSec）→狩り（huntSec の範囲）→鳥が去る（leaveSec）→
+    // 振り向く（turnSec。まばたきが通じたら happySec ゴロゴロ）。これを rounds 回で終わり。まばたきしなくても終わる。
+    // 狩りを最初に最後まで見守れた回に、その場でごほうび doneTrust（2回目以降は、いつもの我慢のごほうびだけ）
+    bird: { birdDistance: 45, arriveSec: 1.6, huntSec: [3, 4], leaveSec: 1.2, turnSec: 2.5, happySec: 1, rounds: 2, doneTrust: 6 },
+    // 読書中：ページをめくってから readSec の間は「読んでいる」。その間だけ、いつもの距離の下限を気にせず readSpeed で近づく。
+    // 膝の前（距離0）まで来たら、本をのぞき込む（ごほうび doneTrust。膝には乗らない）。peekBookSec たったら、いつもの日に戻る（信頼100なら、そのまま膝に乗って和解）
+    // のぞき込んでいる間と、やめてから tapGuardSec の間は、本のあった場所のタップを猫へのタッチにしない（ページを連打していた指で、うっかり触らないように）
+    read: { readSec: 2.5, readSpeed: 6, peekBookSec: 4, doneTrust: 6, tapGuardSec: 1 },
+  };
+
+  // trustMul：その日の信頼の増え方の倍率（書いていない日は1）。1〜2日目は最初の出会いが大事なので、少し増えやすい
+  // lapTrust：膝に乗る信頼（書いていない日は MAX_VALUE）。3日目は「運命の日」で、少し手前でも乗ってくれる
+  // この2つで、うまい人がときどき（1割ほど）3日目に和解できるようにしている（docs/spec.md 6.0）
+  const DAYS = [
+    { day: 1, durationSec: 40, startWariness: 35, actions: ['pet'], signs: ['relax'], canLap: false, approachMul: 1, trustMul: 1.2 },
+    { day: 2, durationSec: 40, startWariness: 45, actions: ['pet', 'blink'], signs: ['relax', 'look', 'tailUp', 'tailFlick'], canLap: false, approachMul: 1, trustMul: 1.2 },
+    { day: 3, durationSec: 40, startWariness: 40, actions: ['pet', 'blink'], signs: DAY3_SIGNS, canLap: true, approachMul: 1, lapTrust: 85 },
+    { day: 4, durationSec: 40, startWariness: 40, actions: ['pet', 'blink'], signs: LATE_SIGNS, canLap: true, approachMul: 1 },
+    { day: 5, durationSec: 40, startWariness: 40, actions: ['pet', 'blink'], signs: LATE_SIGNS, canLap: true, approachMul: 1 },
+    { day: 6, durationSec: 40, startWariness: 40, actions: ['pet', 'blink'], signs: LATE_SIGNS, canLap: true, approachMul: 1 },
+    { day: 7, durationSec: 45, startWariness: 30, actions: ['pet', 'blink'], signs: LATE_SIGNS, canLap: true, approachMul: 1.5 },
+  ];
+
+  // 昼の景色の時間帯（昼の進み具合 0〜1 で）。0〜noonAt で朝→昼、eveningFrom〜eveningAt で昼→夕方に変わる。
+  // 40秒の日なら、8秒で昼になり、残り14秒から夕焼けが始まり、残り8秒で夕方になる（色は src/render/daylight.js）
+  const DAYLIGHT = { noonAt: 0.2, eveningFrom: 0.65, eveningAt: 0.8 };
+
+  // 猫の顔の種類（猫ごとにランダムで選ぶ）。形そのものは src/render/renderer.js の FACE_SHAPES・EAR_SIZES
+  const FACES = {
+    shapes: ['mochi', 'maru', 'shimobukure', 'hoppe'],
+    ears: ['small', 'normal', 'big'],
+  };
+
+  const NIGHT = {
+    // おやつを置くと、その場で信頼が増える。代わりに翌日の信頼の増え方が下がる
+    treatTrust: 8,
+    treatTrustRate: 0.85,
+    // おやつの翌日の、開始時の警戒（落ち着きの境目より低いので、すぐ動き出す）
+    treatStartWariness: 0,
+    // おやつの日は、距離の下限がこれだけ近くなる
+    treatFloorBonus: 20,
+    nothingTrust: 3,
+  };
+
+  // approachSpeed：くつろぎで歩いている間に、1秒で近づく距離（座っている間は近づかない）
+  // likes：行動ごとの信頼の増え方の倍率。pet＝なでる（しっぽピン・すり寄り）、blink＝ゆっくりまばたき、patience＝我慢のごほうびと背中を向けている間
+  // shyUntil：信頼がこれ未満の間は、まばたきすると照れて逆効果（ツン）。0 ならツンはない
+  // timidHands：なでられても、手がこわくてビクビクする（反応が「ゴロゴロ」ではなく「ビクビク」になる。信頼の増え方は likes.pet）
+  // timidUntil：timidHands の猫は、信頼がこれ以上になると手が平気になる（ゴロゴロに戻り、なでる効きもふつう＝×1）
+  const PERSONALITIES = {
+    amaenbo: {
+      label: '甘えん坊',
+      approachSpeed: 16,
+      warinessMul: 0.7,
+      treatDistance: 30,
+      boxLockSec: 5,
+      likes: { pet: 1.6, blink: 0.5, patience: 0.3 },
+      shyUntil: 0,
+      signWeights: { relax: 3, look: 2, tailUp: 2, tailFlick: 1, belly: 1, backTurn: 1, rub: 3, fakeRub: 1 },
+    },
+    tsundere: {
+      label: 'ツンデレ',
+      approachSpeed: 10,
+      warinessMul: 1.0,
+      treatDistance: 10,
+      boxLockSec: 5,
+      likes: { pet: 1.2, blink: 1.6, patience: 1.5 },
+      shyUntil: 33,
+      signWeights: { relax: 3, look: 2, tailUp: 1, tailFlick: 1, belly: 3, backTurn: 1, rub: 1, fakeRub: 2 },
+    },
+    bibiri: {
+      label: 'ビビり',
+      approachSpeed: 8,
+      warinessMul: 1.3,
+      treatDistance: 20,
+      boxLockSec: 3,
+      likes: { pet: 0.5, blink: 1.3, patience: 1 },
+      shyUntil: 0,
+      timidHands: true,
+      timidUntil: 50,
+      // 目を合わせるのが苦手なので、こっちを見る（チラッ）が出にくい
+      signWeights: { relax: 3, look: 1, tailUp: 1, tailFlick: 2.5, belly: 1, backTurn: 1, rub: 1, fakeRub: 1 },
+    },
+  };
+
+  const DEFAULT_PERSONALITY = 'tsundere';
+
+  // 毛色と性格の対応。「茶トラは甘えん坊」など、よく言われる柄と性格の話に合わせる（言い伝えは src/data/texts.js の COAT_LORE）
+  // 毛色のキーは src/render/renderer.js の COATS
+  const COAT_PERSONALITY = {
+    chatora: 'amaenbo',
+    cream: 'amaenbo',
+    shiro: 'tsundere',
+    sabatora: 'tsundere',
+    kijitora: 'bibiri',
+    kuro: 'bibiri',
+  };
+
+  // 紙芝居（イントロ・エピローグ。src/scenes/storyScene.js・storySlides.js）
+  // slideSec・longSlideSec：イントロ1枚目・2枚目（文が長い）の秒数。wipeSec：場面の切り替えで、覆う・戻すそれぞれの秒数
+  // tapIgnoreSec：1枚が出てすぐのタップは無視する秒数。hintAfterSec：タップ待ちの枚で「タップで次へ」を出すまでの秒数
+  // nearTrust：通い猫で「膝に乗ってくれる日も、もうすぐかも」になる最後の信頼（以上）
+  // morning：イントロと、通い猫の次の日の明るさ（朝）。introWindowOpen：イントロ2枚目の窓の開き（少しだけ）
+  // dusk：和解の1枚目の秒数と、夕方になるまでの秒数
+  // leave：通い猫の1枚目。窓を開ける→窓の前まで歩く→振り返る→出ていく（消える）の秒数と、1枚目の秒数
+  const STORY = {
+    slideSec: 3,
+    longSlideSec: 3.6,
+    wipeSec: 0.3,
+    tapIgnoreSec: 0.4,
+    hintAfterSec: 1.2,
+    nearTrust: 70,
+    morning: 0.05,
+    introWindowOpen: 0.45,
+    dusk: { sec: 4.5, toEveningSec: 3.5 },
+    leave: { openSec: 0.6, walkSec: 2.8, lookBackSec: 1.2, outSec: 0.8, sec: 6.4 },
+  };
+
+  // シェア（src/game/shareCard.js・src/render/shareImage.js・src/ui/sharePanel.js）。docs/spec.md 12
+  const SHARE = {
+    // 公開ページの URL（空なら投稿文に付けない）。index.html の og:url・og:image も同じ URL にする
+    url: 'https://sakuichi.github.io/neko-wakai/',
+    xIntent: 'https://x.com/intent/post',
+    fileName: 'neko-wakai.png',
+    // 画像の大きさ（4:5）と、その中の猫の絵の枠（角の丸み r）
+    image: { w: 1080, h: 1350 },
+    picture: { x: 80, y: 340, w: 920, h: 690, r: 48 },
+    // 猫の絵として切り取る範囲（論理座標 360×640。4:3）
+    crop: {
+      lap: { x: 36, y: 424, w: 288, h: 216 },
+      garden: { x: 0, y: 245, w: 136, h: 102 },
+    },
+    // 通い猫：窓の中央の枠やガラスのつやがかからないよう、左の戸の真ん中に座らせる
+    gardenCat: { x: 62, y: 331, s: 0.52, outside: true },
+    // 結果画面が始まって何秒後の姿を描くか
+    poseSec: 1.2,
+  };
+  return { MAX_VALUE, MAX_DAY, RULES, EVENT_DAYS, EVENTS, DAYS, DAYLIGHT, FACES, NIGHT, PERSONALITIES, DEFAULT_PERSONALITY, COAT_PERSONALITY, STORY, SHARE };
+})();
+
+// ---- src/render/daylight.js
+__modules['src/render/daylight.js'] = (() => {
+  // 時間帯の景色：窓の外の空・太陽（夜は月）・部屋にかける薄い色・床の日だまり・スタンドライトの明るさ。
+  // 昼は 朝 → 昼 → 夕方 となめらかに変わり、夜は夜の景色（夜の画面）。区切りは src/data/params.js の DAYLIGHT
+  const { DAYLIGHT } = __modules['src/data/params.js'];
+
+  // 窓の中の座標（窓は x -4〜236・y 84〜338、空は y 250 まで。src/render/renderer.js の drawRoom）
+  const LOOKS = {
+    morning: {
+      skyTop: '#bfe0f2', skyBottom: '#fde3cf', hill: '#a9cfa0', cloud: 0.4,
+      tint: { color: '#ffd9b0', alpha: 0.06 },
+      sun: { x: 66, y: 172, color: '#fff3c4' },
+      patch: { alpha: 0.22, color: '#fff1c9', length: 150, skew: 70 },
+    },
+    noon: {
+      skyTop: '#8fcdf0', skyBottom: '#d4eefa', hill: '#9cc98f', cloud: 0.9,
+      tint: { color: '#ffffff', alpha: 0 },
+      sun: { x: 112, y: 100, color: '#fffbe0' },
+      patch: { alpha: 0.18, color: '#fff6d8', length: 70, skew: 10 },
+    },
+    // 昼から夕方へ移る途中：空の下のほうから先に色づく（青と橙をそのまま混ぜると灰色ににごるため）
+    golden: {
+      skyTop: '#a8c4e6', skyBottom: '#ffd6a0', hill: '#b5b98a', cloud: 0.6,
+      tint: { color: '#ffc890', alpha: 0.06 },
+      sun: { x: 132, y: 140, color: '#ffe9a8' },
+      patch: { alpha: 0.22, color: '#ffe2a8', length: 110, skew: -30 },
+    },
+    evening: {
+      skyTop: '#e58d86', skyBottom: '#ffc27a', hill: '#c98a7a', cloud: 0.3,
+      tint: { color: '#ff9d5c', alpha: 0.12 },
+      sun: { x: 146, y: 176, color: '#ffd27a' },
+      patch: { alpha: 0.24, color: '#ffbd80', length: 170, skew: -80 },
+    },
+  };
+  const NIGHT_LOOK = {
+    phase: 'night', skyTop: '#1f2448', skyBottom: '#3a3f6e', hill: '#2a2f50', cloud: 0,
+    tint: { color: '#2a2850', alpha: 0 },
+    sun: { x: 132, y: 104, kind: 'moon', color: '#fdf6d8' },
+    patch: { alpha: 0, color: '#000000', length: 0, skew: 0 },
+    lamp: 1,
+  };
+  // 夕方になったときのスタンドライトの明るさ（夜は 1）
+  const EVENING_LAMP = 0.6;
+
+  const lerp = (a, b, u) => a + (b - a) * u;
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+  const toRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const toHex = (rgb) => `#${rgb.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
+  // 色 '#rrggbb' を混ぜる・半透明にする（src/render/renderer.js の部屋の描画でも使う）
+  const mixColor = (a, b, u) => toHex(toRgb(a).map((v, i) => lerp(v, toRgb(b)[i], u)));
+  const rgba = (hex, alpha) => `rgba(${toRgb(hex).join(', ')}, ${alpha.toFixed(3)})`;
+
+  function mix(a, b, u) {
+    return {
+      skyTop: mixColor(a.skyTop, b.skyTop, u),
+      skyBottom: mixColor(a.skyBottom, b.skyBottom, u),
+      hill: mixColor(a.hill, b.hill, u),
+      cloud: lerp(a.cloud, b.cloud, u),
+      tint: { color: mixColor(a.tint.color, b.tint.color, u), alpha: lerp(a.tint.alpha, b.tint.alpha, u) },
+      sun: { x: lerp(a.sun.x, b.sun.x, u), y: lerp(a.sun.y, b.sun.y, u), kind: 'sun', color: mixColor(a.sun.color, b.sun.color, u) },
+      patch: {
+        alpha: lerp(a.patch.alpha, b.patch.alpha, u),
+        color: mixColor(a.patch.color, b.patch.color, u),
+        length: lerp(a.patch.length, b.patch.length, u),
+        skew: lerp(a.patch.skew, b.patch.skew, u),
+      },
+    };
+  }
+
+  /**
+   * progress: 昼の進み具合 0〜1（0 = 朝、1 = 昼の終わり）。night: 夜の画面なら true
+   * 返り値 { phase, skyTop, skyBottom, hill, cloud, tint {color, alpha}, lamp, sun {x, y, kind, color}, patch {alpha, color, length, skew} }
+   */
+  function daylightAt(progress, night = false) {
+    if (night) return NIGHT_LOOK;
+    const p = clamp01(progress);
+    const { noonAt, eveningFrom, eveningAt } = DAYLIGHT;
+    if (p < noonAt) {
+      const u = p / noonAt;
+      return { phase: u < 0.5 ? 'morning' : 'noon', lamp: 0, ...mix(LOOKS.morning, LOOKS.noon, u) };
+    }
+    // eveningFrom までは昼のまま（u = 0）。途中で golden を通って夕方になる
+    const u = clamp01((p - eveningFrom) / (eveningAt - eveningFrom));
+    const look = u < 0.5 ? mix(LOOKS.noon, LOOKS.golden, u * 2) : mix(LOOKS.golden, LOOKS.evening, u * 2 - 1);
+    return { phase: u < 0.5 ? 'noon' : 'evening', lamp: EVENING_LAMP * u, ...look };
+  }
+  return { mixColor, rgba, daylightAt };
+})();
+
+// ---- src/render/props.js
+__modules['src/render/props.js'] = (() => {
+  // イベントの小道具（4〜6日目）。描く位置・大きさは src/render/renderer.js が決め、ここではそれぞれの座標で描く
+  // （箱は底の真ん中、小鳥は胴の真ん中、本は真ん中が原点。枝は窓の座標のまま）。
+  // 線の色・太さは renderer の猫と同じ
+
+  const LINE = '#4e3d36';
+  const LW = 3.5;
+
+  function line(ctx, x0, y0, x1, y1) {
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+  }
+
+  /**
+   * 通販の箱。夜に置く無地の段ボール（renderer の inBox）と見分けがつくよう、明るい色・ガムテープ・宛名ラベル・
+   * 「ワレモノ」シール・詰め物の紙を付ける。前面とフタは、伏せた猫の体をすっかり隠す大きさ
+   * inside：箱の内側（奥）を描く。猫が顔を出している間は、首の前に奥の壁が来ないよう描かない
+   * pile：詰め物の紙を山盛りにする（もぐっている間。猫の頭を隠し、耳の先だけ出る）
+   */
+  function drawParcel(ctx, { inside = true, paper = true, pile = false } = {}) {
+    ctx.save();
+    ctx.lineWidth = LW;
+    ctx.strokeStyle = LINE;
+    if (inside) {
+      ctx.fillStyle = '#b98a56';
+      ctx.beginPath();
+      ctx.moveTo(-64, -66);
+      ctx.lineTo(64, -66);
+      ctx.lineTo(52, -78);
+      ctx.lineTo(-52, -78);
+      ctx.closePath();
+      ctx.fill();
+    }
+    if (paper) {
+      ctx.fillStyle = '#fffaf2';
+      const balls = pile
+        ? [[-46, -70, 13], [-24, -76, 15], [2, -80, 17], [28, -76, 15], [48, -70, 12], [-34, -88, 12], [-10, -94, 13], [18, -92, 12], [40, -86, 10]]
+        : [[-44, -68, 8], [-24, -70, 7], [26, -70, 7], [46, -68, 8]];
+      for (const [x, y, r] of balls) {
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+    // フタ（外に開いている）
+    ctx.fillStyle = '#d9a86c';
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(side * 64, -66);
+      ctx.lineTo(side * 98, -86);
+      ctx.lineTo(side * 92, -44);
+      ctx.lineTo(side * 64, -38);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    // 前面
+    ctx.fillStyle = '#ebc48e';
+    ctx.beginPath();
+    ctx.rect(-64, -66, 128, 66);
+    ctx.fill();
+    ctx.stroke();
+    // ガムテープ（真ん中を縦に）
+    ctx.fillStyle = 'rgba(196, 150, 92, 0.85)';
+    ctx.fillRect(-11, -66, 22, 66);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.fillRect(-11, -66, 5, 66);
+    // 宛名ラベル
+    ctx.fillStyle = '#ffffff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.rect(20, -52, 36, 26);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(78, 61, 54, 0.5)';
+    for (let i = 0; i < 3; i++) line(ctx, 25, -45 + i * 7, 51 - i * 6, -45 + i * 7);
+    // 「ワレモノ」シール
+    ctx.fillStyle = '#e46d5c';
+    ctx.fillRect(-58, -54, 42, 16);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillText('ワレモノ', -55, -43);
+    ctx.restore();
+  }
+
+  // もぐった瞬間に舞う紙くず。u は 0〜1（舞い上がって、消えていく）
+  function drawPaperBits(ctx, u) {
+    ctx.save();
+    ctx.globalAlpha = 1 - u;
+    ctx.fillStyle = '#fffaf2';
+    ctx.strokeStyle = LINE;
+    ctx.lineWidth = 2;
+    for (const [dx, h] of [[-50, 1], [-20, 1.3], [16, 1.2], [46, 0.9]]) {
+      const x = dx * (1 + u * 0.6);
+      const y = -80 - Math.sin(u * Math.PI) * 50 * h;
+      ctx.beginPath();
+      ctx.rect(x - 5, y - 4, 10, 8);
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 小道具に添える短い文字（「ドサッ」「？」「カサカサ」）。遠くて小さく描かれるときも読めるよう、fit で大きさを補う
+  function drawPropText(ctx, text, x, y, size, fit = 1) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(fit, fit);
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = LINE;
+    ctx.font = `bold ${size}px sans-serif`;
+    ctx.fillText(text, 0, 0);
+    ctx.restore();
+  }
+
+  // 窓の外の枝の色（夜は暗くする）
+  const BRANCH_COLOR = { day: '#8a6748', night: '#4a3f52' };
+  const LEAF_COLOR = { day: '#9cc58a', night: '#55665e' };
+
+  /**
+   * 窓の外の木の枝と葉（いつも見えている。鳥の日は、ここに鳥がとまる）。窓（renderer の drawRoom。x -4〜236, y 84〜338）の座標でそのまま描く。
+   * 窓の形で切り抜いた中に描くので、はみ出した分は見えない。画面の左の外から、左の戸の8割くらいまで伸びる
+   */
+  function drawBranch(ctx, night = false) {
+    ctx.save();
+    ctx.strokeStyle = night ? BRANCH_COLOR.night : BRANCH_COLOR.day;
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(-20, 180);
+    ctx.quadraticCurveTo(30, 168, 92, 170);
+    ctx.stroke();
+    ctx.lineWidth = 3;
+    line(ctx, 40, 172, 52, 156);
+    ctx.fillStyle = night ? LEAF_COLOR.night : LEAF_COLOR.day;
+    for (const [x, y] of [[54, 153], [22, 172], [88, 166], [74, 175]]) {
+      ctx.beginPath();
+      ctx.ellipse(x, y, 7, 4, -0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // 小鳥（右向き。原点は胴の真ん中）。flying：飛んでいる間は羽ばたき、足をたたむ
+  function drawBird(ctx, t, flying) {
+    ctx.save();
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = LINE;
+    ctx.fillStyle = '#8fb7d9';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 11, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(9, -5, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#f0b44c';
+    ctx.beginPath();
+    ctx.moveTo(15, -5);
+    ctx.lineTo(20, -3);
+    ctx.lineTo(15, -1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = LINE;
+    ctx.beginPath();
+    ctx.arc(10, -6, 1.3, 0, Math.PI * 2);
+    ctx.fill();
+    const flap = flying ? Math.sin(t * 30) * 8 : Math.sin(t * 3) * 1.5;
+    ctx.fillStyle = '#6f9ac2';
+    ctx.beginPath();
+    ctx.moveTo(-4, -2);
+    ctx.lineTo(-10, -10 - flap);
+    ctx.lineTo(4, -4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    if (!flying) {
+      line(ctx, -2, 7, -3, 12);
+      line(ctx, 3, 7, 3, 12);
+    }
+    ctx.restore();
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // 開いた本（読書中）。原点は本の真ん中（背）。大きさは renderer の BOOK_RECT。flip（0〜1）はページをめくる動き（範囲外なら描かない）
+  function drawOpenBook(ctx, flip) {
+    ctx.save();
+    ctx.lineWidth = LW;
+    ctx.strokeStyle = LINE;
+    ctx.fillStyle = '#c96f5a';
+    roundRect(ctx, -112, -60, 224, 92, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#fffaf0';
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(0, -48);
+      ctx.quadraticCurveTo(side * 50, -62, side * 102, -50);
+      ctx.lineTo(side * 102, 22);
+      ctx.quadraticCurveTo(side * 50, 10, 0, 24);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    // 文字の行
+    ctx.strokeStyle = 'rgba(78, 61, 54, 0.3)';
+    ctx.lineWidth = 2;
+    for (const side of [-1, 1]) for (let i = 0; i < 5; i++) line(ctx, side * 18, -34 + i * 11, side * 86, -38 + i * 11);
+    if (flip > 0 && flip < 1) {
+      // めくれているページ
+      ctx.fillStyle = '#fff3dc';
+      ctx.strokeStyle = LINE;
+      ctx.lineWidth = 3;
+      const w = Math.cos(flip * Math.PI) * 100;
+      ctx.beginPath();
+      ctx.moveTo(0, -48);
+      ctx.quadraticCurveTo(w / 2, -70 - Math.sin(flip * Math.PI) * 12, w, -52);
+      ctx.lineTo(w, 20);
+      ctx.quadraticCurveTo(w / 2, 6, 0, 24);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 閉じた本を右手に持つ（読書のあと。開いた本の片側ぶんの大きさ）。原点は本の真ん中。skin：親指の色（renderer の LAP_COLORS.skin）
+  function drawClosedBook(ctx, skin) {
+    ctx.save();
+    ctx.lineWidth = LW;
+    ctx.strokeStyle = LINE;
+    // ページの小口
+    ctx.fillStyle = '#fffaf0';
+    roundRect(ctx, -50, -44, 104, 88, 6);
+    ctx.fill();
+    ctx.stroke();
+    // 表紙
+    ctx.fillStyle = '#c96f5a';
+    roundRect(ctx, -56, -48, 104, 92, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(78, 61, 54, 0.35)';
+    ctx.lineWidth = 2;
+    line(ctx, -44, -48, -44, 44);
+    ctx.fillStyle = '#f3d9a6';
+    ctx.fillRect(-28, -24, 56, 14);
+    // 本をつかむ親指
+    ctx.fillStyle = skin;
+    ctx.strokeStyle = LINE;
+    ctx.lineWidth = LW;
+    ctx.beginPath();
+    ctx.ellipse(-52, 8, 11, 15, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+  return { drawParcel, drawPaperBits, drawPropText, BRANCH_COLOR, drawBranch, drawBird, drawOpenBook, drawClosedBook };
+})();
+
+// ---- src/render/renderer.js
+__modules['src/render/renderer.js'] = (() => {
+  // 猫・部屋の描画（Canvas）。ゲームの判定には関わらず、渡された状態を描くだけ。
+  // 論理座標は 360×640。
+  //
+  // 猫の描き方ルール（目標：ねこあつめ・ねこさがし系のシンプルなデフォルメ）
+  // - 頭は横長の「おもち形」で、体より大きく（頭:体 ≒ 1.5:1）
+  // - 目は小さな縦長の点。口は「ω」だけ。ひげ・鼻は描かない
+  // - ほっぺに薄いピンク。色はベタ塗りでグラデーションを使わない
+  // - 線は均一な太さのこげ茶。角は丸く
+  const { MAX_VALUE, RULES, EVENTS } = __modules['src/data/params.js'];
+  const { daylightAt, mixColor, rgba } = __modules['src/render/daylight.js'];
+  const { drawParcel, drawPaperBits, drawPropText, drawBranch, drawBird, drawOpenBook, drawClosedBook } = __modules['src/render/props.js'];
+
+  const W = 360;
+  const H = 640;
+
+  // 毛色（色違い）。キーは GameState.coat、名前は src/data/texts.js の COAT_LABELS、性格との対応は src/data/params.js の COAT_PERSONALITY。
+  // eye・face は省略可（目と口の色。省略すると共通の色）
+  // 柄そのものを増やすとき（ハチワレ・三毛など）は、描画の関数側に手を入れる
+  const COATS = {
+    chatora: { fur: '#f6bb78', stripe: '#e49a57', white: '#fffdf7' },
+    kijitora: { fur: '#c9a27c', stripe: '#8e6a4c', white: '#fffdf7' },
+    sabatora: { fur: '#c5c9cf', stripe: '#8b939d', white: '#fffdf7' },
+    cream: { fur: '#f8ddb4', stripe: '#eec48f', white: '#fffdf7' },
+    shiro: { fur: '#fffaf2', stripe: '#fffaf2', white: '#fffaf2' },
+    // 黒い毛にこげ茶の目・口だと見えないので、目は金色、口は明るい色にする
+    kuro: { fur: '#45414b', stripe: '#45414b', white: '#58535f', eye: '#f2d36b', face: '#d8cec6' },
+  };
+  // いま描いている猫の毛色。draw() の最初に view.coat から決める
+  let COAT = COATS.chatora;
+
+  // 顔の形（猫ごとに変える）：輪郭と耳の大きさ。種類は src/data/params.js の FACES。
+  // 輪郭は「左右の端（cy の高さ）・てっぺん（top）・あご（bottom）」を4本の曲線でつなぐ。
+  // tS / bS は上下の曲線が横にふくらむ量、tR / bR はてっぺん・あごの平らさ（小さいほどとがる）
+  const FACE_SHAPES = {
+    // いままでの「おもち形」（上下が少し平らな横長）
+    mochi: { w: 50, top: -40, bottom: 38, cy: 0, tS: 0.75, tR: 0.6, bS: 27 / 38, bR: 0.56 },
+    // まんまる
+    maru: { w: 46, top: -44, bottom: 40, cy: 0, tS: 0.55, tR: 0.55, bS: 0.55, bR: 0.55 },
+    // 下ぶくれ（頭のてっぺんが細く、ほっぺが下のほうで大きく張る。おもち形と見分けがつくよう、はっきりさせる）
+    shimobukure: { w: 58, top: -40, bottom: 33, cy: 15, tS: 0.92, tR: 0.32, bS: 0.5, bR: 0.85 },
+    // ほっぺもち（横に大きく張った、平たい顔）
+    hoppe: { w: 57, top: -36, bottom: 34, cy: 4, tS: 0.82, tR: 0.5, bS: 0.78, bR: 0.66 },
+  };
+  // 耳の大きさ（倍率）
+  const EAR_SIZES = { small: 0.82, normal: 1, big: 1.1 };
+  const DEFAULT_FACE = { shape: 'mochi', ears: 'normal' };
+  let FACE = faceParams(DEFAULT_FACE);
+
+  // face: { shape, ears }（キーは上の表。省略・不明なものは、いままでの形）
+  function faceParams(face = DEFAULT_FACE) {
+    return {
+      shape: FACE_SHAPES[face?.shape] ?? FACE_SHAPES.mochi,
+      ear: EAR_SIZES[face?.ears] ?? 1,
+    };
+  }
+
+  const C = {
+    line: '#4e3d36',
+    eye: '#3b2f2a',
+    earIn: '#f6c3c6',
+    blush: 'rgba(246, 150, 168, 0.55)',
+    skin: '#f6d6bf',
+    pants: '#b9c6d3',
+    pantsLine: '#8d9db0',
+    sleeve: '#efb7a0',
+    heart: '#f27a93',
+    red: '#e0566f',
+  };
+  const LW = 3.2;
+  // テストで輪郭線を見分けるために公開する
+  const LINE_COLOR = C.line;
+  const LINE_WIDTH = LW;
+  const LAP_COLORS = { pants: C.pants, sleeve: C.sleeve, skin: C.skin };
+
+  // 1日目の名前付けで、猫を大きく映すときの位置と大きさ
+  const CLOSEUP = { x: 180, y: 615, s: 2.1 };
+  // いちばん近づいたとき（膝に乗る前）の足もと。膝の上端（y≒548）より奥にとどまる
+  const NEAREST_Y = 546;
+  // 膝の上に座ったときの位置と大きさ
+  const LAP_SEAT = { x: 180, y: 612, s: 1.3 };
+  const LAP_JUMP_SEC = 0.5;
+  // タイトルに戻るとき、猫がその場で消える時間と、タイトルの位置に現れる時間（それぞれ）
+  const CAT_FADE_SEC = 0.4;
+  // 近づいてくる道すじの蛇行：距離100あたり約1.5往復、幅は猫の大きさ1あたり80
+  const PATH_FREQ = (Math.PI * 2 * 1.5) / MAX_VALUE;
+  const PATH_AMP = 80;
+  // なでようと手を伸ばして戻すまでの時間
+  const REACH_SEC = 0.45;
+
+  const lerp = (a, b, u) => a + (b - a) * u;
+  const clamp01 = (v) => Math.min(1, Math.max(0, v));
+
+  function createRenderer(canvas) {
+    const ctx = canvas.getContext('2d');
+    const a = {
+      shownDistance: MAX_VALUE,
+      lastMode: null,
+      modeStart: 0,
+      nextBlink: 2,
+      blinkStart: -10,
+      effects: [],
+      shakeUntil: 0,
+      lid: 0,
+      now: 0,
+      // 膝に跳び乗る途中（0=膝の奥、1=膝の上）
+      lapBlend: 0,
+      shownP: null,
+      // 近づいてくる道すじ（蛇行）のずれ。昼が始まるたびに選び直す
+      pathPhase: Math.random() * Math.PI * 2,
+      // 道すじを選び直したときの横のずれ。いまの位置から急に跳ばないように、少しずつ0に戻す
+      pathOffset: 0,
+      lastScene: null,
+      // 歩いている向き（-1=左、0=正面、1=右）。顔と体の傾きに使う
+      facing: 0,
+      // タイトルに戻るとき・夜に帰っていくときのフェード
+      // { outEnd（消え終わる時刻）, pose, coat, look, moved, hold（見えないまま待つ）, gentle（途中で打ち切らない） }。その前に描いていた猫を覚えておく
+      fade: null,
+      last: null,
+      // 猫を薄く描くための下書き用の Canvas（重なった線が透けないよう、猫をまとめて薄くする）
+      layer: null,
+      // いま描いている猫 { alpha, coat, mode }
+      shown: { alpha: 1, coat: null, mode: null },
+      // 昼の進み具合（窓の外の景色・部屋の明るさ）。タイトル・名前付けは朝、エンディングは膝に乗ったときのまま
+      dayTime: 0,
+      // イベントの小道具 { kind, phase, start（いまの phase になった時刻）, prev（ひとつ前の phase）, anchor（箱を置いた場所） }
+      prop: null,
+    };
+
+    function resize() {
+      const r = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(r.width * dpr);
+      canvas.height = Math.round(r.height * dpr);
+    }
+
+    function toLogical(clientX, clientY) {
+      const r = canvas.getBoundingClientRect();
+      return { x: ((clientX - r.left) / r.width) * W, y: ((clientY - r.top) / r.height) * H };
+    }
+
+    // 猫は、ゆるく左右に蛇行しながら近づいてくる（道すじは日ごとに変わる）。
+    // 膝の前では真ん中に来るように、近いほど左右の幅を小さくする
+    function placement(distance) {
+      const u = distance / MAX_VALUE;
+      const s = lerp(1.2, 0.55, u);
+      const sway = Math.sin(distance * PATH_FREQ + a.pathPhase) * PATH_AMP * s * clamp01(distance / 25);
+      return { x: lerp(180, 214, u) + sway + a.pathOffset, y: lerp(NEAREST_Y, 372, u), s };
+    }
+
+    // 膝に乗るときは、膝の奥から膝の上へ、ぴょんと跳び乗る
+    function catPosition(distance) {
+      const p = placement(distance);
+      if (a.lapBlend <= 0) return p;
+      const u = a.lapBlend;
+      return { x: lerp(p.x, LAP_SEAT.x, u), y: lerp(p.y, LAP_SEAT.y, u) - Math.sin(u * Math.PI) * 40, s: lerp(p.s, LAP_SEAT.s, u) };
+    }
+
+    // 読書中の開いた本に当たったか（ページをめくれるのは、開いた本を描いている間だけ）
+    function hitTestBook(x, y) {
+      if (a.prop?.kind !== 'book' || a.prop.phase !== 'read') return false;
+      return inBookArea(x, y);
+    }
+
+    // 開いた本の範囲に入っているか（本を描いているかどうかは見ない。本が閉じた直後のタップを見分けるのに使う）
+    function inBookArea(x, y) {
+      const r = BOOK_RECT;
+      return x >= BOOK_AT.x + r.x && x <= BOOK_AT.x + r.x + r.w && y >= BOOK_AT.y + r.y && y <= BOOK_AT.y + r.y + r.h;
+    }
+
+    function hitTestCat(x, y) {
+      const p = a.shownP ?? placement(a.shownDistance);
+      const cy = p.y - 55 * p.s;
+      const r = Math.max(48, 72 * p.s);
+      return (x - p.x) ** 2 + (y - cy) ** 2 <= r * r;
+    }
+
+    // data: 足あと（paw）なら { x, y }（論理座標）
+    function addEffect(type, data = {}) {
+      a.effects.push({ type, t0: a.now, ...data });
+      if (type === 'kick') a.shakeUntil = a.now + 0.35;
+    }
+
+    /**
+     * view: { scene, cat?: {mode, distance}, coat?, personality?, wariness?, closeup?, blinkHoldMs?, lapTime?, endingId? }
+     */
+    function draw(view, t, dt) {
+      a.now = t;
+      // 夜は猫が帰っていて見えない（hidden）。次の日の昼になったら、消えきるのを待ってから現れる
+      const hidden = !!poseFor(view).hidden;
+      if (a.fade?.hold && !hidden) {
+        a.fade.hold = false;
+        if (t >= a.fade.outEnd) a.fade.outEnd = t;
+      }
+      if (view.scene !== a.lastScene) {
+        // ページを開いた直後は、猫をはじめからその場面の位置に置く（部屋の隅から滑ってこない）
+        if (a.lastScene === null) a.shownDistance = view.closeup ? MAX_VALUE : poseFor(view).distance;
+        // 「もう一度あそぶ」などでタイトルに戻るときは、猫をその場で消してから、タイトルの位置に新しい猫を出す
+        // （次は別の猫なので、毛色も消えている間に変わる）
+        // 現れている途中で場面が変わったときも、いまの濃さから消し始めて、見えなくなってから移す
+        // （ぱっと濃くなったり、見えたまま跳んだりしないように）
+        const appearing = a.fade && t >= a.fade.outEnd;
+        if ((view.scene === 'title' && a.lastScene !== null && a.last) || appearing) {
+          a.fade = { outEnd: t + a.shown.alpha * CAT_FADE_SEC, ...a.last, moved: false };
+        } else if (view.scene === 'day' && a.lastScene === 'night' && !a.fade && a.last) {
+          // 夜の画面が出きる前に選んで、猫がまだ帰っていなかったときも、その場で消えてから次の日の昼に現れる
+          a.fade = { outEnd: t + a.shown.alpha * CAT_FADE_SEC, ...a.last, moved: false, gentle: true };
+        } else if (a.fade && t < a.fade.outEnd && !a.fade.gentle) {
+          // 消えている途中で次の画面に移ったら、前の猫はそこで消して、新しい猫を見えないところから出す
+          // （夜に帰っていく猫は、すぐ次の日になっても消えきるまで待つ）
+          a.fade.outEnd = t;
+        }
+        if (view.scene === 'day') {
+          const before = placement(a.shownDistance).x;
+          a.pathPhase = Math.random() * Math.PI * 2;
+          a.pathOffset += before - placement(a.shownDistance).x;
+        }
+        a.lastScene = view.scene;
+      }
+      // 猫が帰っていく：その場で、いまの濃さから消して、見えないまま待つ
+      if (hidden && !a.fade?.hold && a.last) {
+        a.fade = { outEnd: t + a.shown.alpha * CAT_FADE_SEC, ...a.last, moved: false, hold: true, gentle: true };
+      }
+      const fadingOut = !!a.fade && (t < a.fade.outEnd || a.fade.hold);
+      let alpha = 1;
+      if (fadingOut) {
+        alpha = Math.max(0, (a.fade.outEnd - t) / CAT_FADE_SEC);
+      } else if (a.fade) {
+        // 見えていない間に、次の場面の位置（タイトル・次の日の昼のスタート）へ移す（途中の位置を通らない）
+        if (!a.fade.moved) {
+          a.fade.moved = true;
+          a.shownDistance = poseFor(view).distance;
+          a.lapBlend = 0;
+          a.pathOffset = 0;
+          a.facing = 0;
+          a.shownP = null;
+        }
+        alpha = Math.min(1, (t - a.fade.outEnd) / CAT_FADE_SEC);
+        if (alpha >= 1) a.fade = null;
+      }
+      const coatKey = fadingOut ? a.fade.coat : view.coat;
+      COAT = COATS[coatKey] ?? COATS.chatora;
+      const faceKey = fadingOut ? a.fade.face : view.face;
+      FACE = faceParams(faceKey);
+      // 読書中に本をのぞき込んでいる猫（peekBook）は、膝には乗せず、膝の前（距離0の床）で描く（膝に乗るのは和解のときだけ）
+      const cat = fadingOut ? a.fade.pose : poseFor(view);
+      // 消えている間は、前の画面の猫の見た目（アップ・寝姿の動き・性格の仕草）のまま描く
+      const look = fadingOut
+        ? a.fade.look
+        : { closeup: !!view.closeup, lapT: view.lapTime ?? 0, personality: view.personality, wariness: view.wariness ?? 0, shy: !!view.shy };
+      // 紙芝居（イントロ・エピローグ）と結果画面では、猫を描く位置を直接決める（view.catAt { x, y, s, alpha, outside }。src/scenes/storySlides.js）。
+      // 消えている間は、前の画面で描いていた位置のまま
+      const at = fadingOut ? a.fade.at : !look.closeup ? view.catAt : null;
+      a.last = { pose: cat, coat: coatKey, face: faceKey, look, at };
+      a.shown = { alpha, coat: coatKey, face: faceKey, mode: cat.mode };
+      if (cat.mode !== a.lastMode) {
+        a.lastMode = cat.mode;
+        a.modeStart = t;
+      }
+      const follow = cat.mode === 'flee' ? 10 : 5;
+      // アップの間は、次の画面（部屋の隅から始まる）に合わせて距離を先に戻しておく
+      if (look.closeup) a.shownDistance = MAX_VALUE;
+      else a.shownDistance += (cat.distance - a.shownDistance) * clamp01(dt * follow);
+      a.pathOffset *= Math.exp(-dt * 1.5);
+      updateIdleBlink(t);
+      // 膝に跳び乗る（LAP_JUMP_SEC かけて動く）。膝の姿でなくなったときも、同じ速さで戻す
+      a.lapBlend = cat.mode === 'lap' ? Math.min(1, a.lapBlend + dt / LAP_JUMP_SEC) : Math.max(0, a.lapBlend - dt / LAP_JUMP_SEC);
+
+      const scale = canvas.width / W;
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+
+      ctx.save();
+      if (t < a.shakeUntil) ctx.translate(Math.sin(t * 90) * 4, Math.cos(t * 70) * 2);
+      if (view.dayTime !== undefined) a.dayTime = view.dayTime;
+      else if (view.scene === 'title' || view.scene === 'name') a.dayTime = 0;
+      // イベントの小道具の状態を先に進める（窓の外の鳥は、部屋といっしょに描く）
+      const prop = updateProp(view, t);
+      const p = look.closeup ? CLOSEUP : at ? { x: at.x, y: at.y, s: at.s } : catPosition(a.shownDistance);
+      const dx = a.shownP ? p.x - a.shownP.x : 0;
+      const facingTo = cat.walking && Math.abs(dx) > 0.02 ? Math.sign(dx) : 0;
+      a.facing += (facingTo - a.facing) * clamp01(dt * 6);
+      a.shownP = p;
+      const paintCat = () => withAlpha(alpha * (at?.alpha ?? 1), (g) => {
+        g.save();
+        g.translate(p.x, p.y);
+        g.scale(p.s, p.s);
+        drawShadow(g, cat.mode);
+        drawCat(g, cat.mode, {
+          t,
+          modeT: t - a.modeStart,
+          blink: eyelidAmount(t),
+          lapT: look.lapT,
+          scale: p.s,
+          walking: !!cat.walking,
+          closeup: look.closeup,
+          facing: a.facing,
+          personality: look.personality,
+          wariness: look.wariness,
+          shy: look.shy,
+        });
+        drawEffects(g, t, p.s, look);
+        g.restore();
+      });
+      // 庭にいる猫（outside）は、窓の切り抜きの中、ガラスより奥に描く。view.night なら夜（エピローグ・結果画面）
+      drawRoom(ctx, daylightAt(a.dayTime, view.scene === 'night' || !!view.night), prop?.kind === 'bird' ? (g) => drawWindowBird(g, prop, t) : null, {
+        open: view.windowOpen ?? 0,
+        garden: at?.outside ? paintCat : null,
+      });
+      // なでようと手を伸ばしている間は、左手を膝から離す（腕が3本に見えないように）
+      const reaching = a.effects.some((e) => e.type === 'reach' && t - e.t0 < REACH_SEC);
+      const lap = () => {
+        if (!look.closeup) drawLap(ctx, { leftHand: !reaching });
+      };
+      // 膝に乗るまでは、猫は膝の奥（膝を手前に描く）。跳び乗ったら膝の上（猫を手前に描く）
+      const onLap = cat.mode === 'lap' && a.lapBlend > 0.6;
+      if (onLap) lap();
+      // イベントの小道具：猫より奥に置くもの（猫が箱から出たあとの空の箱）を先に描く
+      if (prop && propBehind(prop, cat)) drawProp(ctx, prop, t, p);
+      if (!at?.outside) paintCat();
+      // 猫の手前に置くもの（猫が入っている箱）
+      if (prop && !propBehind(prop, cat)) drawProp(ctx, prop, t, p);
+      if (!onLap) lap();
+      // 読書中の本は、膝の上（猫より手前）に持つ
+      if (prop?.kind === 'book') drawBook(ctx, prop, t);
+
+      drawReach(ctx, t, p);
+      drawPaws(ctx, t);
+      ctx.restore();
+
+      drawPlayerEyelids(ctx, view.blinkHoldMs ?? 0, dt);
+      drawBlinkGauge(ctx, view.blinkHoldMs ?? 0);
+      a.effects = a.effects.filter((e) => t - e.t0 < 2);
+    }
+
+    // paint(g) で描いたものを、alpha の濃さで重ねる。薄くするときは下書き用の Canvas に描いてからまとめて重ねる
+    // （そのまま薄く描くと、体と頭の重なりなど、下の線が透けて見える）。下書きを作れない環境では、そのまま薄く描く
+    function withAlpha(alpha, paint) {
+      if (alpha >= 1) return paint(ctx);
+      const layer = alphaLayer();
+      ctx.save();
+      if (!layer) {
+        ctx.globalAlpha = alpha;
+        paint(ctx);
+        ctx.restore();
+        return;
+      }
+      const g = layer.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.clearRect(0, 0, layer.width, layer.height);
+      g.setTransform(ctx.getTransform());
+      g.lineJoin = 'round';
+      g.lineCap = 'round';
+      paint(g);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(layer, 0, 0);
+      ctx.restore();
+    }
+
+    function alphaLayer() {
+      if (typeof document === 'undefined' || !ctx.getTransform) return null;
+      if (!a.layer) a.layer = document.createElement('canvas');
+      if (a.layer.width !== canvas.width) a.layer.width = canvas.width;
+      if (a.layer.height !== canvas.height) a.layer.height = canvas.height;
+      return a.layer;
+    }
+
+    function poseFor(view) {
+      if (view.scene === 'title') return { mode: 'relax', distance: 55 };
+      if (view.scene === 'ending') {
+        if (view.cat) return view.cat;
+        return view.endingId === 'visitor' ? { mode: 'tailUp', distance: 55 } : { mode: 'lap', distance: 0 };
+      }
+      if (view.cat) return view.cat;
+      return { mode: 'relax', distance: MAX_VALUE };
+    }
+
+    function updateIdleBlink(t) {
+      if (t >= a.nextBlink) {
+        a.blinkStart = t;
+        a.nextBlink = t + 2.5 + Math.random() * 3;
+      }
+    }
+
+    // 0=開いている 1=閉じている
+    function eyelidAmount(t) {
+      const back = a.effects.find((e) => e.type === 'blinkBack');
+      if (back) {
+        const u = (t - back.t0) / 1.4;
+        if (u < 1) return Math.sin(u * Math.PI) ** 0.6;
+      }
+      const u = (t - a.blinkStart) / 0.18;
+      return u >= 0 && u < 1 ? Math.sin(u * Math.PI) : 0;
+    }
+
+    // look：猫の見た目（性格・警戒）。ビビりが耳を伏せている間は「ビクビク」を出し続ける
+    function drawEffects(ctx, t, scale, look = {}) {
+      const timid = a.effects.some((e) => e.type === 'timid' && t - e.t0 < TIMID_SEC);
+      // 耳を伏せている間の「ビクビク」は、同じ場所に出る「ほっ」が出ている間は出さない（文字が重なって読めないので）
+      const relief = a.effects.some((e) => e.type === 'relief' && t - e.t0 < RELIEF_SEC);
+      const earsDown = look.personality === 'bibiri' && look.wariness >= BIBIRI_EARS_WARINESS;
+      if (timid || (earsDown && !relief)) timidCue(ctx, t, scale);
+      for (const e of a.effects) {
+        const u = t - e.t0;
+        if (e.type === 'purr' || e.type === 'blinkBack') {
+          const n = e.type === 'purr' ? 4 : 1;
+          for (let i = 0; i < n; i++) {
+            const k = u - i * 0.18;
+            if (k < 0 || k > 1.4) continue;
+            const x = (i % 2 ? 1 : -1) * (24 + i * 8) + Math.sin(k * 6 + i) * 5;
+            heart(ctx, x, -135 - k * 50, 9 - k * 2, 1 - k / 1.4);
+          }
+        } else if (e.type === 'kick' && u < 0.5) {
+          burst(ctx, -45, -70, u / 0.5);
+        } else if (e.type === 'stare' && u < 1.2) {
+          sweat(ctx, 44, -118, u);
+        } else if (e.type === 'relief' && u < RELIEF_SEC) {
+          reliefCue(ctx, u, scale);
+        }
+      }
+    }
+
+    // イベントの小道具の状態を進める。箱は、猫が箱の前に着いたとき（approach が終わったとき）の場所に置き、その日のあいだ動かさない
+    function updateProp(view, t) {
+      if (view.scene !== 'day' || !view.prop) {
+        a.prop = null;
+        return null;
+      }
+      const { kind, phase } = view.prop;
+      if (!a.prop || a.prop.kind !== kind) a.prop = { kind, phase, start: t, prev: null, anchor: null };
+      // from：phase が変わったときの鳥の位置（飛び去るときは、そこから飛ぶ）
+      if (a.prop.phase !== phase) a.prop = { ...a.prop, prev: a.prop.phase, phase, start: t, from: a.prop.birdAt };
+      // 本：ページ数が増えたら、めくる動きを始める
+      if (kind === 'book' && a.prop.pages !== view.prop.pages) a.prop = { ...a.prop, pages: view.prop.pages, flipAt: a.prop.pages === undefined ? null : t };
+      // 表示上の猫は少し遅れて追いかけてくるので、いまの表示の位置ではなく、猫が止まる位置（実際の距離）に置く
+      if (kind === 'parcel' && !a.prop.anchor && phase !== 'approach') {
+        const q = placement(view.cat.distance);
+        a.prop.anchor = { x: q.x, y: q.y + PARCEL_SINK * q.s, s: q.s };
+      }
+      return a.prop;
+    }
+
+    // なでようとしたとき、膝に置いていた左手が猫のほうへ伸びる
+    function drawReach(ctx, t, p) {
+      const reach = a.effects.find((e) => e.type === 'reach' && t - e.t0 < REACH_SEC);
+      if (!reach) return;
+      const k = Math.sin(((t - reach.t0) / REACH_SEC) * Math.PI);
+      const rest = restingHand(-1);
+      drawArm(ctx, -1, lerp(rest.x, p.x - 30 * p.s, k * 0.9), lerp(rest.y, p.y - 60 * p.s, k * 0.9));
+    }
+
+    // 猫以外をタップしたところに、肉球の足あとを残す
+    function drawPaws(ctx, t) {
+      for (const e of a.effects) {
+        if (e.type !== 'paw') continue;
+        const u = (t - e.t0) / 0.9;
+        if (u >= 1) continue;
+        ctx.save();
+        ctx.globalAlpha = (1 - u) * 0.85;
+        ctx.translate(e.x, e.y - u * 6);
+        ctx.scale(0.8 + u * 0.2, 0.8 + u * 0.2);
+        ellipse(ctx, 0, 3, 7, 6, C.heart);
+        for (const [dx, dy] of [[-8, -6], [-3, -10], [3, -10], [8, -6]]) ellipse(ctx, dx, dy, 2.6, 3, C.heart);
+        ctx.restore();
+      }
+    }
+
+    function drawPlayerEyelids(ctx, holdMs, dt) {
+      const target = holdMs > 0 ? clamp01(holdMs / 600) * 0.46 : 0;
+      a.lid += (target - a.lid) * clamp01(dt * (holdMs > 0 ? 8 : 12));
+      if (a.lid < 0.003) return;
+      const h = a.lid * H;
+      ctx.save();
+      ctx.fillStyle = 'rgba(59, 44, 37, 0.92)';
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(W, 0);
+      ctx.lineTo(W, h);
+      ctx.quadraticCurveTo(W / 2, h + 40, 0, h);
+      ctx.closePath();
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(0, H);
+      ctx.lineTo(W, H);
+      ctx.lineTo(W, H - h);
+      ctx.quadraticCurveTo(W / 2, H - h - 40, 0, H - h);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // まばたきの長さのゲージ。ちょうどいい長さ（minHoldMs〜maxHoldMs）を緑で示す
+    function drawBlinkGauge(ctx, holdMs) {
+      if (holdMs <= 0) return;
+      const { minHoldMs, maxHoldMs } = RULES.blink;
+      const full = maxHoldMs + 500;
+      const x0 = 90;
+      const w = 180;
+      const y = H / 2;
+      const at = (ms) => x0 + (Math.min(ms, full) / full) * w;
+      const ok = holdMs >= minHoldMs && holdMs <= maxHoldMs;
+      ctx.save();
+      ctx.globalAlpha = clamp01(holdMs / 200);
+      roundRect(ctx, x0 - 4, y - 9, w + 8, 18, 9);
+      ctx.fillStyle = 'rgba(255, 250, 243, 0.92)';
+      ctx.fill();
+      roundRect(ctx, at(minHoldMs), y - 5, at(maxHoldMs) - at(minHoldMs), 10, 5);
+      ctx.fillStyle = ok ? '#8fcf7e' : '#c7e6bd';
+      ctx.fill();
+      ellipse(ctx, at(holdMs), y, 7, 7, ok ? '#5aa548' : '#fffaf3', C.line, 0, 2.4);
+      ctx.font = 'bold 15px sans-serif';
+      ctx.textAlign = 'center';
+      const label = holdMs < minHoldMs ? 'ゆっくり……' : ok ? 'いま離す！' : 'ながすぎ……';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = C.line;
+      ctx.strokeText(label, W / 2, y - 18);
+      ctx.fillStyle = '#fffaf3';
+      ctx.fillText(label, W / 2, y - 18);
+      ctx.restore();
+    }
+
+    // 直前に猫を描いた位置 {x, y, s}（まだ描いていなければ null）
+    const shownPosition = () => a.shownP;
+    // 直前に描いた猫の濃さ・毛色・顔・姿勢 { alpha, coat, face, mode }
+    const shownCat = () => a.shown;
+    // いまの明るさ（昼の進み具合 0〜1）。エピローグで、そこから夕方へ進めるため
+    const shownDayTime = () => a.dayTime;
+
+    return { resize, toLogical, hitTestCat, hitTestBook, inBookArea, addEffect, draw, shownPosition, shownCat, shownDayTime };
+  }
+
+  // ---------------------------------------------------------------- 部屋（ベタ塗り）
+
+  // ねこ手帳の小さな絵：座ってこちらを見ている猫だけを、部屋なしで描く。
+  // silhouette が true なら、まだ出会っていない毛色として影だけにする
+  function drawCatPortrait(canvas, coat, { silhouette = false, face = DEFAULT_FACE } = {}) {
+    const ctx = canvas.getContext('2d');
+    const size = 120;
+    const prev = COAT;
+    const prevFace = FACE;
+    COAT = COATS[coat] ?? COATS.chatora;
+    FACE = faceParams(face);
+    ctx.save();
+    // 途中で失敗しても、ゲームの描画の毛色・顔と Canvas の状態は元に戻す
+    try {
+      ctx.setTransform(canvas.width / size, 0, 0, canvas.height / size, 0, 0);
+      ctx.clearRect(0, 0, size, size);
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.translate(size / 2, size - 10);
+      ctx.scale(0.62, 0.62);
+      drawCat(ctx, 'look', { t: 0, modeT: 10, blink: 0, lapT: 0, scale: 0.62, walking: false, closeup: true, facing: 0, wariness: 0 });
+    } finally {
+      ctx.restore();
+      COAT = prev;
+      FACE = prevFace;
+    }
+    if (silhouette) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-in';
+      ctx.fillStyle = '#d9cbbd';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+  }
+
+  // 床まである掃き出し窓（1階。外は庭）。x -4〜236・y 84〜338。左端は画面の外に少しはみ出す
+  const WIN = { x: -4, y: 84, w: 240, h: 254 };
+  // 左の戸を開けたときに、右へずらす幅（open = 1 のとき）
+  const WIN_SLIDE = 84;
+  // 窓の外の、空と庭（生け垣）の境目
+  const HORIZON = 250;
+  // 床に置いたものの影
+  const floorShadow = (night) => (night ? 'rgba(0, 0, 0, 0.14)' : 'rgba(170, 120, 72, 0.2)');
+
+  // light: 時間帯の景色（src/render/daylight.js の daylightAt）。outside：窓の外に描き足すもの（窓の形で切り抜いた中に、景色のあとで描く）
+  // win: { open（窓の開き 0〜1。左の戸を右へずらす）, garden（庭にいる猫を描く関数。ガラスより奥に描く） }。遊んでいる間の窓は閉めておく
+  function drawRoom(ctx, light, outside = null, win = {}) {
+    const night = light.phase === 'night';
+    ctx.fillStyle = night ? '#454160' : '#f7ead8';
+    ctx.fillRect(0, 0, W, 345);
+
+    // 窓とカーテン
+    const shift = clamp01(win.open ?? 0) * WIN_SLIDE;
+    const mid = WIN.x + WIN.w / 2;
+    ctx.save();
+    roundRect(ctx, WIN.x, WIN.y, WIN.w, WIN.h, 8);
+    ctx.save();
+    ctx.clip();
+    drawWindowView(ctx, light);
+    outside?.(ctx);
+    win.garden?.(ctx);
+    // ガラス（うっすら白く、つやの線）。開けたところ（左の戸をずらしたすき間）にはガラスがない
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.16)';
+    ctx.fillRect(WIN.x + shift, WIN.y, mid + 2 - WIN.x, WIN.h);
+    ctx.fillRect(mid - 2, WIN.y, WIN.x + WIN.w - mid + 2, WIN.h);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.lineWidth = 3;
+    line(ctx, WIN.x + 26 + shift, WIN.y + 50, WIN.x + 46 + shift, WIN.y + 24);
+    line(ctx, mid + 40, WIN.y + 220, mid + 62, WIN.y + 192);
+    ctx.restore();
+    // 景色を描いたので、窓の形をもう一度なぞって枠を描く
+    roundRect(ctx, WIN.x, WIN.y, WIN.w, WIN.h, 8);
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#fffdf7';
+    ctx.stroke();
+    // 2枚の引き戸の枠（左の戸は、開けると右へずれて右の戸の奥に重なる）
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = night ? '#d8d0e0' : '#fffdf7';
+    ctx.strokeRect(WIN.x + 2 + shift, WIN.y + 2, mid - WIN.x, WIN.h - 4);
+    ctx.strokeRect(mid - 2, WIN.y + 2, WIN.x + WIN.w - mid, WIN.h - 4);
+    ctx.fillStyle = night ? '#9b7a8c' : '#f5c8bf';
+    for (const side of [0, 1]) {
+      const x0 = side ? WIN.x + WIN.w - 8 : WIN.x - 12;
+      ctx.beginPath();
+      ctx.moveTo(x0, WIN.y - 10);
+      ctx.lineTo(x0 + 20, WIN.y - 10);
+      ctx.quadraticCurveTo(x0 + (side ? 2 : 18), 200, x0 + (side ? 14 : 6), 344);
+      ctx.lineTo(x0 + (side ? 20 : 0), 344);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // 壁の額（肉球）
+    ctx.save();
+    roundRect(ctx, 266, 96, 72, 58, 8);
+    ctx.fillStyle = '#fffdf7';
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#d0a57a';
+    ctx.stroke();
+    ellipse(ctx, 302, 132, 10, 8, '#f4b6c2');
+    for (const [dx, dy] of [[-12, -10], [-4, -16], [4, -16], [12, -10]]) ellipse(ctx, 302 + dx, 132 + dy, 4, 4.5, '#f4b6c2');
+    ctx.restore();
+
+    // 床
+    ctx.fillStyle = night ? '#6f5d56' : '#ead0a8';
+    ctx.fillRect(0, 345, W, H - 345);
+    ctx.fillStyle = night ? '#5a4c48' : '#dcbd92';
+    ctx.fillRect(0, 338, W, 9);
+    ctx.save();
+    ctx.strokeStyle = night ? 'rgba(0,0,0,0.1)' : 'rgba(170, 120, 72, 0.16)';
+    ctx.lineWidth = 2;
+    for (let i = -4; i <= 4; i++) line(ctx, 180 + i * 40, 347, 180 + i * 130, H);
+    ctx.restore();
+
+    // 窓から床に差す日だまり（朝は右へ長く、昼は短く、夕方は左へ長く）
+    const sp = light.patch;
+    if (sp.alpha > 0) {
+      const x0 = WIN.x + 10;
+      const x1 = WIN.x + WIN.w - 10;
+      ctx.beginPath();
+      ctx.moveTo(x0, 347);
+      ctx.lineTo(x1, 347);
+      ctx.lineTo(x1 + sp.skew + sp.length * 0.25, 347 + sp.length);
+      ctx.lineTo(x0 + sp.skew - sp.length * 0.25, 347 + sp.length);
+      ctx.closePath();
+      ctx.fillStyle = rgba(sp.color, sp.alpha);
+      ctx.fill();
+    }
+
+    // ラグ
+    ellipse(ctx, 185, 520, 150, 62, night ? '#86677a' : '#f7d4c6');
+    ellipse(ctx, 185, 520, 124, 48, null, night ? '#9b7d8e' : '#fae4da', 0, 3);
+
+    // 植木鉢（壁ぎわから少し手前の床に置く）
+    ellipse(ctx, PLANT_X, PLANT_FLOOR, 22, 5, floorShadow(night));
+    for (const [dx, rot] of [[-8, -0.5], [0, 0], [8, 0.5]]) ellipse(ctx, PLANT_X + dx, PLANT_FLOOR - 46, 8, 22, '#8dbb7f', null, rot);
+    ctx.save();
+    roundRect(ctx, PLANT_X - 16, PLANT_FLOOR - 34, 32, 34, 6);
+    ctx.fillStyle = '#dd9469';
+    ctx.fill();
+    ctx.restore();
+
+    drawStandLight(ctx, light.lamp, night);
+    // 部屋全体にかける薄い色（朝はやわらかく、夕方は橙色）。猫はこのあとに描くので、猫の色は染めない
+    // （庭にいる猫（win.garden）だけは窓の外の景色の一部なので、景色といっしょに染まる）
+    if (light.tint.alpha > 0) {
+      ctx.fillStyle = rgba(light.tint.color, light.tint.alpha);
+      ctx.fillRect(0, 0, W, H);
+    }
+    drawLampGlow(ctx, light.lamp);
+  }
+
+  // 窓の外：空（上から下へ色を変えた帯）・雲・太陽（夜は月と星）・1階から見た庭（奥に生け垣、手前に芝生）・木の枝
+  function drawWindowView(ctx, light) {
+    const night = light.phase === 'night';
+    const BANDS = 5;
+    const band = (HORIZON - WIN.y) / BANDS;
+    for (let i = 0; i < BANDS; i++) {
+      ctx.fillStyle = mixColor(light.skyTop, light.skyBottom, i / (BANDS - 1));
+      ctx.fillRect(WIN.x, WIN.y + band * i, WIN.w, band + 1);
+    }
+    const s = light.sun;
+    if (s.kind === 'moon') {
+      for (const [x, y] of [[58, 92], [80, 112], [150, 150], [64, 150], [104, 88]]) ellipse(ctx, x, y, 1.6, 1.6, '#fdf6d8');
+      ellipse(ctx, s.x, s.y, 11, 11, s.color);
+      // 欠けた部分は、月の高さの空の帯と同じ色で塗る
+      const at = Math.min(BANDS - 1, Math.max(0, Math.floor((s.y - 3 - WIN.y) / band)));
+      ellipse(ctx, s.x + 5, s.y - 3, 9, 9, mixColor(light.skyTop, light.skyBottom, at / (BANDS - 1)));
+    } else {
+      ellipse(ctx, s.x, s.y, 13, 13, s.color);
+    }
+    if (light.cloud > 0) {
+      ctx.save();
+      ctx.globalAlpha = light.cloud;
+      for (const [x, y] of [[70, 108], [138, 126]]) {
+        ellipse(ctx, x, y, 16, 7, '#ffffff');
+        ellipse(ctx, x + 10, y - 4, 10, 7, '#ffffff');
+      }
+      ctx.restore();
+    }
+    const lawn = mixColor(light.hill, '#ffffff', night ? 0.05 : 0.22);
+    ctx.fillStyle = lawn;
+    ctx.fillRect(WIN.x, 262, WIN.w, 80);
+    ctx.fillStyle = light.hill;
+    ctx.fillRect(WIN.x, 244, WIN.w, 22);
+    for (let x = WIN.x - 6; x <= WIN.x + WIN.w + 8; x += 18) ellipse(ctx, x, 246, 12, 10, light.hill);
+    // 庭の木の枝は、いつも見えている（鳥の日は、ここに鳥がとまる）
+    drawBranch(ctx, night);
+  }
+
+  // スタンドライトの位置（額の下。猫が近づいてくる道すじの後ろに柱が立たないよう、右に寄せる）。
+  // 植木鉢と同じく、壁ぎわから少し手前の床に置く。LAMP_Y：かさの下のふち、LAMP_FLOOR：床に着くところ
+  const LAMP_X = 280;
+  const LAMP_Y = 254;
+  const LAMP_FLOOR = 366;
+  // 植木鉢の位置（ライトの右）と、床に着くところ
+  const PLANT_X = 334;
+  const PLANT_FLOOR = 372;
+
+  // 部屋の奥のスタンドライト。lamp: 明るさ 0〜1（0 は消えている）
+  function drawStandLight(ctx, lamp, night) {
+    ctx.save();
+    ellipse(ctx, LAMP_X, LAMP_FLOOR + 2, 18, 4, floorShadow(night));
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#b08c6a';
+    line(ctx, LAMP_X, LAMP_Y - 4, LAMP_X, LAMP_FLOOR - 2);
+    ellipse(ctx, LAMP_X, LAMP_FLOOR, 14, 4, '#b08c6a');
+    ctx.beginPath();
+    ctx.moveTo(LAMP_X - 16, LAMP_Y - 24);
+    ctx.lineTo(LAMP_X + 16, LAMP_Y - 24);
+    ctx.lineTo(LAMP_X + 24, LAMP_Y);
+    ctx.lineTo(LAMP_X - 24, LAMP_Y);
+    ctx.closePath();
+    ctx.fillStyle = mixColor('#f3e3c8', '#fff4c2', lamp);
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#d0a57a';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // スタンドライトの明かり：かさの周りと床を、暖かい色でほんのり明るくする（ベタ塗りの輪を重ねる）
+  function drawLampGlow(ctx, lamp) {
+    if (lamp <= 0) return;
+    for (let r = 120; r >= 30; r -= 15) ellipse(ctx, LAMP_X, LAMP_Y, r, r * 0.8, rgba('#ffd98a', 0.035 * lamp));
+    ellipse(ctx, LAMP_X, LAMP_FLOOR + 4, 70, 14, rgba('#ffd98a', 0.16 * lamp));
+  }
+
+  // 画面手前の、プレイヤーの膝（正座しているのを上から見たところ）。
+  // 丸を2つ並べるだけだと胸に見えるので、太ももの長さ・ひざ頭・膝に置いた手と袖で「自分の膝」とわかるようにする
+  function drawLap(ctx, { leftHand = true } = {}) {
+    ctx.save();
+    for (const side of [-1, 1]) {
+      // 太もも：左右のひざをそろえて座っている。外側は手前（画面の下）に向かって少し広がる
+      const cx = 180 + side * 80;
+      const x = (dx) => 180 + side * dx;
+      ctx.beginPath();
+      ctx.moveTo(x(0), H + 10);
+      ctx.lineTo(x(2), 592);
+      ctx.bezierCurveTo(x(4), 548, x(150), 546, x(152), 592);
+      ctx.lineTo(x(170), H + 10);
+      ctx.closePath();
+      ctx.fillStyle = C.pants;
+      ctx.fill();
+      ctx.lineWidth = LW;
+      ctx.strokeStyle = C.line;
+      ctx.stroke();
+      // ひざ頭と、ももの外側の縫い目
+      ctx.lineWidth = 2.4;
+      ctx.strokeStyle = C.pantsLine;
+      ctx.beginPath();
+      ctx.moveTo(cx - 24, 584);
+      ctx.quadraticCurveTo(cx, 572, cx + 24, 584);
+      ctx.stroke();
+      ctx.setLineDash([5, 6]);
+      line(ctx, x(140), 604, x(150), H);
+      ctx.setLineDash([]);
+    }
+    if (leftHand) drawRestingHand(ctx, -1);
+    drawRestingHand(ctx, 1);
+    ctx.restore();
+  }
+
+  // 膝に置いた手の位置（side: -1=左手, 1=右手）
+  function restingHand(side) {
+    return { x: 180 + side * 116, y: 584 };
+  }
+
+  // 袖は画面の外（体のほう）から続く
+  function shoulderOf(side) {
+    return { x: 180 + side * 176, y: H + 30 };
+  }
+
+  function drawRestingHand(ctx, side) {
+    const h = restingHand(side);
+    drawArm(ctx, side, h.x, h.y);
+  }
+
+  // 腕：袖 → 袖口 → 手 の順に描く。袖口と手は、肩から手へ向かう腕の向きにそろえる
+  // （向きがずれると、袖口の輪郭が腕から浮いて見える）。袖の先は手のひらの下に隠す
+  function drawArm(ctx, side, hx, hy) {
+    const sh = shoulderOf(side);
+    const ang = Math.atan2(hy - sh.y, hx - sh.x);
+    const ux = Math.cos(ang);
+    const uy = Math.sin(ang);
+    // 袖口は手首（手のひらの下に少し入る）から、肩のほうへ CUFF だけの帯
+    const at = (d, w = 0) => ({ x: hx - ux * d - uy * w, y: hy - uy * d + ux * w });
+    const WRIST = 14;
+    const CUFF = 13;
+    const wrist = at(WRIST);
+    const seam = at(WRIST + CUFF);
+    ctx.save();
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = C.line;
+    ctx.lineWidth = 32;
+    line(ctx, sh.x, sh.y, wrist.x, wrist.y);
+    ctx.strokeStyle = C.sleeve;
+    ctx.lineWidth = 25.6;
+    line(ctx, sh.x, sh.y, seam.x, seam.y);
+    // 袖口：袖と同じ色の帯に、ゴム編みの筋と、袖との境目の線
+    const W = 15;
+    const corners = [at(WRIST, -W), at(WRIST, W), at(WRIST + CUFF, W), at(WRIST + CUFF, -W)];
+    ctx.beginPath();
+    corners.forEach((c, i) => (i ? ctx.lineTo(c.x, c.y) : ctx.moveTo(c.x, c.y)));
+    ctx.closePath();
+    ctx.fillStyle = C.sleeve;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(160, 84, 60, 0.4)';
+    ctx.lineWidth = 1.6;
+    for (const w of [-8, 0, 8]) {
+      const a0 = at(WRIST, w);
+      const a1 = at(WRIST + CUFF, w);
+      line(ctx, a0.x, a0.y, a1.x, a1.y);
+    }
+    ctx.strokeStyle = C.line;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    corners.forEach((c, i) => (i ? ctx.lineTo(c.x, c.y) : ctx.moveTo(c.x, c.y)));
+    ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+    // 手：指先は腕の向きの先
+    ctx.save();
+    ctx.translate(hx, hy);
+    ctx.rotate(ang + Math.PI / 2);
+    // 親指は内側（体の真ん中のほう）
+    ellipse(ctx, side * -14, 4, 6.5, 10, C.skin, C.line, side * 0.4);
+    ellipse(ctx, 0, -2, 17, 20, C.skin, C.line);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = C.line;
+    for (const fx of [-7, 0, 7]) line(ctx, fx, -21, fx, -11);
+    ctx.restore();
+  }
+
+  function drawShadow(ctx, mode) {
+    const w = mode === 'belly' || mode === 'lap' ? 62 : mode === 'inBox' ? 60 : 42;
+    ellipse(ctx, mode === 'belly' ? -8 : 0, 0, w, 8, 'rgba(90, 62, 43, 0.13)');
+  }
+
+  // ---------------------------------------------------------------- 猫
+
+  // 性格ごとの仕草。サインの見分けやすさは変えず、雰囲気だけを変える
+  // - 甘えん坊：いつも首をかしげて、ゆらゆらしている
+  // - ツンデレ：ツンの間（k.shy）は、こっちを見るときも、ごきげんなときも、目をそらす。デレたら正面を向く
+  // - ビビり：警戒しているあいだは耳を伏せて、小さく震える
+  function personalize(mode, k, opts) {
+    const o = { ...opts };
+    if (k.personality === 'amaenbo') {
+      o.tilt = (o.tilt ?? 0) + 0.08 + Math.sin(k.t * 1.8) * 0.06;
+    } else if (k.personality === 'tsundere' && k.shy && (mode === 'look' || mode === 'tailUp' || mode === 'purr')) {
+      o.faceDx = -14;
+      o.turnAway = true;
+    } else if (k.personality === 'bibiri' && k.wariness >= BIBIRI_EARS_WARINESS && (o.ears ?? 'up') === 'up') {
+      o.ears = 'half';
+    }
+    return o;
+  }
+
+  function drawCat(ctx, mode, k) {
+    const breath = 1 + 0.025 * Math.sin(k.t * 2.4);
+    const sit = (opts) => sitting(ctx, k, breath, personalize(mode, k, opts));
+    if (k.personality === 'bibiri' && k.wariness >= 30 && mode !== 'flee' && mode !== 'lap') {
+      ctx.translate(Math.sin(k.t * 47) * 0.9, 0);
+    }
+    switch (mode) {
+      case 'relax':
+        // 近づいている間は歩く。止まったら香箱座り
+        if (k.walking) return walk(ctx, k, breath, personalize(mode, k, {}));
+        return loaf(ctx, k, breath, 'sleep', personalize(mode, k, {}).ears);
+      case 'peekBook':
+        // 読書中：膝の前に座って、首をかしげて本をのぞき込む（「チラッ」と見分けがつくよう、目は小さいまま・合図は出さない）
+        return sit({ eyes: 'dot', tail: 'sway', tilt: 0.24 + Math.sin(k.t * 1.2) * 0.05 });
+      case 'sit':
+        // 紙芝居・結果画面：庭や窓辺に座って、こっちを見ている（「チラッ」の合図は出さない）
+        return sit({ eyes: 'dot', tail: 'sway', tilt: Math.sin(k.t * 1.2) * 0.06 });
+      case 'look':
+        sit({ eyes: 'dotBig', tail: 'sway', tilt: Math.sin(k.t * 1.5) * 0.07 });
+        // 「チラッ」は昼の駆け引きの合図。名前を付けるときのアップでは出さない
+        if (!k.closeup) lookCue(ctx, k);
+        return;
+      case 'tailUp':
+        ctx.translate(0, -Math.abs(Math.sin(k.t * 4)) * 2);
+        return sit({ eyes: 'dot', tail: 'up' });
+      case 'tailFlick':
+        sit({ eyes: 'grumpy', mouth: 'he', tail: 'flick', ears: 'back' });
+        return angerMark(ctx, 38 + cueShift()[0], -126 + cueShift()[1], k.t);
+      case 'belly':
+        return belly(ctx, k, breath);
+      case 'backTurn':
+        return backView(ctx, k, breath);
+      case 'walkAway': {
+        // 通い猫のエピローグ：後ろ姿のまま、ちょこちょこ歩いて窓へ向かう
+        const step = k.t * 9;
+        ctx.translate(0, -Math.abs(Math.sin(step)) * 3);
+        ctx.rotate(Math.sin(step) * 0.04);
+        return backView(ctx, k, breath);
+      }
+      case 'rub':
+        ctx.rotate(Math.sin(k.t * 3) * 0.06);
+        return sit({ eyes: 'happy', tail: 'up', tilt: 0.3 + Math.sin(k.t * 3) * 0.1 });
+      case 'fakeRub':
+        // すり寄りと同じ仕草だが、しっぽはパタパタ、目は笑っていない
+        ctx.rotate(Math.sin(k.t * 3) * 0.06);
+        return sit({ eyes: 'dot', tail: 'flick', tilt: 0.3 + Math.sin(k.t * 3) * 0.1 });
+      case 'purr':
+        return sit({ eyes: 'happy', tail: 'sway', tilt: 0.12 });
+      case 'flee': {
+        const jump = Math.sin(clamp01(k.modeT / 0.4) * Math.PI) * 26;
+        ctx.translate(0, -jump);
+        ctx.scale(1.08, 1.08);
+        sitting(ctx, k, breath, { eyes: 'shock', mouth: 'o', tail: 'puff', ears: 'back' });
+        return exclaim(ctx, 44, -132);
+      }
+      case 'inBox':
+        return inBox(ctx, k);
+      case 'lap':
+        return onLap(ctx, k, breath);
+      default:
+        return loaf(ctx, k, breath, 'sleep');
+    }
+  }
+
+  function sitting(ctx, k, breath, { eyes, mouth = 'w', tail, tilt = 0, ears = 'up', faceDx = 0, turnAway = false, kneadT = null }) {
+    drawTail(ctx, tail, k.t);
+    // 後ろ足
+    for (const side of [-1, 1]) ellipse(ctx, side * 25, -7, 13, 8, COAT.fur, C.line);
+    // 胴体（小さめの豆形）
+    ctx.save();
+    ctx.translate(0, -2);
+    ctx.scale(1, breath);
+    furShape(ctx, (c) => c.ellipse(0, -28, 33, 30, 0, 0, Math.PI * 2), () => ellipse(ctx, 0, -22, 18, 22, COAT.white));
+    ctx.restore();
+    // 前足（ふみふみ中は交互に上下）
+    for (const side of [-1, 1]) {
+      let lift = 0;
+      if (kneadT !== null) lift = Math.max(0, Math.sin(kneadT * 7 + (side > 0 ? Math.PI : 0))) * 7;
+      paw(ctx, side * 11, -5 - lift);
+    }
+    head(ctx, 0, -80, { tilt, eyes, mouth, ears, faceDx, turnAway, blink: k.blink });
+  }
+
+  // 歩く：小さく弾みながら前足を交互に出し、進む向きに少し体を傾けて顔を向ける。
+  // しっぽは立てない（しっぽピンのサインと見分けがつくように）
+  function walk(ctx, k, breath, opts) {
+    const step = k.t * 9;
+    ctx.translate(0, -Math.abs(Math.sin(step)) * 3);
+    ctx.rotate(k.facing * 0.07 + Math.sin(step) * 0.03);
+    sitting(ctx, k, breath, { eyes: 'dot', tail: 'sway', kneadT: k.t * 1.3, faceDx: k.facing * 7, ...opts });
+  }
+
+  function loaf(ctx, k, breath, eyes, ears = 'up') {
+    ctx.save();
+    ctx.scale(1, breath);
+    furShape(ctx, (c) => c.ellipse(0, -24, 50, 25, 0, 0, Math.PI * 2), () => bodyStripes(ctx, 26, -36));
+    ctx.restore();
+    drawTail(ctx, 'curl', k.t);
+    head(ctx, -4, -52, { eyes, ears, blink: k.blink, scale: 0.92 });
+    // 香箱座りで、たたんだ前足が少しだけのぞく
+    for (const side of [-1, 1]) ellipse(ctx, -4 + side * 13, -3, 9, 5.5, COAT.white, C.line, 0, LW);
+  }
+
+  function belly(ctx, k, breath) {
+    // しっぽ
+    tube(ctx, (c) => {
+      c.moveTo(44, -14);
+      c.quadraticCurveTo(72, -12 + Math.sin(k.t * 2) * 6, 86, -28 + Math.sin(k.t * 2) * 8);
+    });
+    // 上に向けた足。奥の2本（前足・後ろ足）は胴体の後ろ、手前の2本は胴体に重ねて描く
+    const leg = (x, y) => {
+      const wave = Math.sin(k.t * 2.5 + x) * 2;
+      tube(ctx, (c) => {
+        c.moveTo(x * 0.8, -30);
+        c.lineTo(x, y + wave);
+      }, 15, 9);
+      ellipse(ctx, x, y + wave - 2, 8, 6.5, COAT.white, C.line, 0, LW);
+    };
+    leg(-26, -52);
+    leg(16, -54);
+    ctx.save();
+    ctx.scale(1, breath);
+    furShape(ctx, (c) => c.ellipse(0, -22, 52, 22, 0, 0, Math.PI * 2), () => ellipse(ctx, 6, -28, 32, 12, COAT.white));
+    ctx.restore();
+    leg(-9, -56);
+    leg(32, -47);
+    head(ctx, -56, -30, { tilt: -0.45, eyes: 'dotBig', blink: k.blink, scale: 0.84 });
+  }
+
+  function backView(ctx, k, breath) {
+    for (const side of [-1, 1]) ellipse(ctx, side * 25, -7, 13, 8, COAT.fur, C.line);
+    ctx.save();
+    ctx.scale(1, breath);
+    furShape(ctx, (c) => c.ellipse(0, -28, 34, 31, 0, 0, Math.PI * 2), () => bodyStripes(ctx, 0, -40));
+    ctx.restore();
+    // 後ろ頭（顔は描かない）
+    ctx.save();
+    ctx.translate(0, -80);
+    for (const side of [-1, 1]) ear(ctx, side, 'up', false);
+    furShape(ctx, mochi, () => {
+      ctx.strokeStyle = COAT.stripe;
+      ctx.lineWidth = 6;
+      const { top } = FACE.shape;
+      for (const dx of [-14, 0, 14]) line(ctx, dx, top - 2, dx * 0.9, top + 20);
+    });
+    ctx.restore();
+    drawTail(ctx, 'curl', k.t);
+  }
+
+  function inBox(ctx, k) {
+    // 箱の内側
+    ctx.save();
+    ctx.fillStyle = '#a3754a';
+    ctx.beginPath();
+    ctx.moveTo(-56, -64);
+    ctx.lineTo(56, -64);
+    ctx.lineTo(44, -74);
+    ctx.lineTo(-44, -74);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    // 顔をのぞかせる
+    const peek = Math.sin(k.t * 1.2) * 3;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-90, -200, 180, 136);
+    ctx.clip();
+    head(ctx, 0, -70 + peek, { eyes: 'dot', blink: k.blink, scale: 0.85 });
+    ctx.restore();
+    // 箱の前面とフタ
+    ctx.save();
+    ctx.lineWidth = LW;
+    ctx.strokeStyle = C.line;
+    ctx.fillStyle = '#dcae74';
+    ctx.beginPath();
+    ctx.rect(-56, -64, 112, 64);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#cd9b5f';
+    for (const side of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(side * 56, -64);
+      ctx.lineTo(side * 82, -80);
+      ctx.lineTo(side * 76, -46);
+      ctx.lineTo(side * 56, -40);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(78, 61, 54, 0.35)';
+    line(ctx, -20, -40, 20, -40);
+    ctx.restore();
+  }
+
+  // 膝の上：ふみふみ → ゴロゴロ → 寝る
+  function onLap(ctx, k, breath) {
+    if (k.lapT < 2.6) {
+      sitting(ctx, k, breath, { eyes: 'happy', tail: 'up', kneadT: k.lapT });
+      floatText(ctx, 'ふみふみ', 50, -128, k.t);
+      return;
+    }
+    ctx.save();
+    ctx.scale(1, breath);
+    furShape(ctx, (c) => c.ellipse(6, -26, 58, 27, 0, 0, Math.PI * 2), () => bodyStripes(ctx, 26, -40));
+    ctx.restore();
+    head(ctx, -28, -38, { eyes: 'sleep', scale: 0.82, tilt: -0.22 });
+    drawTail(ctx, 'curl', k.t);
+    if (k.lapT < 4.4) {
+      floatText(ctx, 'ゴロゴロ', 44, -92, k.t);
+    } else {
+      const z = (k.t * 0.6) % 1;
+      ctx.save();
+      ctx.globalAlpha = 1 - z;
+      ctx.fillStyle = C.line;
+      ctx.font = `bold ${14 + z * 6}px sans-serif`;
+      ctx.fillText('z', 8 + z * 18, -80 - z * 30);
+      ctx.restore();
+    }
+  }
+
+  // 毛色で塗り、内側に柄を描いて、こげ茶の輪郭線を引く。
+  // 柄を描くとパスが置き換わるので、輪郭線を引く前にパスを作り直す
+  function furShape(ctx, pathFn, pattern) {
+    ctx.beginPath();
+    pathFn(ctx);
+    ctx.fillStyle = COAT.fur;
+    ctx.fill();
+    ctx.save();
+    ctx.clip();
+    pattern();
+    ctx.restore();
+    ctx.beginPath();
+    pathFn(ctx);
+    ctx.lineWidth = LW;
+    ctx.strokeStyle = C.line;
+    ctx.stroke();
+  }
+
+  // 頭の輪郭（形は FACE_SHAPES）。いままでの形は、上下が少し平らな横長の「おもち形」
+  function mochi(ctx) {
+    const { w, top, bottom, cy, tS, tR, bS, bR } = FACE.shape;
+    ctx.moveTo(-w, cy);
+    ctx.bezierCurveTo(-w, cy + (top - cy) * tS, -w * tR, top, 0, top);
+    ctx.bezierCurveTo(w * tR, top, w, cy + (top - cy) * tS, w, cy);
+    ctx.bezierCurveTo(w, cy + (bottom - cy) * bS, w * bR, bottom, 0, bottom);
+    ctx.bezierCurveTo(-w * bR, bottom, -w, cy + (bottom - cy) * bS, -w, cy);
+    ctx.closePath();
+  }
+
+  // おもち形（幅50・てっぺん−40・端の高さ0）で決めた座標を、いまの顔の形の座標に直す
+  function onFace(x, y) {
+    const { w, top, cy } = FACE.shape;
+    return [x * (w / 50), top + (y + 40) * ((cy - top) / 40)];
+  }
+
+  // 頭のまわりに出す合図（「チラッ」・怒りマーク）を、顔の形に合わせてずらす量。
+  // おもち形・耳 中のときは [0, 0]。耳が横に張るほど右へ、頭のてっぺんが高いほど上へ
+  function cueShift() {
+    const b0 = onFace(12, -36);
+    const b1 = onFace(47, -16);
+    const tipX = (b0[0] + b1[0]) / 2 + (40 - 29.5) * FACE.ear;
+    return [Math.max(0, tipX - 40), Math.min(0, FACE.shape.top + 40)];
+  }
+
+  // faceDx: 顔のパーツを横にずらして、そっぽを向かせる。turnAway: 大きくそっぽを向く（向こう側のほっぺはずらさない）
+  function head(ctx, x, y, { tilt = 0, eyes = 'dot', mouth = 'w', ears = 'up', faceDx = 0, turnAway = false, blink = 0, scale = 1 }) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(tilt);
+    ctx.scale(scale, scale);
+    for (const side of [-1, 1]) ear(ctx, side, ears, true);
+    const { w, top, cy } = FACE.shape;
+    furShape(ctx, mochi, () => {
+      ctx.strokeStyle = COAT.stripe;
+      ctx.lineWidth = 6;
+      for (const dx of [-12, 0, 12]) line(ctx, dx, top - 4, dx * 0.9, top + 13);
+    });
+
+    // 目・ほっぺ・口は、顔のいちばん広いところ（cy）を基準に置く
+    ctx.translate(faceDx, cy);
+    const cheek = 31 * (w / 50);
+    // 大きくそっぽを向いたとき、向こう側のほっぺは奥に回り込むので、ずらさない（輪郭からはみ出さないように）
+    const far = turnAway ? -faceDx : 0;
+    ellipse(ctx, -cheek + (faceDx < 0 ? far : 0), 12, 7.5, 4.5, C.blush);
+    ellipse(ctx, cheek + (faceDx > 0 ? far : 0), 12, 7.5, 4.5, C.blush);
+    for (const side of [-1, 1]) eye(ctx, side * 20, 2, eyes, blink, side);
+    drawMouth(ctx, mouth);
+    ctx.restore();
+  }
+
+  function ear(ctx, side, ears, inner) {
+    // up：ピンと立つ / half：少し伏せる（不安） / back：横に寝かせる（怒り・驚き）
+    // 座標はおもち形で決める。付け根だけを顔の形に合わせて付け直し、耳そのものの形（付け根の真ん中から先までの伸び）は
+    // 顔の形によらず同じにして、耳の大きさ（FACE.ear）だけで伸ばす（縦長の顔で耳まで伸びないように）
+    const raw = { up: [side * 40, -60], half: [side * 54, -46], back: [side * 60, -26] }[ears];
+    const b0 = onFace(side * 12, -36);
+    const b1 = onFace(side * 47, -16);
+    const mid = [(b0[0] + b1[0]) / 2, (b0[1] + b1[1]) / 2];
+    const rawMid = [side * 29.5, -26];
+    const grow = ([x, y]) => [mid[0] + (x - rawMid[0]) * FACE.ear, mid[1] + (y - rawMid[1]) * FACE.ear];
+    const tip = grow(raw);
+    ctx.save();
+    ctx.lineWidth = LW;
+    ctx.strokeStyle = C.line;
+    ctx.fillStyle = COAT.fur;
+    ctx.beginPath();
+    ctx.moveTo(b0[0], b0[1]);
+    ctx.quadraticCurveTo(tip[0] - side * 6, tip[1] + 2, tip[0], tip[1]);
+    ctx.quadraticCurveTo(tip[0] + side * 4, tip[1] + 8, b1[0], b1[1]);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    if (inner) {
+      ctx.fillStyle = C.earIn;
+      ctx.beginPath();
+      ctx.moveTo(...onFace(side * 20, -34));
+      ctx.lineTo(...grow([raw[0] * 0.84, raw[1] * 0.8]));
+      ctx.lineTo(...onFace(side * 40, -20));
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function eye(ctx, x, y, kind, blink, side) {
+    ctx.save();
+    const color = COAT.eye ?? C.eye;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 2.6;
+    const shut = (kind === 'dot' || kind === 'dotBig') && blink > 0.75;
+    if (kind === 'happy' || shut) {
+      // にっこり閉じ目（∩）
+      ctx.beginPath();
+      ctx.arc(x, y + 3, 5, Math.PI * 1.2, Math.PI * 1.8);
+      ctx.stroke();
+    } else if (kind === 'sleep') {
+      // 眠り目（－）
+      ctx.beginPath();
+      ctx.arc(x, y - 7, 8, Math.PI * 0.32, Math.PI * 0.68);
+      ctx.stroke();
+    } else if (kind === 'grumpy') {
+      // 半目でむっとする
+      ctx.beginPath();
+      ctx.ellipse(x, y + 1, 3.8, 3.2, 0, 0, Math.PI);
+      ctx.fill();
+      line(ctx, x - 6 * side, y - 2, x + 5 * side, y + 1);
+    } else if (kind === 'shock') {
+      ellipse(ctx, x, y, 5.5, 6, '#fffdf7', color, 0, 2.2);
+      ellipse(ctx, x, y + 0.5, 2.2, 2.6, color);
+    } else {
+      const big = kind === 'dotBig';
+      const rx = big ? 4.6 : 3.6;
+      const ry = (big ? 6.2 : 5) * (1 - blink);
+      ellipse(ctx, x, y, rx, Math.max(0.8, ry), color);
+      if (big && blink < 0.4) ellipse(ctx, x + 1.4, y - 2.2, 1.5, 1.5, '#ffffff');
+    }
+    ctx.restore();
+  }
+
+  function drawMouth(ctx, kind) {
+    ctx.save();
+    ctx.strokeStyle = COAT.face ?? C.line;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    if (kind === 'o') {
+      ctx.ellipse(0, 11, 2.6, 3.2, 0, 0, Math.PI * 2);
+    } else if (kind === 'he') {
+      ctx.moveTo(-4, 12);
+      ctx.lineTo(0, 9);
+      ctx.lineTo(4, 12);
+    } else {
+      ctx.arc(-3.2, 9, 3.2, 0.15, Math.PI - 0.15);
+      ctx.moveTo(6.3, 9.5);
+      ctx.arc(3.2, 9, 3.2, 0.15, Math.PI - 0.15);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function paw(ctx, x, y) {
+    ellipse(ctx, x, y, 9.5, 7, COAT.white, C.line, 0, LW);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(78, 61, 54, 0.55)';
+    ctx.lineWidth = 1.6;
+    line(ctx, x - 2.5, y + 2, x - 2.5, y + 5);
+    line(ctx, x + 2.5, y + 2, x + 2.5, y + 5);
+    ctx.restore();
+  }
+
+  function bodyStripes(ctx, cx, cy) {
+    ctx.save();
+    ctx.strokeStyle = COAT.stripe;
+    ctx.lineWidth = 6;
+    for (const dx of [-16, 0, 16]) line(ctx, cx + dx, cy - 14, cx + dx * 1.1, cy + 2);
+    ctx.restore();
+  }
+
+  function drawTail(ctx, kind, t) {
+    ctx.save();
+    if (kind === 'up') {
+      const q = Math.sin(t * 11) * 1.5;
+      // 頭の陰に隠れないよう、頭の横幅より外側を通す
+      tube(ctx, (c) => {
+        c.moveTo(26, -14);
+        c.quadraticCurveTo(68, -40, 64 + q, -96);
+        c.quadraticCurveTo(63 + q, -112, 52 + q, -114);
+      });
+    } else if (kind === 'flick') {
+      const s = Math.sin(t * 9);
+      tube(ctx, (c) => {
+        c.moveTo(26, -8);
+        c.quadraticCurveTo(52, -2, 62 + s * 22, -6 - Math.abs(s) * 14);
+      });
+    } else if (kind === 'puff') {
+      tube(ctx, (c) => {
+        c.moveTo(24, -18);
+        c.quadraticCurveTo(46, -64, 34, -110);
+      }, 24, 18);
+    } else if (kind === 'curl') {
+      const s = Math.sin(t * 1.3) * 3;
+      tube(ctx, (c) => {
+        c.moveTo(40, -8);
+        c.quadraticCurveTo(50, 6, 0, 6);
+        c.quadraticCurveTo(-28, 6, -36 + s, -6);
+      });
+    } else {
+      const s = Math.sin(t * 1.6);
+      tube(ctx, (c) => {
+        c.moveTo(26, -12);
+        c.bezierCurveTo(58, -8, 64, -36 + s * 6, 52 + s * 8, -58);
+      });
+    }
+    ctx.restore();
+  }
+
+  // 縁取り付きの太い線（しっぽ・足）
+  function tube(ctx, pathFn, outer = 15, innerW = 9) {
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    pathFn(ctx);
+    ctx.strokeStyle = C.line;
+    ctx.lineWidth = outer;
+    ctx.stroke();
+    ctx.beginPath();
+    pathFn(ctx);
+    ctx.strokeStyle = COAT.fur;
+    ctx.lineWidth = innerW;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function angerMark(ctx, x, y, t) {
+    const s = 1 + Math.sin(t * 8) * 0.08;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(s, s);
+    ctx.strokeStyle = C.red;
+    ctx.lineWidth = 3;
+    for (const r of [0, Math.PI / 2, Math.PI, Math.PI * 1.5]) {
+      ctx.save();
+      ctx.rotate(r);
+      ctx.beginPath();
+      ctx.moveTo(3, -9);
+      ctx.quadraticCurveTo(3, -3, 9, -3);
+      ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  function sweat(ctx, x, y, u) {
+    ctx.save();
+    ctx.globalAlpha = 1 - u / 1.2;
+    ctx.fillStyle = '#9fd0ee';
+    ctx.strokeStyle = C.line;
+    ctx.lineWidth = 2;
+    const yy = y + u * 10;
+    ctx.beginPath();
+    ctx.moveTo(x, yy - 9);
+    ctx.quadraticCurveTo(x + 7, yy, x, yy + 4);
+    ctx.quadraticCurveTo(x - 7, yy, x, yy - 9);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 見つめているときの合図：頭の横に、控えめな「チラッ」（まばたきのチャンス）。
+  // 遠くにいて小さく描かれるときも読めるように、文字だけは大きさを補う
+  function lookCue(ctx, k) {
+    const fit = Math.max(1, 0.85 / (k.scale ?? 1));
+    ctx.save();
+    const [dx, dy] = cueShift();
+    ctx.translate(50 + dx, -128 + dy);
+    ctx.scale(fit, fit);
+    // 出た瞬間だけ、少し横にすべり込む
+    const u = clamp01(k.modeT / 0.25);
+    ctx.globalAlpha = 0.85 * u;
+    ctx.fillStyle = C.line;
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('チラッ', (1 - u) * -6, 0);
+    ctx.restore();
+  }
+
+  // 触ると失敗するサインを、触らずにやり過ごせたときの合図：頭の左上に「ほっ」と出て、ふわっと上がって消える。
+  // 右側は「チラッ」・怒りマークの場所なので、反対側に出す
+  const RELIEF_SEC = 1.2;
+  function reliefCue(ctx, u, scale = 1) {
+    const fit = Math.max(1, 0.85 / scale);
+    const [dx, dy] = cueShift();
+    ctx.save();
+    ctx.translate(-86 - dx, -118 + dy - (u / RELIEF_SEC) * 14);
+    ctx.scale(fit, fit);
+    ctx.globalAlpha = 0.85 * Math.min(1, u / 0.15) * (1 - Math.max(0, (u - 0.7) / (RELIEF_SEC - 0.7)));
+    ctx.fillStyle = C.line;
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('ほっ', 0, 0);
+    ctx.restore();
+  }
+
+  // ビビりの耳を伏せる警戒（この間は「ビクビク」も出す）
+  const BIBIRI_EARS_WARINESS = 20;
+  // ビビりの合図：頭の左上に、小刻みに震える「ビクビク」。耳を伏せている間と、なでた直後に出す
+  const TIMID_SEC = 1.2;
+  function timidCue(ctx, t, scale = 1) {
+    const fit = Math.max(1, 0.85 / scale);
+    const [dx, dy] = cueShift();
+    ctx.save();
+    ctx.translate(-130 - dx + Math.sin(t * 43) * 0.8, -114 + dy);
+    ctx.scale(fit, fit);
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = C.line;
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('ビクビク', 0, 0);
+    ctx.restore();
+  }
+
+  // ---------------------------------------------------------------- イベントの小道具（形は src/render/props.js）
+
+  // 箱は、猫の足もとより少し下に置く（伏せた猫の体が、箱の下からはみ出さないように）
+  const PARCEL_SINK = 14;
+  // 箱が置かれるときは、猫の右どなりに落ちてきて、もぐるときに猫の前へすべり込む
+  const PARCEL_SIDE = 80;
+  const PARCEL_FALL_SEC = 0.35;
+  // もぐった瞬間に紙くずが舞う長さ
+  const PAPER_BITS_SEC = 0.8;
+
+  // 猫より奥に描く：猫が箱から出て、箱より手前（近く）に来たとき。箱より遠くにいる間は、箱を手前に描く
+  function propBehind(prop, cat) {
+    return prop.kind === 'parcel' && prop.phase === 'left' && cat.distance < EVENTS.box.boxDistance;
+  }
+
+  function drawProp(ctx, prop, t, p) {
+    if (prop.kind === 'bird') {
+      drawHuntCue(ctx, prop, t, p);
+      return;
+    }
+    const A = prop.anchor;
+    if (!A) return;
+    const u = t - prop.start;
+    const fit = Math.max(1, 0.85 / A.s);
+    const parcelAt = (x, y, s, opts) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(s, s);
+      drawParcel(ctx, opts);
+      ctx.restore();
+    };
+    switch (prop.phase) {
+      case 'arrive': {
+        // 「ドサッ」と置かれて、猫が「？」と見る
+        const fall = clamp01(u / PARCEL_FALL_SEC);
+        parcelAt(A.x + PARCEL_SIDE * A.s, A.y - (1 - fall) * 120, A.s * 0.9);
+        if (fall >= 1 && u < 0.8) drawPropText(ctx, 'ドサッ', A.x + 40 * A.s, A.y - 80 * A.s, 15, fit);
+        if (u > 0.8) drawPropText(ctx, '？', p.x + 34 * p.s, p.y - 120 * p.s, 20, fit);
+        return;
+      }
+      case 'hop':
+        parcelAt(A.x + PARCEL_SIDE * A.s * (1 - clamp01(u / EVENTS.box.hopSec)), A.y, A.s * 0.9);
+        return;
+      case 'hide':
+        parcelAt(A.x, A.y, A.s, { pile: true });
+        if (prop.prev === 'hop' && u < PAPER_BITS_SEC) {
+          ctx.save();
+          ctx.translate(A.x, A.y);
+          ctx.scale(A.s, A.s);
+          drawPaperBits(ctx, u / PAPER_BITS_SEC);
+          ctx.restore();
+          drawPropText(ctx, 'カサカサ', A.x - 90 * A.s, A.y - 100 * A.s, 13, fit);
+        }
+        return;
+      case 'peek':
+      case 'happy':
+        parcelAt(A.x, A.y, A.s, { inside: false });
+        return;
+      default:
+        parcelAt(A.x, A.y, A.s);
+    }
+  }
+
+  // 窓の外の鳥：枝にとまる位置（枝の先のほう。src/render/props.js の drawBranch）。鳥は窓の外にいるので、ガラス越しに小さめに描く
+  const BIRD_PERCH = { x: 62, y: 158 };
+  const BIRD_SCALE = 0.8;
+  // 鳥が飛んでくるところ（画面の左の外）
+  const BIRD_FROM_X = -30;
+  // 鳥が飛び去る向き（leaveSec でこれだけ動く。窓の上の外まで出ていく）
+  const BIRD_AWAY = { x: 130, y: -100 };
+  // 鳥がいる phase（ここから別の phase に変わったら、飛び去る）
+  const BIRD_THERE = ['arrive', 'hunt', 'leave'];
+  // 「カカカ」は、KAKA_SEC ごとに KAKA_ON 秒だけ出す（小刻みに鳴いては止む）
+  const KAKA_SEC = 1.4;
+  const KAKA_ON = 0.9;
+
+  // 窓の外（drawRoom の outside）：鳥は、飛んできて、とまって、飛び去る。枝といつものガラスは drawRoom が描く
+  function drawWindowBird(ctx, prop, t) {
+    const B = EVENTS.bird;
+    const u = t - prop.start;
+    let at = null;
+    let flying = false;
+    const flyAway = (k) => {
+      const from = prop.from ?? BIRD_PERCH;
+      return { x: from.x + BIRD_AWAY.x * k, y: from.y + BIRD_AWAY.y * k };
+    };
+    if (prop.phase === 'arrive') {
+      // 左から弧を描いて飛んできて、枝にとまる
+      const k = clamp01(u / B.arriveSec);
+      at = { x: BIRD_FROM_X + (BIRD_PERCH.x - BIRD_FROM_X) * k, y: BIRD_PERCH.y - 6 - Math.sin(k * Math.PI) * 36 + k * 6 };
+      flying = k < 1;
+    } else if (prop.phase === 'hunt') {
+      // 枝の上で、ちょんちょんと動く
+      at = { x: BIRD_PERCH.x + Math.sin(u * 1.3) * 12, y: BIRD_PERCH.y + (Math.sin(u * 5) > 0.7 ? -4 : 0) };
+    } else if (prop.phase === 'leave' || (BIRD_THERE.includes(prop.prev) && prop.from && u < B.leaveSec)) {
+      // 見守れて去るとき（leave）も、触って驚いて逃げるときも、同じように飛び去る。
+      // phase が変わったときにもう飛び去り終えていた（from がない）なら、続きは描かない
+      const k = clamp01(u / B.leaveSec);
+      if (k < 1) at = flyAway(k);
+      flying = true;
+    }
+    prop.birdAt = at;
+    if (at) {
+      ctx.save();
+      ctx.translate(at.x, at.y);
+      ctx.scale(BIRD_SCALE, BIRD_SCALE);
+      drawBird(ctx, t, flying);
+      ctx.restore();
+    }
+  }
+
+  // 読書中の本：開いた本の真ん中（膝の上）と、その範囲（当たり判定にも使う）。閉じた本は右手に持つ
+  const BOOK_AT = { x: 180, y: 600 };
+  const BOOK_RECT = { x: -112, y: -60, w: 224, h: 92 };
+  const CLOSED_BOOK_AT = { x: 286, y: 566, angle: 0.22 };
+  // ページをめくる動きの長さ
+  const FLIP_SEC = 0.35;
+
+  // 読んでいる間と、猫が本をのぞき込んでいる間（peekBook。ページはめくれない）は、膝の上に開いた本。終わったら閉じて右手に持つ
+  function drawBook(ctx, prop, t) {
+    ctx.save();
+    if (prop.phase === 'read' || prop.phase === 'peekBook') {
+      ctx.translate(BOOK_AT.x, BOOK_AT.y);
+      drawOpenBook(ctx, prop.phase === 'read' && prop.flipAt != null ? (t - prop.flipAt) / FLIP_SEC : -1);
+      ctx.restore();
+      drawPropText(ctx, `${prop.pages ?? 0}ページ`, 18, 530, 12);
+      return;
+    }
+    ctx.translate(CLOSED_BOOK_AT.x, CLOSED_BOOK_AT.y);
+    ctx.rotate(CLOSED_BOOK_AT.angle);
+    drawClosedBook(ctx, C.skin);
+    ctx.restore();
+  }
+
+  // 「カカカ」の文字の大きさと幅（全角3文字）、猫の真ん中から文字の右端まで（いちばん広い顔 58 の外。猫の大きさに合わせる）
+  const KAKA_SIZE = 14;
+  const KAKA_W = KAKA_SIZE * 3;
+  const KAKA_GAP_X = 66;
+
+  // 狩りの間、猫の頭の左（鳥のいるほう）に「カカカ」（小刻みに震わせる）
+  function drawHuntCue(ctx, prop, t, p) {
+    if (prop.phase !== 'hunt') return;
+    const u = t - prop.start;
+    if (u % KAKA_SEC >= KAKA_ON) return;
+    const fit = Math.max(1, 0.85 / p.s);
+    const x = p.x - KAKA_GAP_X * p.s - KAKA_W * fit + Math.sin(t * 40);
+    drawPropText(ctx, 'カカカ', x, p.y - 110 * p.s, KAKA_SIZE, fit);
+  }
+
+  function exclaim(ctx, x, y) {
+    ctx.save();
+    ctx.fillStyle = C.red;
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillText('!', x, y);
+    ctx.restore();
+  }
+
+  function floatText(ctx, text, x, y, t) {
+    ctx.save();
+    ctx.fillStyle = C.line;
+    ctx.globalAlpha = 0.75 + Math.sin(t * 4) * 0.2;
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(text, x, y + Math.sin(t * 3) * 3);
+    ctx.restore();
+  }
+
+  function heart(ctx, x, y, r, alpha) {
+    ctx.save();
+    ctx.globalAlpha = clamp01(alpha);
+    ctx.fillStyle = C.heart;
+    ctx.beginPath();
+    ctx.moveTo(x, y + r * 0.9);
+    ctx.bezierCurveTo(x - r * 1.6, y - r * 0.2, x - r * 0.6, y - r * 1.4, x, y - r * 0.5);
+    ctx.bezierCurveTo(x + r * 0.6, y - r * 1.4, x + r * 1.6, y - r * 0.2, x, y + r * 0.9);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function burst(ctx, x, y, u) {
+    ctx.save();
+    ctx.globalAlpha = 1 - u;
+    ctx.strokeStyle = C.red;
+    ctx.lineWidth = 3;
+    for (let i = 0; i < 8; i++) {
+      const ang = (i / 8) * Math.PI * 2;
+      const r0 = 8 + u * 10;
+      const r1 = 18 + u * 18;
+      line(ctx, x + Math.cos(ang) * r0, y + Math.sin(ang) * r0, x + Math.cos(ang) * r1, y + Math.sin(ang) * r1);
+    }
+    ctx.restore();
+  }
+
+  // ---------------------------------------------------------------- 図形の小道具
+
+  function ellipse(ctx, x, y, rx, ry, fill, stroke, rot = 0, lw = 3) {
+    ctx.beginPath();
+    ctx.ellipse(x, y, Math.max(0.1, rx), Math.max(0.1, ry), rot, 0, Math.PI * 2);
+    if (fill) {
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
+    if (stroke) {
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lw;
+      ctx.stroke();
+    }
+  }
+
+  function line(ctx, x0, y0, x1, y1) {
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  return { W, H, COATS, FACE_SHAPES, EAR_SIZES, LINE_COLOR, LINE_WIDTH, LAP_COLORS, CAT_FADE_SEC, createRenderer, drawCatPortrait };
+})();
+
+// ---- src/data/texts.js
+__modules['src/data/texts.js'] = (() => {
+  // 画面に出す文章はすべてここに置く。
+  // {name} はプレイヤーが付けた猫の名前に置き換える（withName）。
+
+  const withName = (text, name) => text.replaceAll('{name}', name);
+
+  const TITLE = {
+    main: 'ネコと和解せよ',
+    sub: '〜猫が来るまでの7日間〜',
+    start: 'タップではじめる',
+  };
+
+  const DAY_TITLES = {
+    1: 'はじめまして',
+    2: 'すこし慣れてきた？',
+    3: 'ためされる日',
+    4: 'いつもの日',
+    5: 'いつもの日',
+    6: 'いつもの日',
+    7: 'さいごの日',
+  };
+
+  // 1日目の最初に、猫をアップにして名前を付けてもらう
+  const NAME_TEXT = {
+    prompt: '名前は何にしよう？',
+    placeholder: 'なまえ',
+    ok: 'この名前にする',
+    back: 'もどる',
+    maxLength: 10,
+    // 名前の候補は毛色に合わせる（毛色のキーは src/render/renderer.js の COATS）。毎回この中から4つ出す
+    byCoat: {
+      chatora: ['みかん', 'ちゃちゃ', 'むぎ', 'おこげ', 'とら', 'こむぎ'],
+      kijitora: ['こてつ', 'くるみ', 'まめ', 'とらじ', 'ごんた', 'おかか'],
+      sabatora: ['ぎん', 'すず', 'ねず', 'ぽんず', 'はい', 'もくもく'],
+      cream: ['きなこ', 'ぷりん', 'こむぎ', 'まろん', 'かすてら', 'ミルク'],
+      shiro: ['もち', 'ゆき', 'しらたま', 'まる', 'たま', 'ましろ'],
+      kuro: ['くろ', 'Holy Night', 'のり', 'あんこ', 'ごま', 'よる', 'クロエ'],
+    },
+  };
+
+  // 1日目のチュートリアル（ゲームを止めずに出す短いメッセージ）
+  const TUTORIAL = {
+    wait: '触ろうとすると逃げてしまう。まずは「待って」みよう',
+    approach: '{name}のほうから、少し近づいてきた！',
+    flee: '焦りは禁物。猫は追いかけるほど逃げる',
+  };
+
+  // 説明。キーは 'action:xxx' 'sign:xxx' 'day:xxx' 'tip:xxx' 'event:xxx'
+  // pause: true はゲームを一時停止するカード（遊び方が変わるもの・触ると失敗するのに触りたくなるもの）。
+  // それ以外は、ゲームを止めない吹き出しで出す
+  const CARDS = {
+    'day:intro': {
+      pause: true,
+      title: '{name}は、まだ警戒している',
+      body: '近づきたい気持ちを、ぐっとこらえて……。\n{name}のほうから膝に乗ってくれたら「和解」です。\n猫にも性格があります。{name}がどんな子か、よく観察してみましょう。',
+    },
+    'action:pet': {
+      pause: true,
+      title: 'できること：なでる',
+      body: '猫をタップすると、手を伸ばしてなでようとします。\nでも、タイミングを間違えると……？',
+    },
+    'action:blink': {
+      pause: true,
+      title: '新しくできること：ゆっくりまばたき',
+      body: '「チラッ」とこっちを見たら、まばたきボタンを長押しして、離そう。\n猫の世界では「好きだよ」の合図。\n※目が合っていないと、ちょっと不審がられる。\n※ツンデレの猫は、仲良くなるまで照れて目をそらすことも。',
+    },
+    'sign:look': {
+      title: '猫のサイン：じっと見つめる',
+      body: '「チラッ」とこっちを見ている。いまが、ゆっくりまばたきのチャンス。\n※ツンデレの猫は、仲良くなるまで照れて逆効果。',
+    },
+    'sign:tailUp': {
+      title: '猫のサイン：しっぽピン',
+      body: 'しっぽが真っすぐ立っているのは、ごきげんの印。\n近くにいるなら、そっとなでてもいいかも。',
+    },
+    'sign:tailFlick': {
+      title: '猫のサイン：しっぽパタパタ',
+      body: 'しっぽを振っているのは、イライラの印。\n犬とは逆なので注意。そっとしておこう。',
+    },
+    'day:lap': {
+      title: '今日から',
+      body: '信頼が十分にたまっていれば、{name}が膝に乗ってくれるかもしれません。',
+    },
+    'sign:belly': {
+      pause: true,
+      title: '猫のサイン：お腹見せ',
+      body: '信頼の印……でも、触ると怒る猫が多い。\n見守るのが正解。',
+    },
+    'sign:backTurn': {
+      title: '猫のサイン：背中を向けて座る',
+      body: 'そっけなく見えて、実は「あなたを信頼している」の印。\nそのまま待とう。',
+    },
+    'sign:rub': {
+      title: '猫のサイン：すり寄り',
+      body: '猫のほうから頭をこすりつけてきた！\n今こそ、なでて応えよう。',
+    },
+    'sign:fakeRub': {
+      pause: true,
+      title: '猫のサイン：気まぐれすりすり',
+      body: 'すり寄ってきた……けど、しっぽがパタパタしている。\n猫の気は変わりやすい。しっぽをよく見よう。',
+    },
+    'event:box': {
+      pause: true,
+      title: 'イベント：箱が届いた',
+      body: '通販の箱が届いた。\n中身より、箱のほうが気になるみたい……？\n顔を出したら、ゆっくりまばたき。箱の中では、触らずに見守ろう。',
+    },
+    'event:bird': {
+      pause: true,
+      title: 'イベント：窓の外に鳥',
+      body: '窓の外に小鳥が来た。\n{name}は狩りモードで、いまは集中しているみたい。\n背中を向けている間は触らずに見守って、こっちを見たら、ゆっくりまばたき。',
+    },
+    'event:read': {
+      pause: true,
+      title: 'イベント：読書中',
+      body: '今日は本を読もう。\n猫は、かまわないほうが寄ってくるらしい。\n本をタップしてページをめくろう。{name}には触らずに……。',
+    },
+    'tip:patience': {
+      title: 'がまんできた',
+      body: '触らずに見守ったので、{name}は少し安心したみたい。\nイライラやお腹見せは、やり過ごすだけで仲良くなれる。',
+    },
+  };
+
+  // 同じ様子で2回失敗したときに出すヒント（吹き出し）。キーは失敗したときの猫の様子
+  const HINTS = {
+    relax: { title: 'ヒント', body: 'くつろいでいるときは、そっとしておこう。\nしっぽがピンと立ったら、なでるチャンス。' },
+    look: { title: 'ヒント', body: '「チラッ」とこっちを見たら、なでるより「ゆっくりまばたき」。' },
+    backTurn: { title: 'ヒント', body: '背中を向けているのは、信頼の印。\n触らずに待つだけで、仲良くなれる。' },
+    tailFlick: { title: 'ヒント', body: 'しっぽパタパタは、イライラの印。\n落ち着くまで待とう。' },
+    belly: { title: 'ヒント', body: 'お腹を見せてくれても、触るのはがまん。\n見守るのが正解。' },
+    fakeRub: { title: 'ヒント', body: 'すり寄ってきても、しっぽがパタパタしていたら気まぐれ。\nしっぽがピンと立っているときだけなでよう。' },
+    inBox: { title: 'ヒント', body: '箱の中では、そっとしておこう。\n自分から出てくるまで待とう。' },
+    stare: { title: 'ヒント', body: 'まばたきは、{name}がじっとこっちを見ているときに。' },
+    // ツンの間にまばたきして、目をそらされたとき（キーは猫の様子ではなく、反応）
+    blinkAway: { title: 'ヒント', body: '{name}は、見つめ合うのが照れくさいみたい。\nもう少し仲良くなるまで、まばたきは待ってみよう。' },
+  };
+
+  const FEEDBACK = {
+    flee: 'ピャッ！',
+    kick: 'ペシッ！',
+    hide: '（箱の奥に引っ込んだ）',
+    stare: '（じっと見つめられて、落ち着かない様子……）',
+    blinkBack: '（ゆっくりまばたきを返してくれた）',
+    purr: 'ゴロゴロ……',
+    tooFar: '（手が届かない……）',
+    // 触ると失敗するサインを、触らずにやり過ごせたとき
+    relief: '（ほっとしたみたい）',
+    // ツンの間にまばたきしたとき
+    blinkAway: '（ぷいっ。照れて目をそらされた）',
+    // 手がこわい猫（ビビり）をなでたとき
+    timid: '（ビクビク……手はまだこわいみたい）',
+  };
+
+  // ツンがとれて、まばたきを喜ぶようになった瞬間に出す
+  const DERE_TEXT = '（{name}の目つきが、少しやわらかくなった）';
+  // 手がこわい猫（ビビり）が、なでられても平気になった瞬間に出す
+  const TIMID_GONE_TEXT = '（{name}は、手がこわくなくなったみたい）';
+
+  // イベントの日のトースト（キーは src/game/events.js の cue）
+  const EVENT_TEXT = {
+    box: { hid: '（箱にもぐった）', watched: '（見つめないでくれて、ほっとしたみたい）', out: '（箱から出てきた！）' },
+    bird: { hunt: '（窓の外をじっと見ている……）', left: '（鳥が行ってしまった。ほっとしたみたい）', understood: '（狩りの邪魔をしない人だと、わかってくれたみたい）' },
+    read: { wonder: '（……？）', peekBook: '（本をのぞき込んできた……！）' },
+  };
+
+  const LAP_TEXT = '{name}が、膝に乗ってきた……！';
+
+  const NIGHT_TEXT = {
+    title: (day) => `${day}日目の夜`,
+    prompt: '{name}のために、何をしておく？',
+    choices: [
+      { id: 'treat', label: 'おやつを置いておく', hint: '喜んでくれそう。明日は近くから始まるかも。でも、おやつ目当てかも' },
+      { id: 'box', label: '段ボール箱を置いておく', hint: '落ち着いてくれそう。でも、しばらく出てこないかも' },
+      { id: 'nothing', label: '何もしない', hint: 'そっとしておく。それも、ひとつの優しさ' },
+    ],
+  };
+
+  const ENDINGS = {
+    fate: { name: '運命の膝', body: 'たった3日で、{name}はあなたの膝を選んだ。' },
+    patient: { name: '待てる人間', body: '焦らず、追わず。{name}はちゃんと見ていた。' },
+    persistent: { name: '根気の人', body: '何度逃げられても、あなたは待ち続けた。' },
+    visitor: { name: '通い猫になりました', body: '膝には乗ってくれなかったけれど、{name}はときどき遊びに来てくれる。\nこれはこれで、悪くない。' },
+  };
+
+  const ENDING_UI = {
+    reconciled: (day) => `${day}日目で和解`,
+    notReconciled: '7日間では和解ならず',
+    mistakes: (n) => `焦って手を出した回数：${n}回`,
+    personality: (name, label) => `${name}の性格：${label}`,
+    coat: (label) => `毛色：${label}`,
+    retry: 'もう一度あそぶ',
+  };
+
+  // 毛色の名前（色そのものは src/render/renderer.js の COATS）
+  const COAT_LABELS = {
+    chatora: '茶トラ',
+    kijitora: 'キジトラ',
+    sabatora: 'サバトラ',
+    cream: 'クリーム',
+    shiro: 'シロ',
+    kuro: 'クロ',
+  };
+
+  // 性格の得意・苦手のひとこと（エンディングの種明かしで、性格の行のすぐ後ろに出す。倍率は src/data/params.js の likes）
+  const PERSONALITY_TIPS = {
+    amaenbo: 'なでられるのが大好き。待たされるのは、ちょっと苦手',
+    tsundere: 'はじめは見つめられると照れる。仲良くなると、まばたきが大好きに',
+    bibiri: '手はこわいけど、ゆっくりまばたきには安心する',
+  };
+
+  // 毛色ごとの性格の言い伝え（エンディングで表示。性格との対応は src/data/params.js の COAT_PERSONALITY）
+  const COAT_LORE = {
+    chatora: '茶トラは、人なつっこい甘えん坊が多いと言われている',
+    cream: 'クリームは、おっとりした甘えん坊が多いと言われている',
+    kuro: 'クロは、賢くて慎重な子が多いと言われている',
+    shiro: 'シロは、気品があって気まぐれな子が多いと言われている',
+    sabatora: 'サバトラは、クールだけど慣れると甘える子が多いと言われている',
+    kijitora: 'キジトラは、用心深くて警戒心の強い子が多いと言われている',
+  };
+
+  // ねこ手帳（思い出・図鑑・称号）。記録の中身は src/game/records.js
+  const NOTEBOOK_TEXT = {
+    open: 'ねこ手帳',
+    back: 'もどる',
+    tabs: { memories: '思い出', dex: '図鑑', titles: '称号' },
+    saved: '思い出に残しました',
+    newTitle: (name) => `称号を手に入れた：${name}`,
+    noMemories: 'まだ思い出はありません。猫と7日間を過ごすと、ここに残ります',
+    // 思い出の結果：エンディングの名前をそのまま出す（通い猫は名前だけ）
+    memoryResult: (m, endingName) => (m.endingId === 'visitor' ? `「${endingName}」` : `「${endingName}」${m.day}日目で和解`),
+    unknownCoat: '？？？',
+    bestDay: (day) => (day === null ? 'まだ和解していない' : `いちばん早い和解：${day}日目`),
+    locked: '？？？',
+    count: (got, all) => `${got} / ${all}`,
+  };
+
+  // 称号。条件の判定は src/game/records.js の TITLE_IDS と同じ順
+  const TITLES = {
+    first: { name: 'はじめての和解', how: '初めて猫と和解する' },
+    fate: { name: '運命の人', how: '3日目で和解する' },
+    noMistake: { name: '手を出さない人', how: '一度も焦らずに和解する' },
+    amaenbo: { name: '甘えん坊の友だち', how: '甘えん坊の猫と和解する' },
+    tsundere: { name: 'ツンデレ使い', how: 'ツンデレの猫と和解する' },
+    bibiri: { name: 'ビビりの味方', how: 'ビビりの猫と和解する' },
+    visitor: { name: '通い猫も悪くない', how: '通い猫になったエンディングを見る' },
+    allCoats: { name: '毛色コンプリート', how: '6種すべての毛色の猫と和解する' },
+    allStamps: { name: 'スタンプコンプリート', how: '図鑑のスタンプを24個すべて集める' },
+    tenCats: { name: 'ねこ好き', how: '10匹の猫と出会う' },
+  };
+
+  // 一時停止メニュー（src/ui/pauseMenu.js）
+  const PAUSE_TEXT = {
+    button: '一時停止',
+    title: 'いったん休憩',
+    resume: 'つづける',
+    quit: 'タイトルにもどる',
+    confirm: 'この猫との7日間は、思い出に残りません。タイトルにもどりますか？',
+    confirmYes: 'タイトルにもどる',
+    confirmNo: 'やめておく',
+  };
+
+  const SOUND_LABEL = { on: '効果音ON', off: '効果音OFF' };
+
+  // 画面左下の BGM 表示。曲名は src/data/bgmSongs.js
+  const BGM_TEXT = {
+    off: 'BGM OFF',
+    aria: (label) => `BGM：${label}（タップで次の曲）`,
+  };
+  // 紙芝居（イントロ・エピローグ。src/scenes/storySlides.js）。\n で改行する
+  const STORY_TEXT = {
+    intro: ['ある日から、庭に猫が来るようになった。', '窓を少し開けておいたら、\n部屋の隅まで入ってくるようになった。'],
+    lap: ['そのまま、日が暮れるまで眠っていた。', 'その日から、{name}は\nうちの子になった。'],
+    visitor: ['日が暮れると、{name}は窓から帰っていった。', '次の日も、{name}は遊びに来た。'],
+    near: '膝に乗ってくれる日も、もうすぐかも。',
+    far: '膝に乗ってくれる日は、まだ遠そう。',
+    next: 'タップで次へ',
+    skip: 'スキップ',
+    // デバッグでエピローグをその場から見るとき、まだ名前がなければこの名前にする
+    debugName: 'みかん',
+  };
+
+  // シェア（結果画面の「シェア」）。投稿文は src/game/shareCard.js で組み立てる。猫の名前は画像だけに入れる
+  const SHARE_TEXT = {
+    open: 'シェア',
+    x: 'Xに投稿',
+    save: '画像を保存',
+    copy: 'コピー',
+    close: 'とじる',
+    hint: '画像は長押しでも保存できます',
+    alt: 'シェアする画像',
+    copied: '文をコピーしました',
+    copyFailed: 'コピーできませんでした',
+    xFailed: 'Xが開かないときは、「コピー」を使ってください',
+    saved: '保存できないときは、画像を長押ししてください',
+    saveFailed: '画像を保存できませんでした',
+    imageFailed: '画像を作れませんでした',
+    tags: ['#ネコと和解せよ', '#ネコ和解ゲーム'],
+    reconciled: (day) => [`${day}日目で`, 'ネコと和解した'],
+    notReconciled: ['7日かけても、', 'ネコと和解できなかった'],
+    nameLine: (name, coat) => `ネコの名前：${name}（${coat}）`,
+    // 投稿文の2行目（エンディングごと）
+    second: {
+      fate: 'たった3日で膝に乗ってきた。これは「運命の膝」。',
+      patient: '焦らず、追わず。わたしは「待てる人間」。',
+      persistent: '何度逃げられても待った。わたしは「根気の人」。',
+      visitor: 'でも、ときどき遊びに来てくれる。',
+    },
+  };
+  return { withName, TITLE, DAY_TITLES, NAME_TEXT, TUTORIAL, CARDS, HINTS, FEEDBACK, DERE_TEXT, TIMID_GONE_TEXT, EVENT_TEXT, LAP_TEXT, NIGHT_TEXT, ENDINGS, ENDING_UI, COAT_LABELS, PERSONALITY_TIPS, COAT_LORE, NOTEBOOK_TEXT, TITLES, PAUSE_TEXT, SOUND_LABEL, BGM_TEXT, STORY_TEXT, SHARE_TEXT };
+})();
+
+// ---- tools/ogp/ogp.js
+__modules['tools/ogp/ogp.js'] = (() => {
+  // リンク用の絵（ogp.png）とアイコン（icon.png）を、ゲームと同じ描画で書き出す道具。ゲームには含めない
+  // 使い方：npm run build のあと tools/ogp/index.html を開き、「保存」で書き出してリポジトリの直下に置く
+  const { createRenderer, drawCatPortrait } = __modules['src/render/renderer.js'];
+  const { TITLE } = __modules['src/data/texts.js'];
+
+  const FONT = '"Hiragino Maru Gothic ProN", "Hiragino Maru Gothic Pro", "BIZ UDPGothic", "Yu Gothic UI", "Meiryo", sans-serif';
+  const COLOR = { paper: '#fdf6ec', ink: '#5a3e2b', soft: '#8a6d58', accent: '#d9823b', paw: 'rgba(244, 182, 194, 0.55)', icon: '#fbe3cf' };
+  const COAT = 'chatora';
+  const CATCH = '膝に乗ってくれるまで、7日間。';
+  const OGP_W = 1200;
+  const OGP_H = 630;
+  const ICON_SIZE = 180;
+  // ゲームの画面（論理座標 360×640）を、何倍の細かさで描くか
+  const SHOT_K = 5;
+  // 絵の右側に入れる範囲（論理座標）：横の真ん中と幅。縦は下端にそろえる
+  const SHOT = { cx: 184, w: 318 };
+  // 猫の絵を入れる、右側の左端
+  const PICTURE_X = 640;
+
+  function newCanvas(w, h) {
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    return c;
+  }
+
+  // 名前付けの画面と同じ、猫のアップ（途中は小さく描き、最後の1枚だけ大きく描く）
+  function drawCloseup() {
+    const canvas = newCanvas(360, 640);
+    const r = createRenderer(canvas);
+    const view = { scene: 'name', closeup: true, coat: COAT, personality: 'amaenbo', face: { shape: 'mochi', ears: 'normal' }, cat: { mode: 'look', distance: 0 } };
+    for (let i = 0; i < 8; i++) r.draw(view, i * 0.1, 0.1);
+    canvas.width = 360 * SHOT_K;
+    canvas.height = 640 * SHOT_K;
+    r.draw(view, 0.8, 0.1);
+    return canvas;
+  }
+
+  function paw(ctx, x, y, s, rot) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.scale(s, s);
+    ctx.fillStyle = COLOR.paw;
+    for (const [px, py, rx, ry] of [[0, 10, 22, 18], [-24, -12, 8, 10], [-9, -26, 8, 10], [9, -26, 8, 10], [24, -12, 8, 10]]) {
+      ctx.beginPath();
+      ctx.ellipse(px, py, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawOgp() {
+    const canvas = newCanvas(OGP_W, OGP_H);
+    const ctx = canvas.getContext('2d');
+    const K = SHOT_K;
+    const w = OGP_W - PICTURE_X;
+    const sh = (SHOT.w * OGP_H) / w;
+    ctx.drawImage(drawCloseup(), (SHOT.cx - SHOT.w / 2) * K, (640 - sh) * K, SHOT.w * K, sh * K, PICTURE_X, 0, w, OGP_H);
+    // 左の紙。右の端は、ゆるい曲線
+    ctx.fillStyle = COLOR.paper;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(665, 0);
+    ctx.bezierCurveTo(735, 200, 610, 420, 690, OGP_H);
+    ctx.lineTo(0, OGP_H);
+    ctx.closePath();
+    ctx.fill();
+    paw(ctx, 95, 95, 1.2, -0.4);
+    paw(ctx, 590, 555, 1.1, 0.35);
+    paw(ctx, 85, 560, 0.9, 0.2);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    const text = (s, size, x, y, color) => {
+      ctx.fillStyle = color;
+      ctx.font = `bold ${size}px ${FONT}`;
+      ctx.fillText(s, x, y);
+    };
+    text(CATCH, 38, 70, 185, COLOR.soft);
+    // 題名は「ネコと」で改行する
+    const cut = TITLE.main.indexOf('と') + 1;
+    text(TITLE.main.slice(0, cut), 124, 64, 300, COLOR.ink);
+    text(TITLE.main.slice(cut), 124, 64, 440, COLOR.accent);
+    return canvas;
+  }
+
+  // 猫の頭だけ。角は塗ったまま（iPhone のホーム画面では、角が自動で丸くなる。透明だと黒くなる）
+  function drawIcon() {
+    const size = 960;
+    const cat = newCanvas(size, size);
+    drawCatPortrait(cat, COAT);
+    const head = newCanvas(size, size);
+    const h = head.getContext('2d');
+    // 体と尻尾を切り落とす：耳のある上側はそのまま、下側はあごの形（renderer.js の FACE_SHAPES.mochi と同じ曲線）
+    const cx = 480, cy = 476, w = 259, d = 204;
+    h.beginPath();
+    h.rect(0, 0, size, cy);
+    h.moveTo(cx + w, cy - 1);
+    h.bezierCurveTo(cx + w, cy + d * 0.71, cx + w * 0.56, cy + d, cx, cy + d);
+    h.bezierCurveTo(cx - w * 0.56, cy + d, cx - w, cy + d * 0.71, cx - w, cy - 1);
+    h.closePath();
+    h.clip();
+    h.drawImage(cat, 0, 0);
+    const canvas = newCanvas(ICON_SIZE, ICON_SIZE);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = COLOR.icon;
+    ctx.fillRect(0, 0, ICON_SIZE, ICON_SIZE);
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(head, 150, 60, 660, 660, 0, -ICON_SIZE * 0.01, ICON_SIZE, ICON_SIZE);
+    return canvas;
+  }
+
+  for (const [name, draw] of [['ogp.png', drawOgp], ['icon.png', drawIcon]]) {
+    const canvas = draw();
+    const link = document.createElement('a');
+    link.href = canvas.toDataURL('image/png');
+    link.download = name;
+    link.textContent = `${name} を保存（${canvas.width}×${canvas.height}）`;
+    const p = document.createElement('p');
+    p.append(link);
+    document.body.append(canvas, p);
+  }
+  return {  };
+})();
+
+})();

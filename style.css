@@ -492,7 +492,7 @@ body {
 .pause-resume, .pause-cancel { background: var(--accent); color: #fff; box-shadow: var(--shadow); }
 .pause-quit, .pause-confirm { background: #fbe7dc; color: var(--ink); }
 
-/* ---- デバッグパネル（試作用） ---- */
+/* ---- デバッグパネル（?debug=1 のときだけ） ---- */
 #debug {
   position: fixed; bottom: 8px; right: 8px;
   background: rgba(30, 30, 30, 0.85); color: #eee;
@@ -502,6 +502,8 @@ body {
   z-index: 10;
   max-width: 220px;
 }
+/* パネルを出さないとき（?debug=1 なし）は、空の枠も出さない */
+#debug:empty { display: none; }
 #debug summary { cursor: pointer; font-weight: bold; }
 #debug label { display: block; cursor: pointer; }
 #debug button {

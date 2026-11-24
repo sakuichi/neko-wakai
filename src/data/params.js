@@ -198,8 +198,8 @@ export const STORY = {
 
 // シェア（src/game/shareCard.js・src/render/shareImage.js・src/ui/sharePanel.js）。docs/spec.md 12
 export const SHARE = {
-  // 公開ページの URL。公開するまでは空（空なら投稿文に付けない）
-  url: '',
+  // 公開ページの URL（空なら投稿文に付けない）。index.html の og:url・og:image も同じ URL にする
+  url: 'https://sakuichi.github.io/neko-wakai/',
   xIntent: 'https://x.com/intent/post',
   fileName: 'neko-wakai.png',
   // 画像の大きさ（4:5）と、その中の猫の絵の枠（角の丸み r）

@@ -205,8 +205,8 @@ __modules['src/data/params.js'] = (() => {
 
   // シェア（src/game/shareCard.js・src/render/shareImage.js・src/ui/sharePanel.js）。docs/spec.md 12
   const SHARE = {
-    // 公開ページの URL。公開するまでは空（空なら投稿文に付けない）
-    url: '',
+    // 公開ページの URL（空なら投稿文に付けない）。index.html の og:url・og:image も同じ URL にする
+    url: 'https://sakuichi.github.io/neko-wakai/',
     xIntent: 'https://x.com/intent/post',
     fileName: 'neko-wakai.png',
     // 画像の大きさ（4:5）と、その中の猫の絵の枠（角の丸み r）
@@ -2438,13 +2438,19 @@ __modules['src/render/renderer.js'] = (() => {
     ctx.restore();
   }
 
-  // 狩りの間、猫の頭の横に「カカカ」（小刻みに震わせる）
+  // 「カカカ」の文字の大きさと幅（全角3文字）、猫の真ん中から文字の右端まで（いちばん広い顔 58 の外。猫の大きさに合わせる）
+  const KAKA_SIZE = 14;
+  const KAKA_W = KAKA_SIZE * 3;
+  const KAKA_GAP_X = 66;
+
+  // 狩りの間、猫の頭の左（鳥のいるほう）に「カカカ」（小刻みに震わせる）
   function drawHuntCue(ctx, prop, t, p) {
     if (prop.phase !== 'hunt') return;
     const u = t - prop.start;
     if (u % KAKA_SEC >= KAKA_ON) return;
     const fit = Math.max(1, 0.85 / p.s);
-    drawPropText(ctx, 'カカカ', p.x + 40 * p.s + Math.sin(t * 40), p.y - 110 * p.s, 14, fit);
+    const x = p.x - KAKA_GAP_X * p.s - KAKA_W * fit + Math.sin(t * 40);
+    drawPropText(ctx, 'カカカ', x, p.y - 110 * p.s, KAKA_SIZE, fit);
   }
 
   function exclaim(ctx, x, y) {
@@ -5992,9 +5998,8 @@ __modules['src/main.js'] = (() => {
   const { loadRecords, saveRecords, clearRecords } = __modules['src/ui/recordStore.js'];
   const { SOUND_LABEL, PAUSE_TEXT, STORY_TEXT } = __modules['src/data/texts.js'];
 
-  // 試作中はデバッグパネルを常に表示する。本番では ?debug=1 のときだけ表示する
-  const PROTOTYPE = true;
-  const SHOW_DEBUG = PROTOTYPE || new URLSearchParams(location.search).has('debug');
+  // デバッグパネルは、アドレスに ?debug=1 を付けて開いたときだけ表示する
+  const SHOW_DEBUG = new URLSearchParams(location.search).get('debug') === '1';
 
   const $ = (id) => document.getElementById(id);
   const canvas = $('stage');
@@ -6051,7 +6056,7 @@ __modules['src/main.js'] = (() => {
   const session = { game: createGame({ events: newEvents() }), misses: {} };
   let rng = createRng(session.game.seed);
   let scene;
-  // 試作中はデバッグパネルで性格・毛色を固定できる（null ならランダム。性格は毛色で決まる）
+  // デバッグパネルで性格・毛色を固定できる（null ならランダム。性格は毛色で決まる）
   let fixedPersonality = null;
   let fixedCoat = null;
   // 顔の形も固定できる（null ならランダム）

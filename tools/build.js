@@ -1,4 +1,4 @@
-// src/ の ES Modules を、1つの通常スクリプト game.js にまとめる。
+// src/ の ES Modules を、1つの通常スクリプト game.js にまとめる（BGM の試聴ページと、リンク用の絵の道具もまとめる）。
 // これで index.html をダブルクリックするだけ（file://）で動く。
 // 使い方: npm run build （src/ を変更したら必ず実行する。tests/bundle.test.js が忘れを検出する）
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -10,6 +10,8 @@ const ENTRY = 'src/main.js';
 const OUT = 'game.js';
 // BGM の試聴ページ（ゲームには含めない）
 export const PREVIEW = { entry: 'tools/bgm-preview/preview.js', out: 'tools/bgm-preview/preview.bundle.js' };
+// リンク用の絵とアイコンを書き出す道具（ゲームには含めない）
+export const OGP = { entry: 'tools/ogp/ogp.js', out: 'tools/ogp/ogp.bundle.js' };
 
 const IMPORT_RE = /^import\s*\{([^}]*)\}\s*from\s*'([^']+)';?[ \t]*$/gm;
 const EXPORT_RE = /^export\s+(function|const|let|class)\s+([A-Za-z_$][\w$]*)/gm;
@@ -61,7 +63,7 @@ export function bundle(entry = ENTRY) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  for (const { entry, out } of [{ entry: ENTRY, out: OUT }, PREVIEW]) {
+  for (const { entry, out } of [{ entry: ENTRY, out: OUT }, PREVIEW, OGP]) {
     writeFileSync(join(ROOT, out), bundle(entry));
     console.log(`built ${out}`);
   }

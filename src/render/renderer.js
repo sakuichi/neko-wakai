@@ -1564,13 +1564,19 @@ function drawBook(ctx, prop, t) {
   ctx.restore();
 }
 
-// 狩りの間、猫の頭の横に「カカカ」（小刻みに震わせる）
+// 「カカカ」の文字の大きさと幅（全角3文字）、猫の真ん中から文字の右端まで（いちばん広い顔 58 の外。猫の大きさに合わせる）
+const KAKA_SIZE = 14;
+const KAKA_W = KAKA_SIZE * 3;
+const KAKA_GAP_X = 66;
+
+// 狩りの間、猫の頭の左（鳥のいるほう）に「カカカ」（小刻みに震わせる）
 function drawHuntCue(ctx, prop, t, p) {
   if (prop.phase !== 'hunt') return;
   const u = t - prop.start;
   if (u % KAKA_SEC >= KAKA_ON) return;
   const fit = Math.max(1, 0.85 / p.s);
-  drawPropText(ctx, 'カカカ', p.x + 40 * p.s + Math.sin(t * 40), p.y - 110 * p.s, 14, fit);
+  const x = p.x - KAKA_GAP_X * p.s - KAKA_W * fit + Math.sin(t * 40);
+  drawPropText(ctx, 'カカカ', x, p.y - 110 * p.s, KAKA_SIZE, fit);
 }
 
 function exclaim(ctx, x, y) {
