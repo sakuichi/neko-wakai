@@ -31,6 +31,17 @@ flowchart TD
     MAIN -->|"GameState"| DAY["昼：駆け引き<br/>src/scenes/dayScene.js"]
     MAIN -->|"GameState"| NIGHT["夜：選択<br/>src/scenes/nightScene.js"]
     MAIN -->|"GameState, saved, newTitles（エピローグの始めに残した結果）"| END["エンディング<br/>src/scenes/endingScene.js"]
+    END -->|"day, endingId, catName, coat"| SHARECARD["シェアする画像と投稿文の中身（純粋関数）：shareCard・sharePost（猫の名前は入れない）・xPostUrl・shareView<br/>src/game/shareCard.js"]
+    SLIDES -->|"endingView"| SHARECARD
+    SHARECARD -->|"ShareCard, {view, crop}（結果画面が coat, face, personality を添えて渡す）"| SHAREIMG["シェアする画像を描く（別の Canvas に部屋と猫を描いて切り取る。作れなければ null）<br/>src/render/shareImage.js"]
+    RENDER -->|"createRenderer（別の Canvas）"| SHAREIMG
+    END -->|"makeImage（画像を作る関数）・post・xUrl（「シェア」を押したとき）"| SHAREPANEL
+    DATA -->|"SHARE・SHARE_TEXT"| SHARECARD
+    DATA -->|"SHARE（画像の大きさ・枠）"| SHAREIMG
+    DATA -->|"SHARE_TEXT・SHARE.fileName"| SHAREPANEL
+    SHAREIMG -->|"PNG の data URL／null"| SHAREPANEL["シェア画面（画像・Xに投稿・画像を保存・コピー・とじる）。ボタンを押したときだけ外へ出る<br/>src/ui/sharePanel.js"]
+    SHARECARD -->|"投稿文, XのURL"| SHAREPANEL
+    SHAREPANEL -->|"押したときだけ"| SHAREOUT["Xの投稿画面（新しいタブ）／画像の保存／クリップボード"]
 
     INPUT["入力変換（タップ・クリック・キー）<br/>src/ui/input.js"] -->|"Action {type: pet / blink, holdMs}"| DAY
     DAY -->|"blink に sawLook（押している間に目が合ったか）を付ける"| DAY
@@ -167,6 +178,7 @@ stateDiagram-v2
 | Ending | `{ name, coat, face, personality, endingId, day, mistakes, date }`（date は 'YYYY-MM-DD'。visitor の day は 7。face は思い出の絵に使う。古い記録にはない） | `src/main.js` がエンディングのときに作る |
 | Records | `{ v: 1, memories: Ending[]（新しい順・最大50件）, dex: { [coat]: { stamps: endingId[], bestDay } }, titles: 称号id[], metCount }` | `src/main.js`（読み書きは `recordStore.js`、更新は `records.js` が返す） |
 | EndingId | `'fate' \| 'patient' \| 'persistent' \| 'visitor'` | `src/game/progression.js` が返す |
+| ShareCard | `{ headline: [1行目, 2行目], type, nameLine, title }`（画像に入れる文） | `src/game/shareCard.js` が作る |
 | Slide | `{ text, sec, waitTap, view(t) }`（紙芝居の1枚。sec 秒で自動で次へ、waitTap ならタップを待つ。view(t) はその枚の t 秒目の View の一部） | `src/scenes/storySlides.js` が作り、`src/scenes/storyScene.js` が使う |
 
 ## テスト
@@ -180,5 +192,6 @@ stateDiagram-v2
 - 一時停止：`tests/pause.test.js` は、メニューの「つづける」で1回だけ再開し、「タイトルにもどる」は確認を挟んでから1回だけやめること、閉じたあとに古いボタンを押しても何も起きないこと、開いている間は遊びの操作を通さないことを確かめる。`tests/input.test.js` は押しかけのまばたきを取り消せること、`tests/scenes.test.js` は昼の画面を stop したら予約していたトーストを出さず一日も終えないことを確かめる
 - 時間帯の景色：`tests/daylight.test.js` は、朝・昼・夕方・夜の名前と空の色、なめらかに変わること、部屋にかける色が薄いこと（0〜0.15）、スタンドライトが夕方からつくこと、太陽と月が窓の中にあることを確かめる
 - 紙芝居：`tests/story.test.js` は、イントロが何回目でも出てスキップで名前付けに進むこと（bundle() を偽の画面で起動して確かめる）、猫がいない庭に影を描かないこと、紙芝居の送り方（自動で進む秒数・タップ待ち・出てすぐのタップを無視・スキップ）と onDone が1回だけなこと、通い猫の「もうすぐ／まだ遠い」の境目（信頼70）、和解と通い猫のエピローグの流れ（夕方→夜、昼の最後の位置から窓へ歩いて消える）、結果画面の背景、枝がいつも（夜も）描かれることを確かめる
+- シェア：`tests/share.test.js` は、画像の文と投稿文、XのURLの変換、猫の名前が投稿文に入らないこと、押すまで何も起きず押した回だけ働くこと、コピー・X・画像の失敗、文字が枠に収まること、画像を作ってもゲームの描画が変わらないことを確かめる
 - 効果音：`tests/sound.test.js` は、効果音 OFF では「にゃーん」を鳴らさないこと、準備に失敗しても一度だけ知らせて例外を出さないことを確かめる
 - 画面の確認：`index.html` をダブルクリックで開く

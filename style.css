@@ -377,7 +377,47 @@ body {
   box-shadow: var(--shadow);
   cursor: pointer;
 }
+/* 結果画面のボタン（シェア・もう一度あそぶ） */
+.end-buttons { display: flex; gap: 2.4cqw; justify-content: center; }
+.end-buttons .retry { font-size: 4cqw; padding: 1.6cqh 5cqw; white-space: nowrap; }
+.share-open {
+  border: 0.5cqw solid var(--accent); border-radius: 999px;
+  background: #fff; color: var(--accent-deep);
+  font: bold 4cqw var(--font);
+  padding: 1.6cqh 5cqw;
+  white-space: nowrap;
+  cursor: pointer;
+}
 @keyframes fade-in { from { opacity: 0; } }
+
+/* ---- シェア画面（src/ui/sharePanel.js） ---- */
+.share {
+  position: absolute; inset: 0; z-index: 20;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2.4cqw;
+  background: rgba(60, 45, 35, 0.86);
+  animation: fade-in 0.2s;
+}
+.share[hidden] { display: none; }
+/* 長押しで画像を保存できるように */
+.share-image { width: 84cqw; border-radius: 3cqw; box-shadow: var(--shadow); user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
+.share-hint, .share-status, .share-noimage { margin: 0; color: var(--paper); font-size: 3.2cqw; }
+.share-noimage { padding: 20cqw 0; font-size: 4cqw; }
+.share-status { min-height: 1.6em; }
+.share-buttons { display: flex; gap: 2.4cqw; }
+.share-buttons button, .share-close {
+  border: 0; border-radius: 999px;
+  background: var(--accent); color: #fff;
+  font: bold 4cqw var(--font);
+  padding: 2.8cqw 5cqw;
+  white-space: nowrap;
+  cursor: pointer;
+}
+/* 開いてすぐの間は押せない（「シェア」を続けて2回押したとき、2回目が下のボタンに当たらないように） */
+.share-buttons button, .share-close { animation: share-guard 0.5s; }
+@keyframes share-guard { from, to { pointer-events: none; } }
+.share-buttons .share-x { background: #1f1a17; }
+.share-buttons button:disabled { opacity: 0.45; cursor: default; }
+.share-close { background: rgba(255, 250, 243, 0.94); color: var(--ink-soft); }
 
 /* 日本語の文章を、文節の切れ目で改行する（対応していないブラウザでは通常の改行） */
 .card, .bubble-item, .toast-item, .night-screen, .ending-screen, .name-band { word-break: auto-phrase; }

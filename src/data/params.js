@@ -195,3 +195,23 @@ export const STORY = {
   dusk: { sec: 4.5, toEveningSec: 3.5 },
   leave: { openSec: 0.6, walkSec: 2.8, lookBackSec: 1.2, outSec: 0.8, sec: 6.4 },
 };
+
+// シェア（src/game/shareCard.js・src/render/shareImage.js・src/ui/sharePanel.js）。docs/spec.md 12
+export const SHARE = {
+  // 公開ページの URL。公開するまでは空（空なら投稿文に付けない）
+  url: '',
+  xIntent: 'https://x.com/intent/post',
+  fileName: 'neko-wakai.png',
+  // 画像の大きさ（4:5）と、その中の猫の絵の枠（角の丸み r）
+  image: { w: 1080, h: 1350 },
+  picture: { x: 80, y: 340, w: 920, h: 690, r: 48 },
+  // 猫の絵として切り取る範囲（論理座標 360×640。4:3）
+  crop: {
+    lap: { x: 36, y: 424, w: 288, h: 216 },
+    garden: { x: 0, y: 245, w: 136, h: 102 },
+  },
+  // 通い猫：窓の中央の枠やガラスのつやがかからないよう、左の戸の真ん中に座らせる
+  gardenCat: { x: 62, y: 331, s: 0.52, outside: true },
+  // 結果画面が始まって何秒後の姿を描くか
+  poseSec: 1.2,
+};

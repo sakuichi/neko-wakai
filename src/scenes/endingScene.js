@@ -1,9 +1,13 @@
-import { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, PERSONALITY_TIPS, NOTEBOOK_TEXT, TITLES, withName } from '../data/texts.js';
+import { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, PERSONALITY_TIPS, NOTEBOOK_TEXT, SHARE_TEXT, TITLES, withName } from '../data/texts.js';
 import { PERSONALITIES } from '../data/params.js';
+import { shareCard, sharePost, xPostUrl, shareView } from '../game/shareCard.js';
+import { createShareImage } from '../render/shareImage.js';
+import { createSharePanel } from '../ui/sharePanel.js';
 import { endingView } from './storySlides.js';
 
 // saved: ねこ手帳に思い出を残せたか。newTitles: 今回新しく手に入れた称号の id（src/game/records.js）
-export function createEndingScene({ screenEl, session, endingId, onRetry, saved = true, newTitles = [] }) {
+// shareActions・makeShareImage: シェアの動き（テストで差し替える。省略するとブラウザの実装）
+export function createEndingScene({ screenEl, session, endingId, onRetry, saved = true, newTitles = [], shareActions, makeShareImage = createShareImage }) {
   const g = session.game;
   const ending = ENDINGS[endingId];
   const reconciled = endingId !== 'visitor';
@@ -45,6 +49,26 @@ export function createEndingScene({ screenEl, session, endingId, onRetry, saved 
     screenEl.replaceChildren();
     onRetry();
   }, { once: true });
+  // シェア画面（画像は、押したときに作る）
+  const shareEl = document.createElement('div');
+  shareEl.className = 'share';
+  const share = document.createElement('button');
+  share.type = 'button';
+  share.className = 'share-open';
+  share.textContent = SHARE_TEXT.open;
+  const sharePanel = createSharePanel({ el: shareEl, actions: shareActions, behind: node, opener: share });
+  share.addEventListener('click', () => {
+    const result = { day: g.day, endingId, catName: g.catName, coat: g.coat };
+    const post = sharePost(result);
+    sharePanel.open({
+      makeImage: () => makeShareImage({ card: shareCard(result), shot: shareView(endingId), coat: g.coat, face: g.face, personality: g.personality }),
+      post,
+      xUrl: xPostUrl(post),
+    });
+  });
+  const buttons = document.createElement('div');
+  buttons.className = 'end-buttons';
+  buttons.append(share, retry);
   // ねこ手帳に残したこと・新しい称号
   const notes = [];
   if (saved) notes.push(NOTEBOOK_TEXT.saved);
@@ -58,8 +82,8 @@ export function createEndingScene({ screenEl, session, endingId, onRetry, saved 
   }
   node.append(label, h2, body, ul);
   if (notes.length) node.append(notebook);
-  node.append(retry);
-  screenEl.replaceChildren(node);
+  node.append(buttons);
+  screenEl.replaceChildren(node, shareEl);
 
   return {
     name: 'ending',

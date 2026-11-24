@@ -202,7 +202,27 @@ __modules['src/data/params.js'] = (() => {
     dusk: { sec: 4.5, toEveningSec: 3.5 },
     leave: { openSec: 0.6, walkSec: 2.8, lookBackSec: 1.2, outSec: 0.8, sec: 6.4 },
   };
-  return { MAX_VALUE, MAX_DAY, RULES, EVENT_DAYS, EVENTS, DAYS, DAYLIGHT, FACES, NIGHT, PERSONALITIES, DEFAULT_PERSONALITY, COAT_PERSONALITY, STORY };
+
+  // シェア（src/game/shareCard.js・src/render/shareImage.js・src/ui/sharePanel.js）。docs/spec.md 12
+  const SHARE = {
+    // 公開ページの URL。公開するまでは空（空なら投稿文に付けない）
+    url: '',
+    xIntent: 'https://x.com/intent/post',
+    fileName: 'neko-wakai.png',
+    // 画像の大きさ（4:5）と、その中の猫の絵の枠（角の丸み r）
+    image: { w: 1080, h: 1350 },
+    picture: { x: 80, y: 340, w: 920, h: 690, r: 48 },
+    // 猫の絵として切り取る範囲（論理座標 360×640。4:3）
+    crop: {
+      lap: { x: 36, y: 424, w: 288, h: 216 },
+      garden: { x: 0, y: 245, w: 136, h: 102 },
+    },
+    // 通い猫：窓の中央の枠やガラスのつやがかからないよう、左の戸の真ん中に座らせる
+    gardenCat: { x: 62, y: 331, s: 0.52, outside: true },
+    // 結果画面が始まって何秒後の姿を描くか
+    poseSec: 1.2,
+  };
+  return { MAX_VALUE, MAX_DAY, RULES, EVENT_DAYS, EVENTS, DAYS, DAYLIGHT, FACES, NIGHT, PERSONALITIES, DEFAULT_PERSONALITY, COAT_PERSONALITY, STORY, SHARE };
 })();
 
 // ---- src/game/rules.js
@@ -2959,7 +2979,35 @@ __modules['src/data/texts.js'] = (() => {
     // デバッグでエピローグをその場から見るとき、まだ名前がなければこの名前にする
     debugName: 'みかん',
   };
-  return { withName, TITLE, DAY_TITLES, NAME_TEXT, TUTORIAL, CARDS, HINTS, FEEDBACK, DERE_TEXT, TIMID_GONE_TEXT, EVENT_TEXT, LAP_TEXT, NIGHT_TEXT, ENDINGS, ENDING_UI, COAT_LABELS, PERSONALITY_TIPS, COAT_LORE, NOTEBOOK_TEXT, TITLES, PAUSE_TEXT, SOUND_LABEL, BGM_TEXT, STORY_TEXT };
+
+  // シェア（結果画面の「シェア」）。投稿文は src/game/shareCard.js で組み立てる。猫の名前は画像だけに入れる
+  const SHARE_TEXT = {
+    open: 'シェア',
+    x: 'Xに投稿',
+    save: '画像を保存',
+    copy: 'コピー',
+    close: 'とじる',
+    hint: '画像は長押しでも保存できます',
+    alt: 'シェアする画像',
+    copied: '文をコピーしました',
+    copyFailed: 'コピーできませんでした',
+    xFailed: 'Xが開かないときは、「コピー」を使ってください',
+    saved: '保存できないときは、画像を長押ししてください',
+    saveFailed: '画像を保存できませんでした',
+    imageFailed: '画像を作れませんでした',
+    tags: ['#ネコと和解せよ', '#ネコ和解ゲーム'],
+    reconciled: (day) => [`${day}日目で`, 'ネコと和解した'],
+    notReconciled: ['7日かけても、', 'ネコと和解できなかった'],
+    nameLine: (name, coat) => `ネコの名前：${name}（${coat}）`,
+    // 投稿文の2行目（エンディングごと）
+    second: {
+      fate: 'たった3日で膝に乗ってきた。これは「運命の膝」。',
+      patient: '焦らず、追わず。わたしは「待てる人間」。',
+      persistent: '何度逃げられても待った。わたしは「根気の人」。',
+      visitor: 'でも、ときどき遊びに来てくれる。',
+    },
+  };
+  return { withName, TITLE, DAY_TITLES, NAME_TEXT, TUTORIAL, CARDS, HINTS, FEEDBACK, DERE_TEXT, TIMID_GONE_TEXT, EVENT_TEXT, LAP_TEXT, NIGHT_TEXT, ENDINGS, ENDING_UI, COAT_LABELS, PERSONALITY_TIPS, COAT_LORE, NOTEBOOK_TEXT, TITLES, PAUSE_TEXT, SOUND_LABEL, BGM_TEXT, STORY_TEXT, SHARE_TEXT };
 })();
 
 // ---- src/game/catBrain.js
@@ -5096,14 +5144,323 @@ __modules['src/scenes/storySlides.js'] = (() => {
   return { introSlides, epilogueSlides, endingView };
 })();
 
+// ---- src/game/shareCard.js
+__modules['src/game/shareCard.js'] = (() => {
+  // シェアする画像と投稿文の中身（純粋関数）。画像は src/render/shareImage.js、画面は src/ui/sharePanel.js
+  const { SHARE } = __modules['src/data/params.js'];
+  const { SHARE_TEXT, ENDINGS, COAT_LABELS, TITLE } = __modules['src/data/texts.js'];
+  const { endingView } = __modules['src/scenes/storySlides.js'];
+
+  const headline = (day, endingId) => (endingId === 'visitor' ? [...SHARE_TEXT.notReconciled] : SHARE_TEXT.reconciled(day));
+
+  // 画像に入れる文
+  function shareCard({ day, endingId, catName, coat }) {
+    return {
+      headline: headline(day, endingId),
+      type: ENDINGS[endingId].name,
+      nameLine: SHARE_TEXT.nameLine(catName, COAT_LABELS[coat]),
+      title: TITLE.main,
+    };
+  }
+
+  // 投稿文（コピーとXで使う）。猫の名前は入れない
+  function sharePost({ day, endingId }, url = SHARE.url) {
+    const lines = [`${headline(day, endingId).join('')}。`, SHARE_TEXT.second[endingId], SHARE_TEXT.tags.join(' ')];
+    if (url) lines.push(url);
+    return lines.join('\n');
+  }
+
+  // Xの投稿画面を開くURL
+  function xPostUrl(text) {
+    return `${SHARE.xIntent}?text=${encodeURIComponent(text)}`;
+  }
+
+  // 画像に入れる猫の絵：描画に渡す View と、切り取る範囲
+  function shareView(endingId) {
+    const view = { ...endingView(endingId, SHARE.poseSec), scene: 'ending', endingId };
+    if (endingId === 'visitor') return { view: { ...view, catAt: { ...SHARE.gardenCat } }, crop: { ...SHARE.crop.garden } };
+    return { view, crop: { ...SHARE.crop.lap } };
+  }
+  return { shareCard, sharePost, xPostUrl, shareView };
+})();
+
+// ---- src/render/shareImage.js
+__modules['src/render/shareImage.js'] = (() => {
+  // シェアする画像を描く。部屋と猫は、ゲームと同じ描画（renderer.js）で別の Canvas に描いて切り取る
+  const { SHARE } = __modules['src/data/params.js'];
+  const { createRenderer, W, H } = __modules['src/render/renderer.js'];
+
+  // style.css の --font と同じ
+  const FONT = '"Hiragino Maru Gothic ProN", "Hiragino Maru Gothic Pro", "BIZ UDPGothic", "Yu Gothic UI", "Meiryo", sans-serif';
+  const COLOR = { paper: '#fdf6ec', ink: '#5a3e2b', soft: '#8a6d58', accent: '#d9823b', frame: '#e7cfb4', paw: 'rgba(244, 182, 194, 0.55)' };
+  // 部屋と猫を描く Canvas の幅。切り取って広げても線がぼやけない大きさにする
+  const SHOT_W = 1800;
+  // 膝に乗り終わった姿にするため、少し時間を進めてから使う（1.0秒ぶん。猫がまばたきを始める前）
+  const FRAMES = 10;
+  const FRAME_SEC = 0.1;
+
+  /**
+   * card: shareCard の結果、shot: shareView の結果（src/game/shareCard.js）
+   * @returns {string|null} PNG の data URL。作れなければ null
+   */
+  function createShareImage({ card, shot, coat, face, personality }) {
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = SHARE.image.w;
+      canvas.height = SHARE.image.h;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = COLOR.paper;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      paw(ctx, 110, 120, 1.7, -0.4);
+      paw(ctx, 975, 110, 1.4, 0.4);
+      paw(ctx, 100, 1270, 1.4, 0.3);
+      paw(ctx, 985, 1265, 1.5, -0.3);
+      const room = drawShot(shot, { coat, face, personality });
+      drawPicture(ctx, room, shot.crop);
+      // 大きな Canvas のメモリを、すぐに手放す（何度も開いたときに、iOS の上限に届かないように）
+      room.width = 0;
+      room.height = 0;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      fitText(ctx, card.headline[0], 62, 120, COLOR.ink, 700);
+      fitText(ctx, card.headline[1], 112, 235, COLOR.accent, 920);
+      fitText(ctx, card.type, 70, 1108, COLOR.ink, 900);
+      fitText(ctx, card.nameLine, 44, 1194, COLOR.soft, 820);
+      fitText(ctx, card.title, 40, 1284, COLOR.accent, 700);
+      return canvas.toDataURL('image/png');
+    } catch (e) {
+      console.warn('シェアする画像を作れませんでした', e);
+      return null;
+    }
+  }
+
+  function drawShot(shot, look) {
+    const canvas = document.createElement('canvas');
+    const renderer = createRenderer(canvas);
+    const draw = (i) => renderer.draw({ ...look, ...shot.view }, i * FRAME_SEC, FRAME_SEC);
+    // 途中は小さく描いて（重くならないように）、最後の1枚だけ大きく描く
+    canvas.width = W;
+    canvas.height = H;
+    for (let i = 0; i < FRAMES; i++) draw(i);
+    canvas.width = SHOT_W;
+    canvas.height = (SHOT_W / W) * H;
+    draw(FRAMES);
+    return canvas;
+  }
+
+  function drawPicture(ctx, canvas, crop) {
+    const P = SHARE.picture;
+    const k = SHOT_W / W;
+    ctx.save();
+    roundRect(ctx, P);
+    ctx.clip();
+    ctx.drawImage(canvas, crop.x * k, crop.y * k, crop.w * k, crop.h * k, P.x, P.y, P.w, P.h);
+    ctx.restore();
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = COLOR.frame;
+    roundRect(ctx, P);
+    ctx.stroke();
+  }
+
+  // 角の丸い四角（ctx.roundRect は古いブラウザにないので、自分で描く）
+  function roundRect(ctx, { x, y, w, h, r }) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // 真ん中に1行。max の幅を超えるときは、文字を小さくして収める
+  function fitText(ctx, text, size, y, color, max) {
+    ctx.font = `bold ${size}px ${FONT}`;
+    const w = ctx.measureText(text).width;
+    if (w > max) ctx.font = `bold ${Math.floor((size * max) / w)}px ${FONT}`;
+    ctx.fillStyle = color;
+    ctx.fillText(text, SHARE.image.w / 2, y);
+  }
+
+  // すみの肉球
+  function paw(ctx, x, y, s, rot) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.scale(s, s);
+    ctx.fillStyle = COLOR.paw;
+    for (const [dx, dy, rx, ry] of [[0, 8, 20, 16], [-24, -12, 8, 9], [-8, -24, 8, 9], [8, -24, 8, 9], [24, -12, 8, 9]]) {
+      ctx.beginPath();
+      ctx.ellipse(dx, dy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+  return { createShareImage };
+})();
+
+// ---- src/ui/sharePanel.js
+__modules['src/ui/sharePanel.js'] = (() => {
+  // シェア画面：画像と「Xに投稿」「画像を保存」「コピー」「とじる」。
+  // 外へ出るのは、ボタンを押したときだけ（開いただけでは何もしない）。中身は src/game/shareCard.js
+  const { SHARE } = __modules['src/data/params.js'];
+  const { SHARE_TEXT } = __modules['src/data/texts.js'];
+
+  const browserActions = {
+    // Xの投稿画面を新しいタブで開く（実際に投稿するかは、遊ぶ人がそこで決める）。開けたら true
+    openUrl(url) {
+      const w = window.open(url, '_blank');
+      if (!w) return false;
+      // 開いた先から、このページを操作できないようにする（できない環境でも、開けたことに変わりはない）
+      try {
+        w.opener = null;
+      } catch {
+        // 別の場所のページになったあとは切れないことがある
+      }
+      return true;
+    },
+    save(dataUrl, fileName) {
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      link.download = fileName;
+      document.body.append(link);
+      link.click();
+      link.remove();
+    },
+    async copy(text) {
+      await navigator.clipboard.writeText(text);
+    },
+  };
+
+  // el: シェア画面を出す空の要素。閉じている間は hidden。
+  // behind: 開いている間、操作できなくする後ろの要素。opener: 閉じたときにフォーカスを戻すボタン（どちらも省略できる）
+  function createSharePanel({ el, actions = browserActions, behind = null, opener = null }) {
+    let isOpen = false;
+    // 何回目に開いたか（閉じたあとに終わったコピーの知らせを、次に開いた画面に出さないため）
+    let session = 0;
+    el.hidden = true;
+
+    // makeImage: 画像（data URL。作れなければ null）を作る。post: 投稿文。xUrl: Xの投稿画面のURL
+    function open({ makeImage, post, xUrl }) {
+      const now = (session += 1);
+      const alive = () => isOpen && now === session;
+      let image = null;
+      try {
+        image = makeImage();
+      } catch {
+        image = null;
+      }
+
+      const status = text('p', 'share-status', '');
+      status.setAttribute('aria-live', 'polite');
+      const say = (message) => {
+        if (alive()) status.textContent = message;
+      };
+
+      const x = button('share-x', SHARE_TEXT.x, () => {
+        let opened = false;
+        try {
+          opened = actions.openUrl(xUrl);
+        } catch {
+          opened = false;
+        }
+        say(opened ? '' : SHARE_TEXT.xFailed);
+      });
+      const save = button('share-save', SHARE_TEXT.save, () => {
+        if (!image) return;
+        try {
+          actions.save(image, SHARE.fileName);
+          // 保存が効かない環境でも例外は出ないので、長押しの方法も知らせる
+          say(SHARE_TEXT.saved);
+        } catch {
+          say(SHARE_TEXT.saveFailed);
+        }
+      });
+      save.disabled = !image;
+      let copying = false;
+      const copy = button('share-copy', SHARE_TEXT.copy, async () => {
+        if (copying) return;
+        copying = true;
+        try {
+          await actions.copy(post);
+          say(SHARE_TEXT.copied);
+        } catch {
+          say(SHARE_TEXT.copyFailed);
+        } finally {
+          copying = false;
+        }
+      });
+      const closeBtn = button('share-close', SHARE_TEXT.close, close);
+
+      const buttons = document.createElement('div');
+      buttons.className = 'share-buttons';
+      buttons.append(x, save, copy);
+      const head = image ? [picture(image), text('p', 'share-hint', SHARE_TEXT.hint)] : [text('p', 'share-noimage', SHARE_TEXT.imageFailed)];
+      el.replaceChildren(...head, buttons, status, closeBtn);
+      el.hidden = false;
+      isOpen = true;
+      if (behind) behind.inert = true;
+      closeBtn.focus();
+
+      // 閉じたあとに届いた操作では、何もしない
+      function button(className, label, fn) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = className;
+        b.textContent = label;
+        b.addEventListener('click', () => {
+          if (alive()) fn();
+        });
+        return b;
+      }
+    }
+
+    function close() {
+      isOpen = false;
+      el.hidden = true;
+      el.replaceChildren();
+      if (behind) behind.inert = false;
+      opener?.focus();
+    }
+
+    return {
+      open,
+      close,
+      get isOpen() {
+        return isOpen;
+      },
+    };
+  }
+
+  function text(tag, className, content) {
+    const node = document.createElement(tag);
+    node.className = className;
+    node.textContent = content;
+    return node;
+  }
+
+  function picture(src) {
+    const img = document.createElement('img');
+    img.className = 'share-image';
+    img.alt = SHARE_TEXT.alt;
+    img.src = src;
+    return img;
+  }
+  return { createSharePanel };
+})();
+
 // ---- src/scenes/endingScene.js
 __modules['src/scenes/endingScene.js'] = (() => {
-  const { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, PERSONALITY_TIPS, NOTEBOOK_TEXT, TITLES, withName } = __modules['src/data/texts.js'];
+  const { ENDINGS, ENDING_UI, COAT_LABELS, COAT_LORE, PERSONALITY_TIPS, NOTEBOOK_TEXT, SHARE_TEXT, TITLES, withName } = __modules['src/data/texts.js'];
   const { PERSONALITIES } = __modules['src/data/params.js'];
+  const { shareCard, sharePost, xPostUrl, shareView } = __modules['src/game/shareCard.js'];
+  const { createShareImage } = __modules['src/render/shareImage.js'];
+  const { createSharePanel } = __modules['src/ui/sharePanel.js'];
   const { endingView } = __modules['src/scenes/storySlides.js'];
 
   // saved: ねこ手帳に思い出を残せたか。newTitles: 今回新しく手に入れた称号の id（src/game/records.js）
-  function createEndingScene({ screenEl, session, endingId, onRetry, saved = true, newTitles = [] }) {
+  // shareActions・makeShareImage: シェアの動き（テストで差し替える。省略するとブラウザの実装）
+  function createEndingScene({ screenEl, session, endingId, onRetry, saved = true, newTitles = [], shareActions, makeShareImage = createShareImage }) {
     const g = session.game;
     const ending = ENDINGS[endingId];
     const reconciled = endingId !== 'visitor';
@@ -5145,6 +5502,26 @@ __modules['src/scenes/endingScene.js'] = (() => {
       screenEl.replaceChildren();
       onRetry();
     }, { once: true });
+    // シェア画面（画像は、押したときに作る）
+    const shareEl = document.createElement('div');
+    shareEl.className = 'share';
+    const share = document.createElement('button');
+    share.type = 'button';
+    share.className = 'share-open';
+    share.textContent = SHARE_TEXT.open;
+    const sharePanel = createSharePanel({ el: shareEl, actions: shareActions, behind: node, opener: share });
+    share.addEventListener('click', () => {
+      const result = { day: g.day, endingId, catName: g.catName, coat: g.coat };
+      const post = sharePost(result);
+      sharePanel.open({
+        makeImage: () => makeShareImage({ card: shareCard(result), shot: shareView(endingId), coat: g.coat, face: g.face, personality: g.personality }),
+        post,
+        xUrl: xPostUrl(post),
+      });
+    });
+    const buttons = document.createElement('div');
+    buttons.className = 'end-buttons';
+    buttons.append(share, retry);
     // ねこ手帳に残したこと・新しい称号
     const notes = [];
     if (saved) notes.push(NOTEBOOK_TEXT.saved);
@@ -5158,8 +5535,8 @@ __modules['src/scenes/endingScene.js'] = (() => {
     }
     node.append(label, h2, body, ul);
     if (notes.length) node.append(notebook);
-    node.append(retry);
-    screenEl.replaceChildren(node);
+    node.append(buttons);
+    screenEl.replaceChildren(node, shareEl);
 
     return {
       name: 'ending',
