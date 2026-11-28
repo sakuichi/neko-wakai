@@ -1,5 +1,5 @@
 // 起動・ゲームループ・画面切替。
-import { createGame, finishDay, chooseNight, chooseCat, chooseFace, chooseEvents } from './game/progression.js';
+import { createGame, finishDay, chooseNight, chooseCat, chooseFace, chooseEvents, rerollCat } from './game/progression.js';
 import { MAX_DAY } from './data/params.js';
 import { createRng } from './util/rng.js';
 import { createRenderer } from './render/renderer.js';
@@ -104,7 +104,13 @@ function goTitle() {
 
 // タイトルの画面だけを出す（ねこ手帳から戻るときは、次の猫を選び直さない）
 function showTitle() {
-  scene = createTitleScene({ screenEl, onStart: goIntro, onNotebook: goNotebook });
+  scene = createTitleScene({ screenEl, onStart: goIntro, onNotebook: goNotebook, onReroll: rerollTitleCat });
+}
+
+// タイトルの「ちがう子にする」：毛色の違う子に引き直す（デバッグで固定しているものはそのまま）。
+// 入れ替わり（前の子が消えて新しい子が現れる）は、描画が毛色・顔の変化に気づいて行う（src/render/renderer.js）
+function rerollTitleCat() {
+  session.game = rerollCat(session.game, { personality: fixedPersonality, coat: fixedCoat, face: fixedFace ?? {} });
 }
 
 function goNotebook() {

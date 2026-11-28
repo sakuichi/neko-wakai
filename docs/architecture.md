@@ -19,7 +19,8 @@ flowchart TD
     HTML["画面の土台・見た目<br/>index.html<br/>style.css<br/>game.js（生成物）"] --> MAIN
 
     MAIN["起動・ゲームループ・画面切替<br/>src/main.js"]
-    MAIN -->|"GameState"| TITLE["タイトル画面<br/>src/scenes/titleScene.js"]
+    MAIN -->|"GameState"| TITLE["タイトル画面（「ちがう子にする」ボタン：押してもはじまらない）<br/>src/scenes/titleScene.js"]
+    TITLE -->|"onReroll（ちがう子にする）"| MAIN
     MAIN -->|"EndingId, trust, catName, from（昼の最後の猫の位置 renderer.shownPosition）, dayTime（renderer.shownDayTime）"| SLIDES["紙芝居の中身（純粋関数）：introSlides（毎回出す）・epilogueSlides（和解：膝で夕方→夜／通い猫：窓を開ける→後ろ姿で歩く→振り返る→消える→次の朝の庭。最後の信頼 nearTrust 以上で「もうすぐ」）・endingView（結果画面の背景）<br/>src/scenes/storySlides.js"]
     SLIDES -->|"Slide[] {text, sec, waitTap, view(t)}"| STORY["紙芝居（イントロ・エピローグ）：1枚ずつ文章と部屋の絵。自動で次へ・タップ（出てすぐは無視）・スキップ。クリーム色の覆い（.story-wipe）で切り替え<br/>src/scenes/storyScene.js"]
     MAIN -->|"slides, onDone"| STORY
@@ -87,7 +88,7 @@ flowchart TD
     DATA -->|"BGM_TEXT・曲データ（src/data/bgmSongs.js）"| MUSIC
 
     STORY -->|"View {scene: intro / epilogue, cat（sit・walkAway・relax・lap）, catAt {x, y, s, alpha, outside（庭にいる）}, windowOpen（0〜1）, dayTime, night, lapTime}"| RENDER
-    DAY -->|"View {cat, wariness, blinkHoldMs, lapTime, dayTime（その日の進み具合 0〜1）, shy（ツンの間か）, prop（イベントの小道具）}"| RENDER["猫・部屋・膝の描画（部屋：床まである横長の掃き出し窓（左端は画面の外）・外は1階の庭（生け垣・芝生）・枝はいつも描く・スタンドライトと植木は床の少し手前。窓は windowOpen のときだけ左の戸をずらして開ける。catAt があれば猫をその位置に描き、outside なら窓の切り抜きの中・ガラスより奥に描く。紙芝居用の姿：座る sit・後ろ姿で歩く walkAway）（Canvas。お腹見せの手前の足は胴体に重ねる）・毛色・性格の仕草（ツンデレはツンの間、見るときも目をそらす）・見つめる合図（チラッ）・歩く姿と蛇行する道すじ・膝に跳び乗る・タイトルに戻るとき／夜に帰っていくときは猫がその場で消え、タイトルの位置／次の日の昼のスタート位置に現れる（フェード）・ページを開いた直後は猫をはじめからその場面の位置に置く・まばたきゲージ・足あと・我慢できたときの「ほっ」（addEffect('relief')。窓の外に鳥で、見守れて鳥が去ったとき（cue 'understood'・'left'）と、箱でツンの間に見送れたとき（cue 'watched'）も）・ビビりの「ビクビク」（耳を伏せている間と addEffect('timid')）<br/>src/render/renderer.js"]
+    DAY -->|"View {cat, wariness, blinkHoldMs, lapTime, dayTime（その日の進み具合 0〜1）, shy（ツンの間か）, prop（イベントの小道具）}"| RENDER["猫・部屋・膝の描画（部屋：床まである横長の掃き出し窓（左端は画面の外）・外は1階の庭（生け垣・芝生）・枝はいつも描く・スタンドライトと植木は床の少し手前。窓は windowOpen のときだけ左の戸をずらして開ける。catAt があれば猫をその位置に描き、outside なら窓の切り抜きの中・ガラスより奥に描く。紙芝居用の姿：座る sit・後ろ姿で歩く walkAway）（Canvas。お腹見せの手前の足は胴体に重ねる）・毛色・性格の仕草（ツンデレはツンの間、見るときも目をそらす）・見つめる合図（チラッ）・歩く姿と蛇行する道すじ・膝に跳び乗る・タイトルに戻るとき／夜に帰っていくとき／タイトルのまま毛色か顔が変わったとき（ちがう子にする）は猫がその場で消え、タイトルの位置／次の日の昼のスタート位置に現れる（フェード）・ページを開いた直後は猫をはじめからその場面の位置に置く・まばたきゲージ・足あと・我慢できたときの「ほっ」（addEffect('relief')。窓の外に鳥で、見守れて鳥が去ったとき（cue 'understood'・'left'）と、箱でツンの間に見送れたとき（cue 'watched'）も）・ビビりの「ビクビク」（耳を伏せている間と addEffect('timid')）<br/>src/render/renderer.js"]
     MAIN -->|"coat, personality, face（顔の形：輪郭4種×耳3種。FACE_SHAPES・EAR_SIZES）"| RENDER
     RENDER -->|"View.prop（kind, phase, phaseT）。parcel：箱は猫が止まる位置に置いてその日のあいだ動かさず、猫が出て手前に来たら猫の奥に描く。bird：窓の外（部屋の窓の切り抜きの中）に鳥を描き（枝とガラスのつやは、いつもの部屋の絵で描く）、狩りの間は猫の横に「カカカ」。book：膝の上に開いた本（めくる動き・ページ数。猫がのぞき込んでいる間も開いたまま）、本をのぞき込む猫（peekBook）は膝の前に座って首をかしげた姿で描き（膝には乗せない）、そのあとは閉じた本を右手に"| PROPS["イベントの小道具：通販の箱（ガムテープ・宛名ラベル・ワレモノ）・詰め物の紙・紙くず・「ドサッ」「？」「カサカサ」／窓の外の枝・小鳥／開いた本・閉じた本<br/>src/render/props.js"]
     RENDER -->|"dayTime（タイトル・名前付けは朝）, 夜かどうか（夜の画面、または View.night）"| LIGHT["時間帯の景色：朝→昼→夕方→夜の空の色・太陽／月・部屋にかける薄い色（猫は染めない）・床の日だまり・スタンドライトの明るさ<br/>src/render/daylight.js（daylightAt）"]
@@ -101,7 +102,7 @@ flowchart TD
     HTML -->|"アドレスの ?debug=1（このときだけデバッグパネルを作る。作らないときは空の枠も CSS で隠す）"| MAIN
     DEBUG["デバッグパネル（?debug=1 のときだけ）<br/>src/ui/debugPanel.js"] -->|"personality / coat / face / event（イベントの日の固定） / skipDay / trustMax / reset / speed / clearRecords / extra（イントロ・和解の結末・通い猫（もうすぐ／まだ遠い）をその場から見る）"| MAIN
     MAIN -->|"固定した personality / coat（なければ null）"| PROG
-    PROG -->|"chooseCat：毛色で性格が決まる（COAT_PERSONALITY）／chooseFace：顔の形は毛色と関係なくランダム（FACES）"| MAIN
+    PROG -->|"chooseCat：毛色で性格が決まる（COAT_PERSONALITY）／chooseFace：顔の形は毛色と関係なくランダム（FACES）／rerollCat：タイトルの「ちがう子にする」で、いまと違う毛色と顔に引き直す（変わるのは coat・personality・face だけ。デバッグの固定は守る）"| MAIN
     PROG -->|"chooseEvents：イベントを4〜6日目に1つずつ（EVENT_DAYS）。デバッグでは日を固定できる"| MAIN
     MAIN -->|"GameState, DayState, CatState"| DEBUG
 
@@ -177,6 +178,7 @@ stateDiagram-v2
     タイトル --> イントロ: タップ（毎回）
     イントロ --> 名前付け: 最後の枚のあと／スキップ
     タイトル --> ねこ手帳: 「ねこ手帳」ボタン
+    タイトル --> タイトル: 「ちがう子にする」（毛色の違う子に引き直す）
     ねこ手帳 --> タイトル: もどる
     名前付け --> 昼: 名前を決める
     名前付け --> タイトル: もどる（同じ猫のまま）
@@ -223,6 +225,7 @@ stateDiagram-v2
 - 紙芝居：`tests/story.test.js` は、イントロが何回目でも出てスキップで名前付けに進むこと（bundle() を偽の画面で起動して確かめる）、猫がいない庭に影を描かないこと、紙芝居の送り方（自動で進む秒数・タップ待ち・出てすぐのタップを無視・スキップ）と onDone が1回だけなこと、通い猫の「もうすぐ／まだ遠い」の境目（信頼70）、和解と通い猫のエピローグの流れ（夕方→夜、昼の最後の位置から窓へ歩いて消える）、結果画面の背景、枝がいつも（夜も）描かれることを確かめる
 - シェア：`tests/share.test.js` は、画像の文と投稿文、XのURLの変換、猫の名前が投稿文に入らないこと、押すまで何も起きず押した回だけ働くこと、コピー・X・画像の失敗、文字が枠に収まること、画像を作ってもゲームの描画が変わらないことを確かめる
 - シェアに画像を付ける：`tests/shareSheet.test.js` は、開いただけでは共有・コピーが起きないこと、スマホでは画像と文を1回だけ共有メニューに渡すこと、渡す文とファイル名に猫の名前が入らないこと、iPhoneの保存は画像だけを渡すこと、PCは画像をコピーしてからXを開くこと、使えない・やめた・失敗した・終わらないときの戻り道、連打と途中で閉じたときを確かめる
+- ちがう子にする：`tests/reroll.test.js` は、引き直すと毎回いまと違う毛色になり性格はその毛色のものになること、残り5色がまんべんなく出ること、変わるのは毛色・性格・顔だけなこと、デバッグの固定を守ること、タイトルのボタンを押しても始まらずほかの場所のタップでは始まること、引き直した子の毛色で名前付けの候補が出ること（bundle() を偽の画面で起動して確かめる）、前の毛色のまま消えてから新しい毛色で現れることを確かめる
 - 公開の準備：`tests/publish.test.js` は、`?debug=1` のときだけデバッグパネルが出ること、空の枠を隠すこと、投稿文とリンクに debug が入らないこと、リンク用の情報（OGP）と `SHARE.url` がそろっていること、`ogp.png`・`icon.png` の大きさ、「カカカ」がどの顔・どの立ち位置でも頭と重ならないこと、`tools/ogp/ogp.bundle.js` が最新かを確かめる
 - 公開用のファイル：`tests/site.test.js` は、公開するのが決めた6つだけなこと、元のファイルと中身が同じなこと（限定公開の検索よけの1行を除く）、`game.js` が古い・ファイルが足りない・余計なものがあるときは何も書かずに止まること、Git・通信・削除をしないことを、一時フォルダで確かめる
 - 効果音：`tests/sound.test.js` は、効果音 OFF では「にゃーん」を鳴らさないこと、準備に失敗しても一度だけ知らせて例外を出さないことを確かめる

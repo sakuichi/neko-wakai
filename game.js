@@ -417,6 +417,21 @@ __modules['src/game/progression.js'] = (() => {
   }
 
   /**
+   * タイトルの「ちがう子にする」：毛色と顔を引き直す。毛色は、いまの毛色を除いた中から同じ確率で選び、性格は毛色で決まる。
+   * fixed：デバッグで固定しているもの { personality, coat, face }。変わるのは coat・personality・face だけ
+   */
+  function rerollCat(game, { personality = null, coat = null, face = {} } = {}, random = Math.random) {
+    let next = coat;
+    if (!next) {
+      const all = Object.keys(COAT_PERSONALITY).filter((c) => !personality || COAT_PERSONALITY[c] === personality);
+      const others = all.filter((c) => c !== game.coat);
+      const pool = others.length ? others : all;
+      next = pool[Math.floor(random() * pool.length)];
+    }
+    return { ...game, coat: next, personality: personality ?? COAT_PERSONALITY[next], face: chooseFace(face ?? {}, random) };
+  }
+
+  /**
    * その日の初期状態を作る。前の晩の選択の効果をここで反映する。
    * @returns {{day, cat, newActions: string[]}}
    */
@@ -493,7 +508,7 @@ __modules['src/game/progression.js'] = (() => {
     if (dayNumber <= 5) return 'patient';
     return 'persistent';
   }
-  return { createGame, chooseFace, chooseEvents, chooseCat, startDay, finishDay, chooseNight, endingFor };
+  return { createGame, chooseFace, chooseEvents, chooseCat, rerollCat, startDay, finishDay, chooseNight, endingFor };
 })();
 
 // ---- src/util/rng.js
@@ -994,6 +1009,8 @@ __modules['src/render/renderer.js'] = (() => {
       // { outEnd（消え終わる時刻）, pose, coat, look, moved, hold（見えないまま待つ）, gentle（途中で打ち切らない） }。その前に描いていた猫を覚えておく
       fade: null,
       last: null,
+      // 直前の view の毛色と顔 { coat, shape, ears }（タイトルで猫を引き直したことに気づくため）
+      viewCat: null,
       // 猫を薄く描くための下書き用の Canvas（重なった線が透けないよう、猫をまとめて薄くする）
       layer: null,
       // いま描いている猫 { alpha, coat, mode }
@@ -1068,6 +1085,15 @@ __modules['src/render/renderer.js'] = (() => {
       if (a.fade?.hold && !hidden) {
         a.fade.hold = false;
         if (t >= a.fade.outEnd) a.fade.outEnd = t;
+      }
+      // タイトルで「ちがう子にする」を押した（タイトルのまま毛色か顔が変わった）：前の猫をいまの濃さから消して、新しい猫を出す。
+      // 消えている途中でまた押されたら、そのまま消し続ける（現れるときは、いちばん新しい猫）
+      const viewCat = { coat: view.coat, shape: view.face?.shape, ears: view.face?.ears };
+      const swapped = view.scene === 'title' && a.lastScene === 'title' && a.viewCat
+        && (viewCat.coat !== a.viewCat.coat || viewCat.shape !== a.viewCat.shape || viewCat.ears !== a.viewCat.ears);
+      a.viewCat = viewCat;
+      if (swapped && a.last && !(a.fade && t < a.fade.outEnd)) {
+        a.fade = { outEnd: t + a.shown.alpha * CAT_FADE_SEC, ...a.last, moved: false };
       }
       if (view.scene !== a.lastScene) {
         // ページを開いた直後は、猫をはじめからその場面の位置に置く（部屋の隅から滑ってこない）
@@ -2721,6 +2747,8 @@ __modules['src/data/texts.js'] = (() => {
     main: 'ネコと和解せよ',
     sub: '〜猫が来るまでの7日間〜',
     start: 'タップではじめる',
+    // タイトルで、猫を毛色の違う子に引き直す（src/scenes/titleScene.js）
+    reroll: 'ちがう子にする',
   };
 
   const DAY_TITLES = {
@@ -4245,8 +4273,9 @@ __modules['src/scenes/titleScene.js'] = (() => {
   // 「ねこ手帳」ボタンの猫の絵の細かさ（Canvas の画素数）。画面上の大きさは style.css の .title-notebook-icon で、文字の大きさに合わせる
   const ICON_RES = 96;
 
-  // onNotebook: 「ねこ手帳」ボタン（画面のほかの場所をタップすると、はじめる）
-  function createTitleScene({ screenEl, onStart, onNotebook }) {
+  // onNotebook: 「ねこ手帳」ボタン。onReroll: 「ちがう子にする」ボタン（何回でも押せる。はじめない）
+  // 画面のほかの場所をタップすると、はじめる
+  function createTitleScene({ screenEl, onStart, onNotebook, onReroll }) {
     const node = document.createElement('div');
     node.className = 'title-screen';
     node.innerHTML = `
@@ -4275,9 +4304,15 @@ __modules['src/scenes/titleScene.js'] = (() => {
       onNotebook();
     }, { once: true });
     node.append(notebook);
-    // 「ねこ手帳」ボタンを押したときは、はじめない（押した操作は window まで伝わり、音の準備は始まる）
+    const reroll = document.createElement('button');
+    reroll.type = 'button';
+    reroll.className = 'title-reroll';
+    reroll.textContent = TITLE.reroll;
+    reroll.addEventListener('click', () => onReroll?.());
+    node.append(reroll);
+    // 「ねこ手帳」「ちがう子にする」ボタンを押したときは、はじめない（押した操作は window まで伝わり、音の準備は始まる）
     const start = (e) => {
-      if (e.target.closest?.('.title-notebook')) return;
+      if (e.target.closest?.('.title-notebook, .title-reroll')) return;
       node.removeEventListener('pointerdown', start);
       screenEl.replaceChildren();
       onStart();
@@ -6118,7 +6153,7 @@ __modules['src/ui/recordStore.js'] = (() => {
 // ---- src/main.js
 __modules['src/main.js'] = (() => {
   // 起動・ゲームループ・画面切替。
-  const { createGame, finishDay, chooseNight, chooseCat, chooseFace, chooseEvents } = __modules['src/game/progression.js'];
+  const { createGame, finishDay, chooseNight, chooseCat, chooseFace, chooseEvents, rerollCat } = __modules['src/game/progression.js'];
   const { MAX_DAY } = __modules['src/data/params.js'];
   const { createRng } = __modules['src/util/rng.js'];
   const { createRenderer } = __modules['src/render/renderer.js'];
@@ -6223,7 +6258,13 @@ __modules['src/main.js'] = (() => {
 
   // タイトルの画面だけを出す（ねこ手帳から戻るときは、次の猫を選び直さない）
   function showTitle() {
-    scene = createTitleScene({ screenEl, onStart: goIntro, onNotebook: goNotebook });
+    scene = createTitleScene({ screenEl, onStart: goIntro, onNotebook: goNotebook, onReroll: rerollTitleCat });
+  }
+
+  // タイトルの「ちがう子にする」：毛色の違う子に引き直す（デバッグで固定しているものはそのまま）。
+  // 入れ替わり（前の子が消えて新しい子が現れる）は、描画が毛色・顔の変化に気づいて行う（src/render/renderer.js）
+  function rerollTitleCat() {
+    session.game = rerollCat(session.game, { personality: fixedPersonality, coat: fixedCoat, face: fixedFace ?? {} });
   }
 
   function goNotebook() {

@@ -7,6 +7,8 @@ export const TITLE = {
   main: 'ネコと和解せよ',
   sub: '〜猫が来るまでの7日間〜',
   start: 'タップではじめる',
+  // タイトルで、猫を毛色の違う子に引き直す（src/scenes/titleScene.js）
+  reroll: 'ちがう子にする',
 };
 
 export const DAY_TITLES = {

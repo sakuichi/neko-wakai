@@ -4,8 +4,9 @@ import { drawCatPortrait } from '../render/renderer.js';
 // 「ねこ手帳」ボタンの猫の絵の細かさ（Canvas の画素数）。画面上の大きさは style.css の .title-notebook-icon で、文字の大きさに合わせる
 const ICON_RES = 96;
 
-// onNotebook: 「ねこ手帳」ボタン（画面のほかの場所をタップすると、はじめる）
-export function createTitleScene({ screenEl, onStart, onNotebook }) {
+// onNotebook: 「ねこ手帳」ボタン。onReroll: 「ちがう子にする」ボタン（何回でも押せる。はじめない）
+// 画面のほかの場所をタップすると、はじめる
+export function createTitleScene({ screenEl, onStart, onNotebook, onReroll }) {
   const node = document.createElement('div');
   node.className = 'title-screen';
   node.innerHTML = `
@@ -34,9 +35,15 @@ export function createTitleScene({ screenEl, onStart, onNotebook }) {
     onNotebook();
   }, { once: true });
   node.append(notebook);
-  // 「ねこ手帳」ボタンを押したときは、はじめない（押した操作は window まで伝わり、音の準備は始まる）
+  const reroll = document.createElement('button');
+  reroll.type = 'button';
+  reroll.className = 'title-reroll';
+  reroll.textContent = TITLE.reroll;
+  reroll.addEventListener('click', () => onReroll?.());
+  node.append(reroll);
+  // 「ねこ手帳」「ちがう子にする」ボタンを押したときは、はじめない（押した操作は window まで伝わり、音の準備は始まる）
   const start = (e) => {
-    if (e.target.closest?.('.title-notebook')) return;
+    if (e.target.closest?.('.title-notebook, .title-reroll')) return;
     node.removeEventListener('pointerdown', start);
     screenEl.replaceChildren();
     onStart();

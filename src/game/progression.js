@@ -51,6 +51,21 @@ export function chooseCat({ personality = null, coat = null } = {}, random = Mat
 }
 
 /**
+ * タイトルの「ちがう子にする」：毛色と顔を引き直す。毛色は、いまの毛色を除いた中から同じ確率で選び、性格は毛色で決まる。
+ * fixed：デバッグで固定しているもの { personality, coat, face }。変わるのは coat・personality・face だけ
+ */
+export function rerollCat(game, { personality = null, coat = null, face = {} } = {}, random = Math.random) {
+  let next = coat;
+  if (!next) {
+    const all = Object.keys(COAT_PERSONALITY).filter((c) => !personality || COAT_PERSONALITY[c] === personality);
+    const others = all.filter((c) => c !== game.coat);
+    const pool = others.length ? others : all;
+    next = pool[Math.floor(random() * pool.length)];
+  }
+  return { ...game, coat: next, personality: personality ?? COAT_PERSONALITY[next], face: chooseFace(face ?? {}, random) };
+}
+
+/**
  * その日の初期状態を作る。前の晩の選択の効果をここで反映する。
  * @returns {{day, cat, newActions: string[]}}
  */

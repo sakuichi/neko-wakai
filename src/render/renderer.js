@@ -116,6 +116,8 @@ export function createRenderer(canvas) {
     // { outEnd（消え終わる時刻）, pose, coat, look, moved, hold（見えないまま待つ）, gentle（途中で打ち切らない） }。その前に描いていた猫を覚えておく
     fade: null,
     last: null,
+    // 直前の view の毛色と顔 { coat, shape, ears }（タイトルで猫を引き直したことに気づくため）
+    viewCat: null,
     // 猫を薄く描くための下書き用の Canvas（重なった線が透けないよう、猫をまとめて薄くする）
     layer: null,
     // いま描いている猫 { alpha, coat, mode }
@@ -190,6 +192,15 @@ export function createRenderer(canvas) {
     if (a.fade?.hold && !hidden) {
       a.fade.hold = false;
       if (t >= a.fade.outEnd) a.fade.outEnd = t;
+    }
+    // タイトルで「ちがう子にする」を押した（タイトルのまま毛色か顔が変わった）：前の猫をいまの濃さから消して、新しい猫を出す。
+    // 消えている途中でまた押されたら、そのまま消し続ける（現れるときは、いちばん新しい猫）
+    const viewCat = { coat: view.coat, shape: view.face?.shape, ears: view.face?.ears };
+    const swapped = view.scene === 'title' && a.lastScene === 'title' && a.viewCat
+      && (viewCat.coat !== a.viewCat.coat || viewCat.shape !== a.viewCat.shape || viewCat.ears !== a.viewCat.ears);
+    a.viewCat = viewCat;
+    if (swapped && a.last && !(a.fade && t < a.fade.outEnd)) {
+      a.fade = { outEnd: t + a.shown.alpha * CAT_FADE_SEC, ...a.last, moved: false };
     }
     if (view.scene !== a.lastScene) {
       // ページを開いた直後は、猫をはじめからその場面の位置に置く（部屋の隅から滑ってこない）
