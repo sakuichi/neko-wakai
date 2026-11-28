@@ -215,6 +215,19 @@ body {
   display: flex; align-items: center; gap: 1.5cqw;
 }
 .title-notebook-icon { width: 1.7em; height: 1.7em; }
+/* 「ちがう子にする」：「ねこ手帳」と横に並べる（猫の位置は画面の縦横比で変わるので、猫には重ねない）。「ねこ手帳」より控えめにする */
+.title-notebook { left: 50%; transform: translateX(calc(-100% - 1.5cqw)); }
+.title-reroll {
+  position: absolute; bottom: 20cqh; left: calc(50% + 1.5cqw);
+  height: calc(6.8cqw + 1.6cqh);
+  border: 0; border-radius: 999px;
+  background: rgba(255, 250, 243, 0.85); color: var(--ink-soft);
+  font: 3.6cqw var(--font);
+  padding: 0 3.6cqw;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+.title-reroll::before { content: "↻ "; color: var(--accent-deep); }
 .notebook-screen {
   position: absolute; left: 4cqw; right: 4cqw; top: 4cqh; bottom: 4cqh;
   display: flex; flex-direction: column;
